@@ -80,40 +80,39 @@ if (typeof Tone === 'undefined') {
   throw new Error('Tone.js not loaded');
 }
 
-/* ---------- ① 音符素材：自写的极简钢琴乐句库 ----------
- * 每个乐句 32 步（八分音符网格），每步是音符数组 [{ n: 音名, v: 力度 0~1 }]（空数组 = 休止）。
- * ★ 律动设计（对照原曲的"人类感"）：
- *   - 节奏不均匀：切分、附点、前紧后松（不是每 4 步一音）
- *   - 力度重音：某些音 v>0.7（乐句重音），其余轻
- *   - 双音和弦块：2 音叠置（如低音+高音）
- *   - 音区对比：低音点缀 / 偶发高音（C6）
- * 真实 aisatsana 的素材来自原曲谱面（instructions.json），同样充满这类人类律动；
- * 本练习手写 4 个乐句演示机制。 */
+/* ---------- ① 音符素材：段落化乐句库 ----------
+ * ★ 段落感来自素材结构（对照原版：301 秒谱面含 intro→主题→发展→结尾的段落性格）。
+ * 本练习 10 个乐句分 4 段：
+ *   A 安静段（0-1）：稀疏、低音区、长休止
+ *   B 主题段（2-4）：完整琶音、主旋律
+ *   C 发展段（5-7）：密集、双音、切分、高音
+ *   D 结尾段（8-9）：下行走势、渐弱收束
+ * 每步格式 [{ n: 音名, v: 力度 0~1 }]，空数组 = 休止。 */
 const PHRASES = [
-  /* 乐句 A：切分上行琶音（3+3+2 感）+ 低八度重音 */
+  /* --- 段落 A：安静（稀疏低音） --- */
+  /* A0：低音琶音，每 4~6 步一个音 */
+  [
+    [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.55 }], [], [], [],
+    [{ n: 'E3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'C3', v: 0.55 }], [], [], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'E3', v: 0.55 }], [], [], [], [{ n: 'C3', v: 0.65 }], [], [], [],
+  ],
+  /* A1：低音 + 高音点缀，仍稀疏 */
+  [
+    [{ n: 'C3', v: 0.55 }], [], [{ n: 'E4', v: 0.4 }], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'E3', v: 0.55 }], [], [{ n: 'C4', v: 0.4 }], [], [{ n: 'G3', v: 0.45 }], [], [], [],
+    [{ n: 'C3', v: 0.5 }], [], [{ n: 'G4', v: 0.35 }], [], [{ n: 'E3', v: 0.5 }], [], [], [],
+    [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.45 }], [], [], [],
+  ],
+  /* --- 段落 B：主题（完整琶音、主旋律） --- */
+  /* B0：切分上行琶音（3+3+2 感）+ 低八度重音 */
   [
     [{ n: 'C4', v: 0.7 }], [], [{ n: 'E4', v: 0.55 }], [], [{ n: 'G4', v: 0.75 }], [], [], [{ n: 'C5', v: 0.5 }],
     [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.7 }], [{ n: 'G3', v: 0.8 }], [], [],
     [{ n: 'C4', v: 0.65 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.7 }], [], [], [{ n: 'C5', v: 0.45 }],
     [], [{ n: 'B4', v: 0.6 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'C4', v: 0.75 }], [], [],
   ],
-  /* 乐句 B：双音和弦块 + 低音重音，密度对比强烈 */
-  [
-    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
-    [], [{ n: 'E4', v: 0.65 }], [], [{ n: 'G3', v: 0.8 }, { n: 'C5', v: 0.45 }], [], [], [{ n: 'E4', v: 0.6 }],
-    [{ n: 'C4', v: 0.55 }], [], [{ n: 'F3', v: 0.8 }, { n: 'A4', v: 0.5 }], [], [],
-    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
-    [], [{ n: 'D4', v: 0.6 }], [], [{ n: 'G3', v: 0.8 }, { n: 'B4', v: 0.5 }], [], [], [{ n: 'E4', v: 0.6 }],
-    [{ n: 'C4', v: 0.55 }], [], [{ n: 'C3', v: 0.75 }, { n: 'G4', v: 0.4 }], [], [],
-  ],
-  /* 乐句 C：附点长音对比（长-短-长），渐强句尾 */
-  [
-    [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'C5', v: 0.7 }], [], [], [{ n: 'G4', v: 0.55 }],
-    [{ n: 'E4', v: 0.6 }], [], [], [{ n: 'C4', v: 0.65 }], [], [{ n: 'D4', v: 0.5 }], [],
-    [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'B4', v: 0.7 }], [], [], [{ n: 'C5', v: 0.55 }],
-    [{ n: 'G4', v: 0.6 }], [], [], [{ n: 'E4', v: 0.65 }], [], [{ n: 'C4', v: 0.5 }], [{ n: 'G3', v: 0.75 }],
-  ],
-  /* 乐句 D：跨音区 + 高音点缀（C6）收尾 */
+  /* B1：跨音区 + 高音点缀（C6） */
   [
     [{ n: 'C5', v: 0.6 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.65 }], [{ n: 'C5', v: 0.55 }],
     [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.6 }],
@@ -122,44 +121,101 @@ const PHRASES = [
     [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'C6', v: 0.75 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.6 }],
     [{ n: 'C4', v: 0.7 }], [], [],
   ],
+  /* B2：五音上行 C4-E4-G4-C5-E5 + 回落 */
+  [
+    [{ n: 'C4', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.7 }], [], [{ n: 'C5', v: 0.65 }], [],
+    [{ n: 'E5', v: 0.7 }], [], [{ n: 'C5', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'E4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'G3', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'C4', v: 0.65 }], [],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'C5', v: 0.55 }], [],
+  ],
+  /* --- 段落 C：发展（密集、双音、切分） --- */
+  /* C0：双音和弦块 + 低音重音 */
+  [
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'E4', v: 0.65 }], [], [{ n: 'G3', v: 0.8 }, { n: 'C5', v: 0.45 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'F3', v: 0.8 }, { n: 'A4', v: 0.5 }], [], [],
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'D4', v: 0.6 }], [], [{ n: 'G3', v: 0.8 }, { n: 'B4', v: 0.5 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'C3', v: 0.75 }, { n: 'G4', v: 0.4 }], [], [],
+  ],
+  /* C1：密集切分 + 双音 */
+  [
+    [{ n: 'C4', v: 0.7 }, { n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'G4', v: 0.6 }], [],
+    [{ n: 'C5', v: 0.7 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.7 }], [], [{ n: 'C4', v: 0.6 }],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'G4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.7 }, { n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'B4', v: 0.6 }], [],
+    [{ n: 'C5', v: 0.7 }], [{ n: 'B4', v: 0.55 }], [], [{ n: 'G4', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'C4', v: 0.7 }], [{ n: 'G3', v: 0.75 }], [], [],
+  ],
+  /* C2：附点长音对比 + 渐强 */
+  [
+    [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'C5', v: 0.7 }], [], [], [{ n: 'G4', v: 0.55 }],
+    [{ n: 'E4', v: 0.6 }], [], [], [{ n: 'C4', v: 0.65 }], [], [{ n: 'D4', v: 0.5 }], [],
+    [{ n: 'E4', v: 0.65 }], [], [{ n: 'G4', v: 0.7 }], [], [], [{ n: 'B4', v: 0.75 }], [], [], [{ n: 'C5', v: 0.6 }],
+    [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'E4', v: 0.7 }], [], [{ n: 'C4', v: 0.55 }], [{ n: 'G3', v: 0.8 }],
+  ],
+  /* --- 段落 D：结尾（下行走势、收束） --- */
+  /* D0：长下行走势 + 尾部留白 */
+  [
+    [{ n: 'C5', v: 0.65 }], [], [{ n: 'B4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'E4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'G3', v: 0.6 }], [], [{ n: 'E3', v: 0.65 }], [], [{ n: 'C3', v: 0.7 }], [],
+    [{ n: 'C3', v: 0.6 }], [], [], [{ n: 'G3', v: 0.55 }], [], [], [{ n: 'E3', v: 0.5 }], [], [], [{ n: 'C3', v: 0.6 }],
+    [], [], [], [], [], [], [],
+  ],
+  /* D1：收束到根音 G2/C3，长尾 */
+  [
+    [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.5 }], [], [{ n: 'G3', v: 0.55 }], [], [], [{ n: 'E3', v: 0.5 }],
+    [], [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G2', v: 0.7 }], [], [],
+    [], [], [], [], [], [{ n: 'C3', v: 0.55 }], [], [], [], [], [], [], [], [], [], [],
+  ],
+];
+
+/* ★ 段落结构（对照原版的段落衔接）：
+ * 乐句索引 → 段落分组；段落 → 下一段落概率矩阵。
+ * 主循环 A→B→C→A（安静→主题→发展→回安静），D 结尾偶尔出现后循环回 A。 */
+const SECTION_PHRASES = [
+  [0, 1],          // A 安静
+  [2, 3, 4],       // B 主题
+  [5, 6, 7],       // C 发展
+  [8, 9],          // D 结尾
+];
+const SECTION_NAMES = ['A 安静', 'B 主题', 'C 发展', 'D 结尾'];
+const SECTION_TRANSITIONS = [
+  [0.1, 0.75, 0.1, 0.05],   // A → 主要进主题
+  [0.1, 0.2, 0.6, 0.1],     // B → 主要进发展
+  [0.55, 0.15, 0.15, 0.15], // C → 主要回落安静
+  [0.7, 0.1, 0.1, 0.1],     // D → 回到安静（循环）
 ];
 
 const STEP_DURATION_S = 0.3;      // 八分音符时长（≈ 100 BPM，aisatsana 用 102 BPM / 0.294s）
 const PHRASE_LENGTH = 32;         // 每乐句 32 步（对照源码 phraseLength）
 const PHRASE_DURATION_S = PHRASE_LENGTH * STEP_DURATION_S;
 
-/* ---------- ② 马尔可夫链（自实现一阶，对照 aisatsana 的 markov-chains 库） ----------
- * 训练：统计每个乐句 → 下一个乐句的出现次数，转成概率。
- * 行走：从随机乐句出发，每次按当前乐句的转移概率选下一个 —— 记忆 + 重排 */
-const buildMarkovChain = (phrases, rng) => {
-  const transitions = phrases.map(() => phrases.map(() => 0));
-  for (let i = 0; i < phrases.length - 1; i += 1) {
-    transitions[i][i + 1] += 1;          // 原顺序的转移记一次（保持素材的"语法"）
-  }
-  // 再加一些风格化的平滑：允许部分回流/重复，制造变化（可调系数）
-  for (let i = 0; i < phrases.length; i += 1) {
-    transitions[i][i] += 0.5;            // 偶尔重复当前乐句（音乐的"锚点"）
-    transitions[i][(i + 1) % phrases.length] += 0.5;  // 循环到下一个
-    transitions[i][(i + 2) % phrases.length] += 0.3;  // 偶尔跳过一个（"发展"）
-  }
+/* ---------- ② 段落感知马尔可夫链（对照 aisatsana 的 markov-chains 库） ----------
+ * 两层随机：
+ *   段落层：按 SECTION_TRANSITIONS 选下一段落（主循环 A→B→C→A）
+ *   句层：段落内随机选一个乐句
+ * 这模拟原版的段落衔接规律（intro→主题→发展→结尾），
+ * 而不是把所有乐句混在一起随机转 —— 段落感来自这里。 */
+const buildSectionChain = rng => {
+  let currentSection = 0;              // 从 A 安静段开始
   return {
-    walk: () => {
-      let current = Math.floor(rng() * phrases.length);
-      return {
-        next: () => {
-          const weights = transitions[current];
-          const total = weights.reduce((a, b) => a + b, 0);
-          let roll = rng() * total;
-          for (let i = 0; i < weights.length; i += 1) {
-            roll -= weights[i];
-            if (roll <= 0) { current = i; break; }
-          }
-          return current;
-        },
-        getCurrent: () => current,
-        transitions,
-      };
+    next: () => {
+      const weights = SECTION_TRANSITIONS[currentSection];
+      const total = weights.reduce((a, b) => a + b, 0);
+      let roll = rng() * total;
+      let nextSection = 0;
+      for (let i = 0; i < weights.length; i += 1) {
+        roll -= weights[i];
+        if (roll <= 0) { nextSection = i; break; }
+      }
+      const pool = SECTION_PHRASES[nextSection];
+      const phraseIndex = pool[Math.floor(rng() * pool.length)];
+      currentSection = nextSection;
+      return { phraseIndex, section: nextSection };
     },
+    getSection: () => currentSection,
+    transitions: SECTION_TRANSITIONS,
   };
 };
 
@@ -260,29 +316,28 @@ let currentSeed = null;
 
 const activateEngine = async seed => {
   const rng = makeRng(seed);
-  const chain = buildMarkovChain(PHRASES, rng);
+  const chain = buildSectionChain(rng);
   const piano = await createPiano(Tone.Destination);
 
-  let walker = null;
+  let currentSection = 0;
 
   const schedule = () => {
-    walker = chain.walk();
     const showMatrix = () => {
-      let html = '<b>马尔可夫转移矩阵</b>（行=当前乐句，列=下一乐句概率）：<br>';
-      walker.transitions.forEach((row, i) => {
+      let html = '<b>段落转移矩阵</b>（行=当前段落，列=下一段落概率）：<br>';
+      SECTION_NAMES.forEach((name, i) => {
+        const row = chain.transitions[i];
         const total = row.reduce((a, b) => a + b, 0);
-        html += '乐句' + String.fromCharCode(65 + i) + ': ' +
-          row.map((c, j) => (c / total).toFixed(2)).join('  ') + '<br>';
+        html += name + ': ' + row.map((c, j) => (c / total).toFixed(2)).join('  ') + '<br>';
       });
       matrixEl.innerHTML = html;
     };
     showMatrix();
 
-    /* 演出（对照 aisatsana 的 schedulePhrase + scheduleRepeat）：
-     * 每次取一个乐句，把其中每个音符安排在对应步的位置；
+    /* 演出：每次取一个乐句（段落层 + 句层两步随机），把音符安排在对应步。
      * 提前 1 秒触发 + ±25ms 人性化抖动（原样照搬 aisatsana 手法） */
     const playPhrase = () => {
-      const phraseIndex = walker.next();
+      const { phraseIndex, section } = chain.next();
+      currentSection = section;
       const phrase = PHRASES[phraseIndex];
       phrase.forEach((notes, step) => {
         notes.forEach(({ n, v }) => {
@@ -297,10 +352,12 @@ const activateEngine = async seed => {
         });
       });
       setStatus(
-        '▶ 播放中 · 乐句 <b>' + String.fromCharCode(65 + phraseIndex) +
+        '▶ 播放中 · 段落 <b>' + SECTION_NAMES[currentSection] +
+        '</b> · 乐句 <b>' + String.fromCharCode(65 + phraseIndex) +
         '</b> · 音符 ' + phrase.flat().length + ' 个 · 种子 ' + currentSeed
       );
-      log('乐句 ' + String.fromCharCode(65 + phraseIndex) + ' ← ' + phrase.flat().map(x => x.n).join(' '));
+      log('[' + SECTION_NAMES[currentSection] + '] 乐句 ' + String.fromCharCode(65 + phraseIndex) +
+          ' ← ' + phrase.flat().map(x => x.n).join(' '));
     };
 
     playPhrase();
