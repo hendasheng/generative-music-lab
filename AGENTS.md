@@ -23,6 +23,7 @@
 - 只有两个以上练习真正共用的代码或资源，才抽到根目录共享模块。
 - 不要把生成的录音、大体积音频和 `node_modules` 提交到 Git。
 - 当前没有构建系统；不要仅为“标准化”而引入 npm、打包器或框架。
+- 每个练习暴露统一的激活接口 `window.exercise = { activate }`（参考 piece-zed 的 `activate → [deactivate, schedule]` 契约），为以后接入统一播放器留口子；接口只需一行赋值，不引入任何加载器或构建步骤。
 
 ## 当前练习：01 Ambient Pulse
 

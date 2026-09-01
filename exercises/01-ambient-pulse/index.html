@@ -1173,6 +1173,12 @@ document.addEventListener('visibilitychange', () => {
     engine.checkHealth();
   }
 });
+
+/* 统一激活接口（AGENTS.md 约定）：为以后接入统一播放器留口子。
+ * activateEngine(seed) → { deactivate, schedule, end, fadeIn, fadeOut, trackGains, restart, checkHealth } */
+window.exercise = {
+  activate: activateEngine,
+};
 </script>
 </body>
 </html>

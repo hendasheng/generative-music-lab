@@ -7,6 +7,7 @@
 | 编号 | 名称 | 内容 | 运行方式 |
 | --- | --- | --- | --- |
 | 01 | [Ambient Pulse](exercises/01-ambient-pulse/) | C 自然小调、氛围合成、动机发展与呼吸型节奏 | 打开 `exercises/01-ambient-pulse/index.html` |
+| 02 | [Aisatsana Markov](exercises/02-aisatsana-markov/) | 极简钢琴、马尔可夫链乐句重组（记忆 + 重排） | 打开 `exercises/02-aisatsana-markov/index.html` |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
 
@@ -59,12 +60,13 @@ Tone.js 当前从 CDN 加载，因此首次运行需要联网。若以后需要�
 
 - [Generative.fm](https://generative.fm/) —— 官网与线上播放器（浏览页：https://play.generative.fm/browse）
 - [Tone.js 文档](https://tonejs.github.io/) —— 本项目使用的 Web Audio 库（v14.7.58）
-- [Alex Bainter：Generative Music in the Browser（WAC 2019 论文）](https://www.ntnu.edu/documents/1282113268/1290817924/WAC2019-CameraReadySubmission-5.pdf/94ee9ecd-13c0-ada9-04bb-095ae1656b40?t=1575408761206#1#1) —— 作者的设计思路与系统架构说明
-- [Generative.fm Open-source Objectives（gist）](https://gist.github.com/metalex9/11923b7faa710215dc7ab39a0e056a65) —— 作者的开源计划，含向 Generative.fm 提交乐曲的说明
+- [Alex Bainter：Generative Music in the Browser（WAC 2019 论文）](https://webaudioconf.com/posts/2019_5/) —— 作者的设计思路与系统架构说明（WAC 官网论文页；完整论文集 PDF：[WAC 2019 Proceedings](https://www.ntnu.edu/documents/1282113268/1292502725/WAC_2019_proceedings.pdf)，本篇见第 46 页起）
+- [Alex Bainter：Generating more of my favorite Aphex Twin track（Medium）](https://medium.com/@alexbainter/generating-more-of-my-favorite-aphex-twin-track-cde9b7ecda3a) —— 作者关于 piece-aisatsana 的创作手记（Markov 链重混原曲的思路），对应本仓库 02 练习
+- 向 Generative.fm 提交乐曲：作者曾在一份 Open-source Objectives gist 中说明，该 gist 现已不可用；可参考 [pieces-alex-bainter 仓库](https://github.com/generative-music/pieces-alex-bainter) 的 README 了解乐曲包的安装、构建与使用方式
 
 ### 本仓库笔记
 
-- [piece-zed 中文注解](notes/piece-zed-注解版.md) —— 对照 `../generative-pieces/packages/piece-zed/src/piece.js` 逐段阅读
+- [piece-zed 中文注解](notes/piece-zed-注解版.md) —— 对照 pieces-alex-bainter 仓库内 `packages/piece-zed/src/piece.js` 逐段阅读
 
 ## 许可
 

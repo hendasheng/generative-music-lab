@@ -270,4 +270,4 @@ export default wrapActivate(activate, { gain: GAIN_ADJUSTMENT });
 1. **预渲染**：用 `Tone.Offline` 把你曲子的 Pad 渲染成 AudioBuffer 缓存（`utilities/create-prerendered-buffer.js` 的 30 行就是全部秘密）。
 2. **真实采样**：按 pieces 仓库 README 的 30 行示例接 `@generative-music/samples-alex-bainter`，把 `createPluck` 换成吉他/马林巴采样。
 3. **发布成 npm 包**：照 `packages/piece-zed` 的目录结构（package.json + piece.js + manifest），跑 `npm run build` 后就能被 `pieces-alex-bainter` 聚合包收录。
-4. **提交给 Generative.fm**：作者在 [Open-source Objectives gist](https://gist.github.com/metalex9/11923b7faa710215dc7ab39a0e056a65) 里欢迎社区提交乐曲。
+4. **提交给 Generative.fm**：作者曾在 [Open-source Objectives gist](https://gist.github.com/metalex9/11923b7faa710215dc7ab39a0e056a65) 里欢迎社区提交乐曲（该 gist 现已不可用）；可参考 [pieces-alex-bainter 仓库](https://github.com/generative-music/pieces-alex-bainter) 的 README 了解乐曲包的构建与使用。
