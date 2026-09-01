@@ -68,6 +68,8 @@ Tone.js 当前从 CDN 加载，因此首次运行需要联网。若以后需要�
 
 - [piece-zed 中文注解](notes/piece-zed-注解版.md) —— 对照 pieces-alex-bainter 仓库内 `packages/piece-zed/src/piece.js` 逐段阅读
 - [piece-aisatsana 中文注解（代码注释版）](notes/piece-aisatsana-注解版.js) —— 对照 `packages/piece-aisatsana/src/piece.js` 逐行阅读（记忆 + 重排范式，对应 02 练习）
+- [piece-aisatsana 素材数据说明](notes/piece-aisatsana-数据说明.md) —— instructions.json 的结构、真实示例与量化演示
+- [aisatsana 式创作思维](notes/aisatsana-创作思维.md) —— **创作方法论**：怎么想、怎么动手（素材 → 网格 → 乐句块 → 衔接 → 重组），不讲代码
 
 ## 许可
 
