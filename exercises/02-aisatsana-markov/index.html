@@ -186,6 +186,7 @@ const createSampledPiano = async (destination, baseUrl, ext, timeoutMs) => {
       urls: Object.fromEntries(PIANO_NOTES.map(n => [n, sampleFile(n, ext)])),
       baseUrl,
       release: 1.5,
+      volume: 6,                                // ★ +6dB：采样 mf 录音偏弱，补偿输出响度
       onload: () => resolve(sampler),
       onerror: err => reject(err),
     });
@@ -194,10 +195,11 @@ const createSampledPiano = async (destination, baseUrl, ext, timeoutMs) => {
   const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
   await reverb.generate();
   const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
-  compressor.connect(destination);
+  const limiter = new Tone.Limiter(-1).connect(destination);   // ★ 母带限幅：补偿后防削波
+  compressor.connect(limiter);
   piano.connect(reverb);
   reverb.connect(compressor);
-  return wrapPiano(piano, [reverb, compressor]);
+  return wrapPiano(piano, [reverb, compressor, limiter]);
 };
 
 const createFallbackPiano = async destination => {
@@ -207,15 +209,16 @@ const createFallbackPiano = async destination => {
     modulation: { type: 'triangle' },
     envelope: { attack: 0.005, decay: 1.2, sustain: 0, release: 1.5 },
     modulationEnvelope: { attack: 0.005, decay: 0.4, sustain: 0, release: 0.8 },
-    volume: -6,
+    volume: 0,                                  // 合成回退也提响（原 -6）
   });
   const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
   await reverb.generate();
   const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
-  compressor.connect(destination);
+  const limiter = new Tone.Limiter(-1).connect(destination);
+  compressor.connect(limiter);
   piano.connect(reverb);
   reverb.connect(compressor);
-  return wrapPiano(piano, [reverb, compressor]);
+  return wrapPiano(piano, [reverb, compressor, limiter]);
 };
 
 const createPiano = async destination => {
@@ -284,10 +287,12 @@ const activateEngine = async seed => {
       phrase.forEach((notes, step) => {
         notes.forEach(({ n, v }) => {
           const waitTime = step * STEP_DURATION_S;
+          /* ★ 力度上移补偿：原版 aisatsana 不传力度（满响度），
+           * 我们把律动力度 0.4~0.8 映射到 0.82~0.94 —— 保留重音对比，又不拉低整体音量 */
           piano.triggerAttack(
             n,
             `+${waitTime + 1 + rng() * 0.05 - 0.025}`,   // 对照源码：+1 秒预延迟 + 抖动
-            v
+            0.7 + v * 0.3
           );
         });
       });
