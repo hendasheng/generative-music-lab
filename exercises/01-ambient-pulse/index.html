@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">  <!-- 消除 file:// 下的 favicon 请求警告 -->
+<title>我的第一首生成式音乐 · 电子氛围</title>
+<style>
+  :root { --bg:#0b0e14; --panel:#12161f; --fg:#e6e9f0; --dim:#8b93a7; --accent:#6ee7b7; --accent2:#7dd3fc; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif; min-height:100vh; }
+  .wrap { max-width:880px; margin:0 auto; padding:36px 20px 70px; }
+  h1 { font-size:25px; margin:0 0 6px; letter-spacing:.5px; }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:26px; line-height:1.7; }
+  .panel { background:var(--panel); border:1px solid #1e2532; border-radius:12px; padding:20px; margin-bottom:16px; }
+  .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button { background:var(--accent); color:#06281c; border:none; border-radius:8px; padding:11px 24px; font-size:15px; font-weight:700; cursor:pointer; transition:transform .05s; }
+  button:hover { transform:translateY(-1px); }
+  button:active { transform:translateY(1px); }
+  button.secondary { background:#243044; color:var(--fg); }
+  input[type=text] { background:#0d1119; border:1px solid #2a3448; color:var(--fg); border-radius:8px; padding:9px 12px; font-size:14px; width:190px; outline:none; }
+  input[type=text]:focus { border-color:var(--accent2); }
+  .status { margin-top:16px; font-size:14px; line-height:1.8; }
+  .status b { color:var(--accent); }
+  .log { margin-top:12px; font-family:Consolas,"Courier New",monospace; font-size:12px; color:var(--dim); max-height:150px; overflow-y:auto; white-space:pre-wrap; border-top:1px dashed #1e2532; padding-top:10px; }
+  .layers { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin-top:12px; }
+  .layer { background:#0d1119; border:1px solid #1e2532; border-radius:8px; padding:12px; font-size:12px; line-height:1.7; color:var(--dim); }
+  .layer b { display:block; color:var(--accent2); margin-bottom:5px; font-size:13px; }
+  .hint { font-size:12.5px; color:var(--dim); line-height:2; }
+  .hint b { color:var(--fg); }
+  code { background:#0d1119; padding:1px 6px; border-radius:4px; font-size:12px; color:var(--accent2); }
+  /* 音轨控制（Ableton Live 风格） */
+  .tracks { margin-top:16px; }
+  .track-row { display:flex; align-items:center; gap:10px; padding:7px 0; border-top:1px dashed #1e2532; }
+  .track-row:first-child { border-top:none; }
+  .track-name { width:130px; font-size:13px; color:var(--fg); }
+  .track-name small { display:block; color:var(--dim); font-size:11px; }
+  .track-btn { padding:5px 0; width:44px; font-size:12px; font-weight:700; border-radius:6px; cursor:pointer; background:#243044; color:var(--fg); border:none; transition:background .1s; text-align:center; }
+  .track-btn:hover { filter:brightness(1.2); }
+  .track-btn.muted { background:#e5484d; color:#fff; }
+  .track-btn.soloed { background:#f5b301; color:#1a1200; }
+  .track-spacer { flex:1; }
+  /* 每轨音量推子（gain fader） */
+  .fader { width:120px; accent-color:var(--accent2); cursor:pointer; }
+  .fader-val { width:36px; font-size:11px; color:var(--dim); text-align:right; font-family:Consolas,monospace; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>我的第一首生成式音乐</h1>
+  <div class="sub">纯合成器 · 电子氛围 · C 自然小调 —— 架构完全照搬 generative.fm 的 piece-zed，双击打开即可播放。<br>生成式音乐 = 程序在<b>播放中实时作曲</b>：没有录音，每次播放都不一样，永远不会结束。</div>
+
+  <div class="panel">
+    <div class="controls">
+      <button id="playBtn">▶ 播放</button>
+      <button id="stopBtn" class="secondary">■ 停止</button>
+      <input id="seedInput" type="text" placeholder="随机种子（留空=随机）" />
+      <button id="regenBtn" class="secondary">🎲 换一版</button>
+    </div>
+    <div class="status" id="status">点击「播放」开始 —— 浏览器会先解锁音频，然后作曲引擎开始运行。</div>
+    <div class="log" id="log"></div>
+    <div class="tracks">
+      <div class="track-row">
+        <span class="track-name">① Pad 和弦垫<small>三角波 · 20s 混响</small></span>
+        <input type="range" class="fader" id="gain-pad" min="0" max="100" value="100" title="音量推子" />
+        <span class="fader-val" id="gain-val-pad">100</span>
+        <button class="track-btn" id="mute-pad" title="静音本轨">M</button>
+        <button class="track-btn" id="solo-pad" title="独奏本轨">S</button>
+        <span class="track-spacer"></span>
+      </div>
+      <div class="track-row">
+        <span class="track-name">② Drone 低音<small>正弦 · 五度底座</small></span>
+        <input type="range" class="fader" id="gain-drone" min="0" max="100" value="100" title="音量推子" />
+        <span class="fader-val" id="gain-val-drone">100</span>
+        <button class="track-btn" id="mute-drone" title="静音本轨">M</button>
+        <button class="track-btn" id="solo-drone" title="独奏本轨">S</button>
+        <span class="track-spacer"></span>
+      </div>
+      <div class="track-row">
+        <span class="track-name">③ Bass 低音线<small>三角 · 低频脉冲</small></span>
+        <input type="range" class="fader" id="gain-bass" min="0" max="100" value="100" title="音量推子" />
+        <span class="fader-val" id="gain-val-bass">100</span>
+        <button class="track-btn" id="mute-bass" title="静音本轨">M</button>
+        <button class="track-btn" id="solo-bass" title="独奏本轨">S</button>
+        <span class="track-spacer"></span>
+      </div>
+      <div class="track-row">
+        <span class="track-name">④ Pluck 旋律<small>FM 弹拨 · 延迟</small></span>
+        <input type="range" class="fader" id="gain-pluck" min="0" max="100" value="100" title="音量推子" />
+        <span class="fader-val" id="gain-val-pluck">100</span>
+        <button class="track-btn" id="mute-pluck" title="静音本轨">M</button>
+        <button class="track-btn" id="solo-pluck" title="独奏本轨">S</button>
+        <span class="track-spacer"></span>
+      </div>
+      <div class="track-row">
+        <span class="track-name">⑤ Drums 鼓<small>Kick · Hi-hat</small></span>
+        <input type="range" class="fader" id="gain-drums" min="0" max="100" value="100" title="音量推子" />
+        <span class="fader-val" id="gain-val-drums">100</span>
+        <button class="track-btn" id="mute-drums" title="静音本轨">M</button>
+        <button class="track-btn" id="solo-drums" title="独奏本轨">S</button>
+        <span class="track-spacer"></span>
+      </div>
+      <div class="track-row">
+        <span class="track-name">⑥ Air 噪声纹理<small>粉噪声 · LFO 风</small></span>
+        <input type="range" class="fader" id="gain-air" min="0" max="100" value="100" title="音量推子" />
+        <span class="fader-val" id="gain-val-air">100</span>
+        <button class="track-btn" id="mute-air" title="静音本轨">M</button>
+        <button class="track-btn" id="solo-air" title="独奏本轨">S</button>
+        <span class="track-spacer"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="hint"><b>六个声音层</b>（前四个对照 piece-zed 的源码结构，后两个是律动扩展）：</div>
+    <div class="layers">
+      <div class="layer"><b>① Pad 和弦垫</b>三角波 + 4 秒起音 + 20 秒混响。沿和弦进行每 1–4 小节换一个 C 小调和弦（交叉淡化过渡）+ 音色旋钮：截止频率随机阶梯扫频（随张力变亮）</div>
+      <div class="layer"><b>② Drone 低音</b>持续正弦低音（根音低八度的五度），随和弦 3 秒内滑移，极慢 LFO 呼吸</div>
+      <div class="layer"><b>③ Bass 低音线</b>三角波 + 轻饱和，每 4 拍一个厚实低音脉冲（根音低八度），20% 走五度，触发密度随张力</div>
+      <div class="layer"><b>④ Pluck 旋律</b>动机发展系统（echo/节奏轮转/疏密重构/和声功能映射/倒影），乐句间有「血缘」，句尾落在根音/五音收束，单次延迟 + 声像游走（中央占 40%）</div>
+      <div class="layer"><b>⑤ Drums 鼓</b>三种氛围脉冲（pulse → echo → motion），以四小节呼吸乐句缓慢变化，偶尔轻 Fill / Break 留白</div>
+      <div class="layer"><b>⑥ Air 噪声纹理</b>粉噪声 + 方波 LFO 门控的「风」，LFO 频率又被更慢的 LFO 调制（对应 zed 的 createNoise）</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="hint">
+      <b>怎么学：</b>页面下方的日志会实时显示每个音乐决策（和弦进行、张力、鼓形态、旋律动机）。配合教程 <code>../../notes/piece-zed-注解版.md</code>，对照真实源码 <code>generative-pieces/packages/piece-zed/src/piece.js</code> 一起看。<br>
+      <b>音轨控制（Ableton Live 风格）：</b>M = 静音本轨；S = 独奏本轨 —— 只要有任意一轨被独奏，就只有被独奏的轨发声，再点一次 S 取消独奏。<br>
+      <b>随机种子：</b>输入同一个种子会<b>完整复现</b>上一次的音乐 —— 这就是 generative.fm 把随机源做成可注入的 <code>window.generativeMusic.rng</code> 的原因（前端用 Mersenne Twister 替换，见 play/src/playback/playback-middleware.js）。
+    </div>
+  </div>
+</div>
+
+<!-- Tone.js v14.7.58 从 CDN 加载（unpkg）。如需离线使用，可下载该文件到本地并改为 <script src="./vendor/Tone.js"></script> -->
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+/* ============================================================
+ * 我的第一首生成式音乐 —— 电子氛围（纯合成器版）
+ * 架构对照 generative.fm 的 piece-zed（generative-pieces/packages/piece-zed/src/piece.js）：
+ *   zed 的 wrapActivate        → 本文件 activateEngine()（构建乐器 + 主总线 Compressor→Gain）
+ *   zed 的 makeActiveStage     → 本文件 fadeIn / fadeOut + play() / stop()
+ *   zed 的 createSynth         → 本文件 createPad()    （Pad 和弦垫）
+ *   zed 的 createNoise         → 本文件 createAir()    （噪声「风」，LFO 套 LFO）
+ *   zed 的 playRandomChord     → 本文件 playNextChord()（递归调度心脏：和弦进行 + 张力联动 + 动机发展）
+ *   zed 的 window.generativeMusic.rng → 本文件 mulberry32（带种子，可复现演出）
+ * ============================================================ */
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent =
+    '⚠ 无法从 CDN 加载 Tone.js（可能离线或网络被拦截）。请联网后刷新；或下载 https://unpkg.com/tone@14.7.58/build/Tone.js 到本地，把 <script> 的 src 改成相对路径。';
+  throw new Error('Tone.js not loaded');
+}
+
+/* ★★ 时钟稳定性修复（根因）：
+ * Tone 14 默认用 WebWorker 作为 Transport 的时钟源（Context 级单例 ticker）。
+ * 长时间运行后该 worker 可能死亡 —— 症状：transportSeconds 停滞、
+ * 音乐冻结但 UI/音频正常（正是之前「pad 无限响、不换和弦」的根因，
+ * 看门狗诊断 transportSeconds=15.00 / audioNow=30.52 证实）。
+ * 解法：从加载起就切换到 setInterval 时钟 —— 浏览器保证 interval 存活
+ * （只有后台节流，已被 visibilitychange 体检兜底）。 */
+try {
+  const _ctx = Tone.getContext();
+  if (_ctx._ticker && _ctx._ticker.type !== 'timeout') {
+    _ctx._ticker.type = 'timeout';
+    console.info('[时钟] 已切换到 setInterval 时钟（更稳定，避开 Tone worker 时钟死亡问题）');
+  }
+} catch (e) { /* 忽略 */ }
+
+/* ---------- ① 音符空间：C 自然小调（比 zed 的白键多一个降号，更「电子」） ----------
+ * 生成式音乐第一法则：先定义好「只能出现什么」，剩下的交给随机。 */
+const SCALE = ['C', 'D', 'Eb', 'F', 'G', 'Ab', 'Bb'];
+const NOTES = [3, 4].flatMap(oct => SCALE.map(pc => pc + oct));
+// NOTES = ['C3','D3','Eb3','F3','G3','Ab3','Bb3','C4','D4','Eb4','F4','G4','Ab4','Bb4']
+// 和弦三音/七音品质（C 自然小调内）：Cm, D°, Eb, Fm, Gm, Ab, Bb
+const QUALITY = ['m', '°', '', 'm', 'm', '', ''];
+
+/* ---------- ② 可注入随机源：mulberry32（带种子 → 可复现演出） ----------
+ * 对应 zed 全曲使用的 window.generativeMusic.rng */
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const hashSeed = str => {           // djb2：把任意字符串变成种子
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h;
+};
+window.generativeMusic = { rng: Math.random }; // 占位，activateEngine 时注入
+
+/* ---------- UI 辅助 ---------- */
+const $ = id => document.getElementById(id);
+const statusEl = $('status'), logEl = $('log');
+const log = msg => { logEl.textContent += msg + '\n'; logEl.scrollTop = logEl.scrollHeight; };
+const setStatus = html => { statusEl.innerHTML = html; };
+const rng = () => window.generativeMusic.rng();
+
+/* ---------- 欧几里得节奏（Bjorklund 算法 · 均匀分组等价实现） ----------
+ * E(pulses, steps)：把 steps 步分成 pulses 组、每组尽量均匀，脉冲放在每组开头。
+ * 构造上保证：长度恒为 steps、脉冲数恒为 pulses、间隔尽量相等。
+ * 经典例子：E(3,8)=x..x..x.（三连音）、E(2,5)=x..x.、E(5,16)=类非洲 clave。 */
+const euclidean = (pulses, steps) => {
+  if (pulses <= 0) return new Array(steps).fill(0);
+  if (pulses >= steps) return new Array(steps).fill(1);
+  const result = new Array(steps).fill(0);
+  const base = Math.floor(steps / pulses);
+  const extra = steps % pulses;              // 前 extra 组多一个元素
+  let pos = 0;
+  for (let i = 0; i < pulses; i += 1) {
+    result[pos] = 1;
+    pos += base + (i < extra ? 1 : 0);
+  }
+  return result;
+};
+
+/* ---------- ③ 主总线（对应 zed 里 wrapActivate 的 Compressor + Gain） ---------- */
+const makeMasterChain = () => {
+  /* 压缩器调松（-24→-18 / release 0.3→0.5）：kick 密集时避免快速抽吸（pumping），
+   * 持续层（drone/pad）不会被调制出「颤动/话筒靠近音响」的不稳定感 */
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 2.5, attack: 0.02, release: 0.5 });
+  const masterHp = new Tone.Filter({ type: 'highpass', frequency: 30 });   // ★ 清亚低频（<30Hz）防低频堆积嗡嗡
+  const limiter = new Tone.Limiter(-1).connect(Tone.Destination);   // 防削波刺耳（限幅 -1dB）
+  const masterGain = new Tone.Gain(0).connect(limiter);             // 从 0 开始 → 靠 fadeIn 淡入
+  compressor.connect(masterHp);
+  masterHp.connect(masterGain);
+  return { compressor, masterGain, limiter, masterHp };
+};
+
+/* ---------- ④ Pad：三角波和弦垫（对应 zed 的 createSynth，简化成单振荡器）
+ * sawtooth → triangle：谐波按 1/n² 衰减（锯齿是 1/n），高频能量骤降，不再「锯齿」；
+ * 滤波包络 sustain 压低 → 稳态时截止频率几乎闭合，只留温暖的基频区域 */
+const createPad = async destination => {
+  const pad = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 4, decay: 1.2, sustain: 0.6, release: 10 },   // attack 6→4：配合 4~8s 短和弦，音符能「长出来」
+    filterEnvelope: {
+      attack: 4, decay: 0.8, sustain: 0.25, release: 10,             // sustain 0.18→0.25：留更多谐波给外层旋钮「扫」
+      baseFrequency: 350, octaves: 2.0,                              // 220→350：内层滤波更开放
+    },
+    volume: -12,
+  });
+  const padFilter = new Tone.Filter({ type: 'lowpass', frequency: 600 });   // ★ 音色旋钮滤波器（初始 600Hz）
+  const reverb = new Tone.Reverb({ decay: 20, wet: 0.6 });            // 更湿的混响，进一步抹平棱角
+  await reverb.generate();
+  pad.connect(padFilter);              // 乐器级扫频：滤波器在混响之前（像在 Move 上扭音色旋钮）
+  padFilter.connect(reverb);
+  reverb.connect(destination);
+  /* 包装：透传交叉淡化所需方法，暴露 filter 供引擎扫频调制，并确保所有节点随 pad 一起释放 */
+  return {
+    filter: padFilter,
+    triggerAttack: (n, t, v) => pad.triggerAttack(n, t, v),
+    triggerRelease: (n, t) => pad.triggerRelease(n, t),
+    releaseAll: t => pad.releaseAll(t),
+    dispose: () => { pad.dispose(); padFilter.dispose(); reverb.dispose(); },
+  };
+};
+
+/* ---------- ⑤ Drone：持续低音（新增基础层，随和弦根音滑移） ---------- */
+const createDrone = destination => {
+  const gain = new Tone.Gain(0.05).connect(destination);   // 持续低频退后，给 bass/kick 留出空间
+  const osc = new Tone.Oscillator({ frequency: 65.4, type: 'sine' }); // C2
+  osc.connect(gain);
+  const breath = new Tone.LFO({ frequency: 0.05, min: 0.025, max: 0.09 }).connect(gain.gain).start();
+  return {
+    osc, breath,
+    start: () => osc.start(),
+    stop: () => osc.stop(),
+    retune: midi => { // 3 秒滑到新的根音（比瞬切更「氛围」）
+      osc.frequency.linearRampToValueAtTime(Tone.Frequency(midi, 'midi').toFrequency(), Tone.now() + 3);
+    },
+    dispose: () => { osc.dispose(); gain.dispose(); breath.dispose(); },
+  };
+};
+
+/* ---------- ⑥ Pluck：FM 弹拨音（旋律层）+ 单次延迟（slapback）
+ * 干声直通 + 0.375s 后一声变暗的延迟声（低通 3000），无反馈环：
+ * 干净的一次反射，不重复、不粘、不卡顿 */
+const createPluck = destination => {
+  const pluck = new Tone.FMSynth({
+    harmonicity: 3, modulationIndex: 4,   // 更高的调制比 → 更亮、更「叮」的音色，能穿透 Pad
+    oscillator: { type: 'sine' },
+    modulation: { type: 'square' },
+    envelope: { attack: 0.01, decay: 0.6, sustain: 0.05, release: 0.8 },  // 稍长的余韵
+    modulationEnvelope: { attack: 0.01, decay: 0.3, sustain: 0, release: 0.4 },
+    volume: -9,                            // 从 -18 提到 -9：不再被 Pad 盖住
+  });
+  const delayNode = new Tone.Delay(0.3);      // 0.3s：延迟紧贴音符
+  const delayGain = new Tone.Gain(0.4);       // ★ 延迟声衰减到干声的 40%：不再盖住后续音符
+  const fbFilter = new Tone.Filter({ type: 'lowpass', frequency: 3000 });   // 延迟声比干声暗一档
+  pluck.connect(destination);      // 干声直通
+  pluck.connect(delayNode);
+  delayNode.connect(delayGain);
+  delayGain.connect(fbFilter);
+  fbFilter.connect(destination);   // ★ 单次延迟：一次延迟声、不重复（slapback，无反馈环）
+  return {
+    triggerAttackRelease: (note, dur, time, vel) => pluck.triggerAttackRelease(note, dur, time, vel),
+    dispose: () => { pluck.dispose(); delayNode.dispose(); delayGain.dispose(); fbFilter.dispose(); },
+  };
+};
+
+/* ---------- ⑦ Air：粉噪声「风」（对应 zed 的 createNoise，LFO 套 LFO） ---------- */
+const createAir = async destination => {
+  const reverb = new Tone.Reverb({ decay: 12, wet: 0.35 });   // wet 0.4→0.35，给旋律让位
+  await reverb.generate();
+  reverb.connect(destination);
+  const filter = new Tone.Filter({ type: 'bandpass', frequency: 900, Q: 0.6 }).connect(reverb); // 700→900，更「空气」
+  const gain = new Tone.Gain(0.05).connect(filter);           // 0.08→0.05：Air 整体退后
+  const noise = new Tone.Noise({ type: 'pink' }).connect(gain);
+  const wind = new Tone.LFO({ frequency: 0.06, min: 0.01, max: 0.12 }).connect(gain.gain); // 峰值 0.2→0.12
+  const windDrift = new Tone.LFO({ frequency: 0.02, min: 0.03, max: 0.12 }).connect(wind.frequency);
+  wind.start(); windDrift.start();
+  return { noise, dispose: () => [noise, gain, filter, reverb, wind, windDrift].forEach(n => n.dispose()) };
+};
+
+/* ---------- ⑧ Bass：低音线（让音乐「站」起来）
+ * - triangle + 长包络 + 轻饱和（同前）
+ * - ★ PolySynth(MonoSynth)：多 voice 池 —— 每个音独立走完 envelope，
+ *   前一个音的 release 尾巴不会被后一个音切断（MonoSynth 单音会「抢 voice」导致切断感） */
+const createBass = destination => {
+  const bass = new Tone.PolySynth(Tone.MonoSynth, {
+    oscillator: { type: 'triangle' },
+    filterEnvelope: { attack: 0.3, decay: 1, sustain: 0.5, release: 2, baseFrequency: 500, octaves: 1.5 },
+    envelope: { attack: 0.1, decay: 1, sustain: 0.6, release: 1.2 },   // 音头 0.3→0.1：「咚」干脆
+    volume: -11,
+  });
+  const sat = new Tone.Distortion({ distortion: 0.2, wet: 0.4 }).connect(destination);
+  bass.connect(sat);
+  return {
+    triggerAttack: (note, t, v) => bass.triggerAttack(note, t, v),
+    triggerRelease: (note, t) => bass.triggerRelease(note, t),
+    triggerAttackRelease: (note, dur, time, vel) => bass.triggerAttackRelease(note, dur, time, vel),
+    releaseAll: t => bass.releaseAll(t),
+    dispose: () => { bass.dispose(); sat.dispose(); },
+  };
+};
+
+/* ---------- ⑨ Drums：鼓（909 风格，纯合成，无需采样）
+ * Kick = TR-909 灵魂：正弦波从 160Hz 指数下滑到 45Hz（约 90ms 深扫频）
+ *   + 极快音头（3ms 冲到峰值）+ 0.6 秒低频长尾 —— 这就是 909 的「嘣」；
+ *   每次触发新建 osc+gain，onended 自清理，无需持久节点。
+ * Hi-hat = 白噪声 + 高通（909 的金属感），短促包络 */
+const createDrums = (destination, duckTargets = []) => {
+  const parseWhen = when => {
+    if (typeof when === 'number') return when;
+    if (typeof when === 'string' && when[0] === '+') return Tone.now() + parseFloat(when.slice(1));
+    return Tone.Time(when).toSeconds();
+  };
+
+  /* ★ kick 与 hat 分频（混音正解）+ kick 清晰度：
+   * kick：主体 909 扫频 + sub 叠加层 → 轻饱和 → 低通 900 —— 让音头瞬态与谐波通过，不再「蒙住」；
+   * hat 专属 highpass 7000 + 音量 -18 —— 高频后退，不再抢戏 */
+  const kickEq = new Tone.Filter({ type: 'lowpass', frequency: 550 }).connect(destination); // 750→550：更暗，不抢戏
+  const kickSat = new Tone.Distortion({ distortion: 0.15, wet: 0.35 }).connect(kickEq); // 轻饱和：只加一点「实」感，不再破音
+
+  const kick = {
+    trigger: (when, strength = 1) => {
+      /* ★ 顺序陷阱：必须先创建节点、再读时间。
+       * Tone 构造节点时会在「构造时刻」给参数隐式调度初始值；
+       * 若先读时间（t 早于构造时刻），setValueAtTime 会报
+       * “time must be >= last scheduled time” */
+      const gain = new Tone.Gain(0.0001).connect(kickSat);
+      const osc = new Tone.Oscillator({ type: 'sine', frequency: 135 });   // 150→135：下坠起点更低，更柔和
+      osc.connect(gain);
+      const t = parseWhen(when);
+      osc.frequency.setValueAtTime(135, t);
+      osc.frequency.exponentialRampToValueAtTime(45, t + 0.05);  // 扫频快速到位，鼓皮「紧」
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.9 * strength, t + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.3 * strength, t + 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);   // 长尾 0.6→0.45s：低频尾巴减量防堆积
+      osc.start(t);
+      osc.stop(t + 0.47);
+      osc.onended = () => { osc.dispose(); gain.dispose(); };
+
+      /* sub 叠加层：与主体同频 45Hz（无拍频），峰值 0.2、尾长 0.35s */
+      const subGain = new Tone.Gain(0.0001).connect(kickSat);
+      const sub = new Tone.Oscillator({ type: 'sine', frequency: 45 });
+      sub.connect(subGain);
+      subGain.gain.setValueAtTime(0.0001, t);
+      subGain.gain.exponentialRampToValueAtTime(0.12 * strength, t + 0.006);
+      subGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+      sub.start(t);
+      sub.stop(t + 0.37);
+      sub.onended = () => { sub.dispose(); subGain.dispose(); };
+
+      /* ★ 侧链压缩（ducking）：kick 落下的瞬间，把低频层（bass/drone/pad/鼓轨）压到
+       * 45% 再弹回 —— 低频给 kick 的「嘣」让位，避免低频堆积打架。
+       * 注意：周期性 duck 必须 cancelScheduledValues，否则 ramp 会堆积冲突 */
+      duckTargets.forEach(g => {
+        g.gain.cancelScheduledValues(t);
+        g.gain.setValueAtTime(g.gain.value, t);
+        g.gain.linearRampToValueAtTime(0.45, t + 0.02);
+        g.gain.linearRampToValueAtTime(1, t + 0.2);
+      });
+    },
+  };
+
+  const hatFilter = new Tone.Filter(7000, 'highpass').connect(destination);
+  const hat = new Tone.NoiseSynth({
+    noise: { type: 'white' },
+    envelope: { attack: 0.001, decay: 0.03, sustain: 0, release: 0.02 },  // 短促
+    volume: -21,                                                          // 氛围脉冲：Hat 只作远处纹理
+  }).connect(hatFilter);
+
+  return {
+    kick,
+    hat: { trigger: when => hat.triggerAttackRelease(0.05, when) }, // 统一 trigger 接口（NoiseSynth 原生没有 trigger）
+    dispose: () => { kickEq.dispose(); kickSat.dispose(); hat.dispose(); hatFilter.dispose(); },
+  };
+};
+
+/* ---------- ⑧ 引擎：activate → { deactivate, schedule, end, fadeIn, fadeOut }
+ * 对应 zed 的契约：activate 分配资源、schedule 安排演出、deactivate 释放资源 ---------- */
+const activateEngine = async seed => {
+  window.generativeMusic.rng = makeRng(seed);
+  Tone.Transport.bpm.value = 60;                 // 1 拍 = 1 秒，旋律按拍调度
+
+  const { compressor, masterGain, limiter, masterHp } = makeMasterChain();
+
+  /* 全局张力（★ 声明在 activateEngine 顶层：startPadSweep、pickDrumPattern、
+   * playNextChord 等所有调度器都读取它 —— 词法作用域按「定义位置」解析，
+   * 若声明在 schedule 内部，顶层定义的 startPadSweep 将永远看不到它） */
+  let energy = 0.5;
+
+  /* ═══ 混音处理链（★ 让各轨和谐的关键）═══
+   * 每轨：乐器 → 推子轨 → [侧链 duck] → EQ 频率分区 → 声像/宽度 → 压缩器 → 主音量
+   *   ① EQ 频率分区：每轨只占自己的频段（低频层各归其位、高频层互不打架）
+   *   ② 侧链 duck：kick 落下时短暂压低低频层（0.18s）—— 低频让位给 kick 的「嘣」，
+   *      避免低频堆积，这是电子音乐混音的招牌手法
+   *   ③ 声像/宽度：Pad 与 Air 拉宽成立体声、Pluck 轻微偏左 —— 声场不再挤在中间 */
+
+  /* ① 推子轨（Mute/Solo/音量仍作用于它） */
+  const trackGains = {
+    pad: new Tone.Gain(1),
+    drone: new Tone.Gain(1),
+    bass: new Tone.Gain(1),
+    pluck: new Tone.Gain(1),
+    drums: new Tone.Gain(1),
+    air: new Tone.Gain(1),
+  };
+
+  /* ② 侧链 duck 节点（低频层：drums/bass/drone/pad） */
+  const duckGains = {
+    drums: new Tone.Gain(1),
+    bass: new Tone.Gain(1),
+    drone: new Tone.Gain(1),
+    pad: new Tone.Gain(1),
+  };
+
+  /* ③ EQ 频率分区 + 声像（显式连接，每轨一目了然） */
+  const padEq1 = new Tone.Filter({ type: 'highpass', frequency: 110 });    // 清掉 Pad 根部堆积，低频留给 bass/drone
+  const padEq2 = new Tone.Filter({ type: 'lowpass', frequency: 1800 });    // 不跟 pluck/hat 抢高频
+  const padWiden = new Tone.StereoWidener(0.5);                            // Pad 拉宽
+  trackGains.pad.connect(duckGains.pad);
+  duckGains.pad.connect(padEq1).connect(padEq2).connect(padWiden).connect(compressor);
+
+  const droneEq = new Tone.Filter({ type: 'lowpass', frequency: 250 });   // 600→250：drone 只留基频区，杜绝异常高频
+  trackGains.drone.connect(duckGains.drone);
+  duckGains.drone.connect(droneEq).connect(compressor);
+
+  const bassEq = new Tone.Filter({ type: 'lowpass', frequency: 250 });     // 贝斯守低频区
+  trackGains.bass.connect(duckGains.bass);
+  duckGains.bass.connect(bassEq).connect(compressor);
+
+  const pluckEq1 = new Tone.Filter({ type: 'highpass', frequency: 400 });  // 避开 bass/kick
+  const pluckEq2 = new Tone.Filter({ type: 'lowpass', frequency: 9000 });
+  /* Pluck 声像游走（★ v2：有「均衡时刻」）
+   * 随机阶梯 + 平滑滑行：每 2~6 秒选一个新 pan 目标、1~3 秒平滑滑过去并停驻。
+   * 目标集合 { -0.7, -0.35, 0, 0.35, 0.7 } 加权 —— 中央(0) 权重 40%，
+   * 所以声像周期性地回到左右均衡，不是一直偏在一侧；停留/滑行时间随机 → 不僵硬 */
+  const pluckPan = new Tone.Panner(0);
+  const PAN_TARGETS = [
+    { v: 0, w: 0.4 },     // 中央均衡（最常出现）
+    { v: -0.7, w: 0.15 },
+    { v: -0.35, w: 0.15 },
+    { v: 0.35, w: 0.15 },
+    { v: 0.7, w: 0.15 },
+  ];
+  const startPanWalk = () => {
+    const step = () => {
+      try {
+      let roll = rng();
+      let target = 0;
+      for (const t of PAN_TARGETS) {
+        roll -= t.w;
+        if (roll <= 0) { target = t.v; break; }
+      }
+      pluckPan.pan.linearRampToValueAtTime(target, Tone.now() + 1 + rng() * 2); // 1~3 秒平滑滑行
+      Tone.Transport.scheduleOnce(step, '+' + (2 + rng() * 4));                 // 2~6 秒后换目标
+      } catch (err) {
+        /* 调度器防御：错误不能杀死 Transport 上的其他事件（否则音乐冻结） */
+        console.error('声像游走出错（已恢复）:', err);
+        Tone.Transport.scheduleOnce(step, '+4');
+      }
+    };
+    step();
+  };
+  /* Pad 音色旋钮（★ Ableton Move 手感）：滤波器截止频率随机阶梯扫频
+   *   - 每 4~10 秒选一个新截止目标、1~3 秒平滑滑过去（像扭旋钮）
+   *   - 与全局张力联动：张力越高基础位置越高（更亮）→ 音色随音乐起伏呼吸 */
+  const startPadSweep = () => {
+    const step = () => {
+      try {
+      /* ★ 旋钮扫在 pad 的实际有效频段（300~1300Hz）——之前 400~2050 扫的是
+       * 已被内层滤波器滤掉的空频段，听不到效果 */
+      const target = 300 + energy * 600 + rng() * 400;   // 300~1300Hz，张力越高越亮
+      pad.filter.frequency.linearRampToValueAtTime(target, Tone.now() + 1 + rng() * 2);
+      Tone.Transport.scheduleOnce(step, '+' + (4 + rng() * 6));   // 4~10 秒后换目标
+      } catch (err) {
+        /* 调度器防御：错误不能杀死 Transport 上的其他事件（否则音乐冻结） */
+        console.error('Pad 扫频出错（已恢复）:', err);
+        Tone.Transport.scheduleOnce(step, '+5');
+      }
+    };
+    step();
+  };
+  trackGains.pluck.connect(pluckEq1).connect(pluckEq2).connect(pluckPan).connect(compressor);
+
+  /* kick/hat 已在 createDrums 内部分频（kick 低通 250 / hat 高通 7000），不共用 drums 轨 EQ */
+  trackGains.drums.connect(duckGains.drums);
+  duckGains.drums.connect(compressor);
+
+  const airWiden = new Tone.StereoWidener(0.7);                            // Air 最宽
+  trackGains.air.connect(airWiden).connect(compressor);
+
+  const pad = await createPad(trackGains.pad);
+  const drone = createDrone(trackGains.drone);
+  const bass = createBass(trackGains.bass);
+  const pluck = createPluck(trackGains.pluck);
+  const drums = createDrums(trackGains.drums, [
+    duckGains.bass, duckGains.drone,   // ★ duck 只压低频层（bass/drone 与 kick 抢低频）；
+                                       //   pad 是中低频层，被 kick 反复调制会「一顿一顿」
+  ]);
+  const air = await createAir(trackGains.air);
+
+  // 音符 → MIDI 号（旋律与低音层用 MIDI 运算，跨八度方便）
+  const OCT_MIDI = NOTES.map(n => Tone.Frequency(n).toMidi())
+    .concat(NOTES.map(n => Tone.Frequency(n).toMidi() + 12)); // C3..Bb5
+
+  let isRunning = false;
+  const WATCHDOG_STALL_SECONDS = 25; // 必须长于最长 16s 和弦，并给后台调度留余量
+  let watchdogTimer = null;   // 看门狗定时器（activateEngine 顶层，end/deactivate 可清理）
+  let restartScheduler = null;   // 调度重启器（由 schedule 内部赋值，供按钮/体检/看门狗复用）
+
+  const schedule = () => {
+    if (isRunning) return;
+    isRunning = true;
+    air.noise.start();
+    drone.start();
+
+    /* 全局张力：每次播放重置（声明在 activateEngine 顶层） */
+    energy = 0.5;
+
+    /* 鼓入场（★ 开场编曲）：60% 的播放从无鼓开始，鼓在 3~5 个和弦内逐渐浮出；
+     * 40% 直接有鼓。用 duckGains.drums 的增益做渐入（它是 drums 轨的常规通路，
+     * 不在 duckTargets 里，不会被 kick 的 ducking 干扰） */
+    const hasDrumIntro = rng() < 0.6;
+    const drumEntranceStep = 0.2 + rng() * 0.15;   // 每和弦 +0.2~0.35 → 3~5 个和弦完成
+    let drumEntrance = hasDrumIntro ? 0 : 1;
+    duckGains.drums.gain.setValueAtTime(drumEntrance, Tone.now());   // 初始：无鼓开场
+
+    startPanWalk();              // Pluck 声像游走（Transport 递归，end 时被 cancel 清掉）
+    startPadSweep();             // Pad 音色旋钮扫频（同上）
+
+    /* 和弦引擎（对应 zed 的 playRandomChord 递归）。
+     * ★★ 升级 1：和弦进行 —— 和声不再随机漂移，而是沿预设「进行」循环
+     *   （i–VI–III–VII 这类），像歌一样有方向、有归位，不再单调；
+     * ★★ 升级 2：固定小节结构（bpm=60 → 1 拍 = 1 秒），每个和弦占 2 或 3 小节，
+     *   让鼓、贝斯、旋律都落在统一的节拍网格上。 */
+    let rootDegree = 0;                          // 从 Cm 出发
+    const PROGRESSIONS = [
+      { name: 'i–VI–III–VII', degrees: [0, 5, 2, 6] },  // 电影氛围进行
+      { name: 'i–iv–VI–v',    degrees: [0, 3, 5, 4] },  // 小调经典
+      { name: 'i–VII–VI–III', degrees: [0, 6, 5, 2] },  // 下行
+    ];
+    let progression = PROGRESSIONS[Math.floor(rng() * PROGRESSIONS.length)];
+    let progIndex = 0;
+    let chordCount = 0;
+
+    /* 鼓 pattern 演化状态（★★ 关键升级：鼓不再是固定循环，而是会「发展」）
+     * energy 0.15–1.0：每和弦缓慢游走（偏渐强），fill 爆发后回落 → 段落感。
+     * ★ 全局张力：所有层的密度/力度都随它联动（鼓选形态、pluck 动机数、bass 密度、pad 色彩） */
+
+    /* 鼓 pattern 形态库：每种形态都是欧几里得参数组合，有自己的「人格」。
+     * kick/hat = 16 步网格上的脉冲数；offset = hat 相对 kick 的相位错位（步）；
+     * feel = 该形态的能量气质（0~1），供能量加权选择 */
+    const DRUM_PATTERNS = [
+      { name: 'pulse',  kick: 1, hat: 0, offset: 0, feel: 0.2 }, // 第一拍：只有呼吸般的脉冲
+      { name: 'echo',   kick: 2, hat: 1, offset: 6, feel: 0.5 }, // 第一、三拍 + 一次远处 Hat
+      { name: 'motion', kick: 2, hat: 3, offset: 3, feel: 0.8 }, // 稍有流动，但仍保持稀疏
+    ];
+
+    /* 能量加权轮盘赌：选 feel 与当前 energy 最接近的形态
+     * （能量低 → 倾向 pulse；能量高 → 倾向 motion） */
+    const pickDrumPattern = () => {
+      const weights = DRUM_PATTERNS.map(p => Math.max(0.05, 1 - Math.abs(p.feel - energy)));
+      const total = weights.reduce((a, b) => a + b, 0);
+      let roll = rng() * total;
+      for (let i = 0; i < DRUM_PATTERNS.length; i += 1) {
+        roll -= weights[i];
+        if (roll <= 0) return DRUM_PATTERNS[i];
+      }
+      return DRUM_PATTERNS[DRUM_PATTERNS.length - 1];
+    };
+
+    let drumsSinceFill = 0;
+    let drumsSinceBreak = 0;
+    let drumPattern = pickDrumPattern();
+    let drumRotate = 0; // Kick 固定以第一拍为锚点，不再随机漂移
+    let drumBarCounter = 0; // 跨和弦延续四小节呼吸乐句
+    let activePadNotes = [];   // 当前发声的 Pad 音符（供和弦交叉淡化）
+    let lastChordTime = Tone.now();   // 看门狗：记录最后推进时刻
+
+    /* 和声功能映射（voice-leading）：把音高 p 在 oldChord 中的「角色」
+     *（根/三/五/七音）对应到 newChord 的同角色，保持八度区 ——
+     * 动机变形时音高的移动有和声逻辑，不是随机跳。
+     * ★ 角色匹配按 pitch-class（MIDI % 12，12 半音循环），
+     * 不能用 NOTES 索引差（那是 7 音循环，会错位） */
+    const mapRole = (p, oldChord, newChord) => {
+      const oct = p >= 14 ? 14 : p >= 7 ? 7 : 0;
+      const pPc = OCT_MIDI[p % 14] % 12;   // 音高的 pitch-class
+      let bestRole = 0;
+      let bestDist = 99;
+      oldChord.forEach((t, role) => {
+        const tPc = OCT_MIDI[t] % 12;
+        let d = Math.abs(pPc - tPc);
+        if (d > 6) d = 12 - d;             // 环距离
+        if (d < bestDist) { bestDist = d; bestRole = role; }
+      });
+      return newChord[bestRole % newChord.length] + oct;
+    };
+    let lastMotif = null;   // 动机记忆（跨和弦发展的「血缘」）
+
+    const playNextChord = () => {
+      try {
+      lastChordTime = Tone.now();   // 记录推进（看门狗据此判断是否卡死）
+      /* 每 4 个和弦后，40% 概率换一个新的进行（避免永远同一个循环） */
+      if (chordCount > 0 && chordCount % 4 === 0 && rng() < 0.4) {
+        progression = PROGRESSIONS[Math.floor(rng() * PROGRESSIONS.length)];
+        progIndex = 0;
+      }
+      rootDegree = progression.degrees[progIndex % progression.degrees.length];
+      progIndex += 1;
+      chordCount += 1;
+
+      const chordTones = [rootDegree, rootDegree + 2, rootDegree + 4];    // 三和弦
+      if (rng() < 0.2 + energy * 0.3) chordTones.push(rootDegree + 6);    // 七音概率随张力（0.25~0.5）
+      const chordNames = chordTones.map(i => NOTES[i]);
+
+      /* 小节结构：和弦长度可变（2~4 小节 × 4 拍）。Pad attack 为 4s，
+       * 因此取消 1 小节和弦，避免和声还没建立就进入 10s release。 */
+      const barRoll = rng();
+      const bars = barRoll < 0.45 ? 2 : barRoll < 0.85 ? 3 : 4;
+      const beats = bars * 4;
+      const duration = beats;
+
+      /* Pad：★ 交叉淡化 —— 换和弦不再突兀
+       * 之前：每个和弦 3~4 个音一次性 triggerAttackRelease，新旧和弦在切换点叠撞，切换感明显。
+       * 现在：
+       *   - 共同音保持：新旧和弦共有的音不重新触发 → 声音连续
+       *   - 退出音：新和弦开始时 triggerRelease（10s 长尾自然淡出）
+       *   - 进入音：triggerAttack 错开 0~3 秒起音，和弦慢慢聚拢；
+       *     一直持续到停止的音由 end() 的 releaseAll 兜底释放 */
+      const prevPadNotes = activePadNotes;
+      const enterPadNotes = chordTones.filter(n => !prevPadNotes.includes(n));
+      const exitPadNotes = prevPadNotes.filter(n => !chordTones.includes(n));
+
+      if (exitPadNotes.length > 0) {
+        pad.triggerRelease(exitPadNotes.map(i => NOTES[i]), '+0.01');
+      }
+      enterPadNotes.forEach(n => {
+        pad.triggerAttack(NOTES[n], '+' + (rng() * 2), 0.6 + rng() * 0.4);   // 错开 0~3→0~2s：短和弦下更从容
+      });
+      activePadNotes = chordTones.slice();
+
+      /* Drone：滑到根音低八度的五度（-12+7）—— 与 bass 分工：
+       * bass 是根音脉冲（节奏），drone 是五度持续底座（和声）；
+       * 98~174Hz 普通喇叭可闻（比低两八度的 49~87Hz 有存在感） */
+      drone.retune(OCT_MIDI[rootDegree] - 12 + 7);
+
+      /* Bass（⑤）：「咚」—— 每小节（4 拍）一个厚实低音脉冲，时值 1.0~1.6s；
+       * 密度很低但有锚点（与 kick 的律动呼应），90% 概率留一点呼吸 */
+      for (let i = 0; i < beats; i += 4) {
+        if (rng() < 0.9) {
+          const bassMidi = OCT_MIDI[rootDegree] - 12 + (rng() < 0.2 ? 7 : 0);
+          bass.triggerAttackRelease(
+            Tone.Frequency(bassMidi, 'midi').toNote(),
+            0.7 + rng() * 0.4, '+' + i, 0.6 + rng() * 0.4   // 时值 1.0~1.6→0.7~1.1s：低频减法防堆积
+          );
+        }
+      }
+
+      /* Drums（⑤）：909 底鼓 + pattern 形态演化
+       * - 每 8 个和弦才切换鼓形态（能量加权：低能量 → pulse，高能量 → motion）
+       * - 普通小节：kick 固定第一拍，hat 只作稀疏纹理
+       * - Fill（每 ≥6 个和弦后 25%）：末小节轻微抬起，不做 Kick 滚奏
+       * - Break（每 ≥4 个和弦后 25%）：整段只留一次 Kick，制造呼吸 */
+      drumsSinceFill += 1;
+      drumsSinceBreak += 1;
+      const isFill = drumsSinceFill >= 6 && rng() < 0.25;
+      const isBreak = !isFill && drumsSinceBreak >= 4 && rng() < 0.25;
+      /* 每 8 个和弦才允许换鼓型；乐段内部保持重复，像作品自身的脉搏。 */
+      if (chordCount > 1 && (chordCount - 1) % 8 === 0) {
+        drumPattern = pickDrumPattern();
+        drumRotate = 0;
+        drumBarCounter = 0;
+      }
+
+      for (let m = 0; m < bars; m++) {
+        const barStart = m * 4;
+        if (isFill) {
+          /* Fill 只在末小节稍微抬起，不再用 Kick 做 16 分滚奏。 */
+          drums.kick.trigger('+' + barStart, 0.78 + rng() * 0.12);
+          if (m === bars - 1) {
+            drums.kick.trigger('+' + (barStart + 2.5), 0.58 + rng() * 0.12);
+            [2.5, 3, 3.5].forEach(t => drums.hat.trigger('+' + (barStart + t)));
+          }
+        } else if (isBreak) {
+          if (m === 0) drums.kick.trigger('+' + barStart, 0.65); // 整段只留一次脉冲
+        } else {
+          /* Kick：四小节呼吸乐句。保留第一拍方向，但允许留空和后半拍回应。 */
+          const phraseBar = drumBarCounter % 4;
+          let kickTimes;
+          if (drumPattern.name === 'pulse') {
+            kickTimes = phraseBar % 2 === 0 ? [0] : [];
+          } else if (drumPattern.name === 'echo') {
+            kickTimes = phraseBar % 2 === 0 ? [0] : [0, 2.75];
+          } else {
+            kickTimes = [[0, 2.5], [0, 3], [0, 1.75], [0, 3.25]][phraseBar];
+          }
+          /* Kick 会改写共享的 duck automation，必须按时间升序调度。 */
+          kickTimes.sort((a, b) => a - b);
+          kickTimes.forEach((t, index) => {
+            const baseStrength = index === 0 ? 0.78 : 0.58;
+            drums.kick.trigger('+' + (barStart + t), baseStrength + rng() * 0.14);
+          });
+          /* Hi-hat：形态的 hat 参数 + 相对 kick 的相位错位（offset 步） */
+          const hatPattern = euclidean(drumPattern.hat, 16);
+          const hatRotate = (drumRotate + drumPattern.offset) % 16;
+          const hatTimes = [];
+          hatPattern.forEach((hit, idx) => {
+            if (hit) hatTimes.push(((idx + hatRotate) % 16) * 0.25);
+          });
+          hatTimes.sort((a, b) => a - b);   // ★ 旋转后时间乱序：hat 是单例，必须升序触发
+          hatTimes.forEach(t => drums.hat.trigger('+' + (barStart + t)));
+        }
+        drumBarCounter += 1;
+      }
+
+      /* 能量演化：普通小节缓慢上行（期望 +0.025/和弦），fill 后回落重置 */
+      if (isFill) {
+        energy = 0.25;
+        drumsSinceFill = 0;
+        drumsSinceBreak = 0;
+      } else if (isBreak) {
+        drumsSinceBreak = 0;
+      } else {
+        energy = Math.min(1, Math.max(0.15, energy + (rng() - 0.4) * 0.25));
+      }
+
+      /* 鼓入场推进：每和弦把鼓音量渐入一档（0 → 1），「鼓慢慢进来」 */
+      if (drumEntrance < 1) {
+        drumEntrance = Math.min(1, drumEntrance + drumEntranceStep);
+        duckGains.drums.gain.linearRampToValueAtTime(drumEntrance, Tone.now() + 0.5);
+      }
+
+      /* Pluck 旋律（④）：★ 动机系统 + 张力联动
+       * 每个和弦 = 一个乐句（16 分步网格 × bars 小节）：
+       *   ① 动机：4 音序列（音高来自和弦音）+ 随机节奏型（时值多样）
+       *   ② 乐句：动机出现次数随张力（低能量 1~2 次、高能量 3~4 次），
+       *      第二次 60% 移调 ±2 度、第三次 50% 倒影（音高反向）
+       *   ③ 句尾：长音停在根音或五音（音区比动机低 → 收束感，像一句话说完） */
+      const STEP = 0.25;                                  // 16 分音符
+      const totalSteps = bars * 16;
+
+      /* ★★ 动机发展系统：每句不是纯随机，而是基于上一句变形 —— 乐句有「血缘」。
+       *   50% 变形重复：echo(20%) / 节奏轮转(30%) / 和声功能映射(30%) / 倒影(20%)
+       *   30% 和声映射：保留节奏骨架，音高映射到新和弦的相同和声功能
+       *   20% 全新动机（欧几里得生成） */
+      let motifLen;
+      let motifPitches;
+      let motifDurs;
+      /* 和声保险：变形后 pitch-class 不属于新和弦的音，自动映射修正
+       *（保留 echo/倒影的意图，但避免与和声冲突的跑调音） */
+      const harmonize = pitches => pitches.map(p => {
+        const pPc = OCT_MIDI[p % 14] % 12;
+        return chordTones.some(t => OCT_MIDI[t] % 12 === pPc)
+          ? p
+          : mapRole(p, lastMotif.chordTones, chordTones);
+      });
+      /* ★ 疏密重构：同长度、不同脉冲数的欧几里得（密度变化，乐句长度不变） */
+      const rebuildRhythm = (len, pulses) => {
+        const r = euclidean(pulses, len);
+        const rot = Math.floor(rng() * len);
+        const rotated = r.map((_, s) => r[(s + rot) % len]);
+        const durs = [];
+        let last = -1;
+        for (let s = 0; s < len; s += 1) {
+          if (rotated[s] === 1) {
+            durs.push(last === -1 ? s + 1 : s - last);
+            last = s;
+          }
+        }
+        return durs;
+      };
+      /* 音高数量对齐到新脉冲数（疏密变化后循环补齐/截断） */
+      const alignPitches = (pitches, count) => {
+        const result = [];
+        for (let i = 0; i < count; i += 1) result.push(pitches[i % pitches.length]);
+        return result;
+      };
+      const devRoll = rng();
+      if (lastMotif && devRoll < 0.5) {
+        motifLen = lastMotif.len;
+        motifDurs = lastMotif.rhythm.slice();
+        motifPitches = lastMotif.pitches.slice();
+        const op = rng();
+        if (op < 0.15) {
+          /* echo：完全重复（重复是力量，听感上的锚点；不和谐音自动修正） */
+          motifPitches = harmonize(motifPitches);
+        } else if (op < 0.35) {
+          /* 节奏轮转：时值数组轮转一位，音高不变（节奏变奏） */
+          motifDurs = [motifDurs[motifDurs.length - 1]].concat(motifDurs.slice(0, -1));
+          motifPitches = harmonize(motifPitches);
+        } else if (op < 0.55) {
+          /* ★ 疏密变化：同长度、脉冲数 2~6 的欧几里得重构（增密/减稀） */
+          const pulses = 2 + Math.floor(rng() * 5);
+          motifDurs = rebuildRhythm(motifLen, pulses);
+          motifPitches = alignPitches(motifPitches, motifDurs.length);
+          motifPitches = harmonize(motifPitches);
+        } else if (op < 0.8) {
+          /* 和声功能映射：音高移到新和弦的相同角色 */
+          motifPitches = motifPitches.map(p => mapRole(p, lastMotif.chordTones, chordTones));
+        } else {
+          /* 倒影：音高反向（节奏不变） */
+          motifPitches = motifPitches.slice().reverse();
+          motifPitches = harmonize(motifPitches);
+        }
+      } else if (lastMotif && devRoll < 0.8) {
+        /* 和声映射：保留节奏骨架，音高全部映射到新和弦 */
+        motifLen = lastMotif.len;
+        motifDurs = lastMotif.rhythm.slice();
+        motifPitches = lastMotif.pitches.map(p => mapRole(p, lastMotif.chordTones, chordTones));
+      } else {
+        /* 全新动机：欧几里得节奏 + 随机旋转 + 和弦音音高 */
+        motifLen = 6 + Math.floor(rng() * 7);
+        const motifPulses = 3 + Math.floor(rng() * Math.min(4, motifLen - 2));
+        const rhythm = euclidean(motifPulses, motifLen);
+        const rot = Math.floor(rng() * motifLen);
+        const rotated = rhythm.map((_, s) => rhythm[(s + rot) % motifLen]);
+        motifDurs = [];
+        let lastHit = -1;
+        for (let s = 0; s < motifLen; s += 1) {
+          if (rotated[s] === 1) {
+            motifDurs.push(lastHit === -1 ? s + 1 : s - lastHit);
+            lastHit = s;
+          }
+        }
+        motifPitches = [];
+        for (let i = 0; i < motifPulses; i += 1) {
+          const tone = chordTones[Math.floor(rng() * chordTones.length)];
+          motifPitches.push(tone + (rng() < 0.5 + energy * 0.2 ? 7 : 0));
+        }
+      }
+      /* 更新动机记忆（供下一和弦变形） */
+      lastMotif = {
+        pitches: motifPitches.slice(),
+        rhythm: motifDurs.slice(),
+        len: motifLen,
+        chordTones: chordTones.slice(),
+      };
+
+      /* 放置动机（次数随张力：能量低 1~2 次、能量高 3~4 次；互不重叠、给句尾留 5 步）
+       * ★ 发声时机变化（pluck 不再永远跟和弦同时开口）：
+       *   30% 前 1/4 静默 —— 和弦响完一会儿，pluck 才「开口」
+       *   30% 前一半静默 —— pluck 很晚才出现（延迟回应）
+       *   40% 均匀分布（现状，和弦开头就有） */
+      const phraseRegion = rng();
+      const minStart = phraseRegion < 0.3 ? Math.floor(totalSteps * 0.25)
+                     : phraseRegion < 0.6 ? Math.floor(totalSteps * 0.5)
+                     : 0;
+      const placements = [];
+      const target = 1 + Math.floor(energy * 2) + (rng() < 0.35 ? 1 : 0);
+      let guard = 0;
+      while (placements.length < target && guard < 30) {
+        guard += 1;
+        const maxStart = Math.max(minStart + 1, totalSteps - motifLen - 5);   // 句尾永远放得下
+        const start = minStart + Math.floor(rng() * (maxStart - minStart));
+        /* 句尾空间检查：动机结束必须至少留 4 步给句尾解决音（短乐句+晚相位时防冲突） */
+        if (start + motifLen + 4 <= totalSteps &&
+            !placements.some(p => start < p + motifLen && p < start + motifLen)) {
+          placements.push(start);
+        }
+      }
+      placements.sort((a, b) => a - b);
+
+      const melodyNotes = [];
+      placements.forEach((start, i) => {
+        let pitches = motifPitches.slice();
+        if (i === 1 && rng() < 0.6) {         // 第二次：60% 移调
+          const shift = rng() < 0.5 ? 2 : -2;
+          pitches = pitches.map(p => Math.max(0, Math.min(20, p + shift)));
+          pitches = harmonize(pitches);       // 移调后重新吸附到当前和弦，避免持续性冲突音
+        } else if (i === 2 && rng() < 0.5) {  // 第三次：50% 倒影
+          pitches = pitches.slice().reverse();
+        }
+        /* ★ 人性化（温和版）：时间微抖动 + 时值微浮动 —— 像专业演奏家，
+         * 不是弹得乱。偏差控制在 5~25ms / ±8% */
+        let cursor = start * STEP + (rng() - 0.5) * 0.02;              // 首音 ±10ms
+        pitches.forEach((p, k) => {
+          const midi = OCT_MIDI[p % 14] + (p >= 14 ? 12 : 0);
+          const noteName = Tone.Frequency(midi, 'midi').toNote();
+          const dur = motifDurs[k] * STEP * (0.92 + rng() * 0.16);   // 时值 ±8%
+          const gap = 0.005 + rng() * 0.02;                            // 5~25ms 微间隙
+          const vel = k === 0
+            ? 0.6 + rng() * 0.3                                       // 动机首音：乐句重音
+            : (0.35 + energy * 0.35) + rng() * 0.3;
+          pluck.triggerAttackRelease(noteName, dur, '+' + cursor, vel);
+          melodyNotes.push(noteName);
+          cursor += dur + gap;
+        });
+      });
+
+      /* 句尾解决：长音落在根音或五音（低音区，收束感）。
+       * endStep 钳制在 [max(乐句尾, 动机尾+2), 乐句尾-2]：短乐句也放得下、且不与动机重叠 */
+      const lastEnd = placements.length ? placements[placements.length - 1] + motifLen : 0;
+      const endStep = Math.min(Math.max(totalSteps - 6, lastEnd + 2), totalSteps - 2);
+
+      /* ★ 高音点缀：很偶尔（12% 的和弦）在动机之后、句尾之前弹一个
+       * 高两个八度的音（C5~Bb6）—— 短促、轻巧，像偶尔闪过的星尘。
+       * 时间必须夹在 lastEnd 与 endStep 之间（pluck 单例，保证触发时间单调） */
+      if (rng() < 0.12 && endStep - lastEnd > 4) {
+        const sparkIdx = chordTones[Math.floor(rng() * chordTones.length)];
+        const sparkNote = Tone.Frequency(OCT_MIDI[sparkIdx] + 24, 'midi').toNote();  // 和弦音 + 两个八度
+        const sparkStep = lastEnd + 2 + Math.floor(rng() * (endStep - lastEnd - 3));
+        pluck.triggerAttackRelease(sparkNote, 0.4 + rng() * 0.3, '+' + (sparkStep * STEP), 0.25 + rng() * 0.2);
+        melodyNotes.push(sparkNote + '↑');
+      }
+
+      const endPitch = rng() < 0.5 ? rootDegree : rootDegree + 4;
+      const endNote = Tone.Frequency(OCT_MIDI[endPitch % 14] + (endPitch >= 14 ? 12 : 0), 'midi').toNote();
+      pluck.triggerAttackRelease(endNote, 1.5, '+' + (endStep * STEP), 0.5 + energy * 0.3);
+      melodyNotes.push(endNote);
+
+      /* 实时反馈（教学用） */
+      const chordLabel = SCALE[rootDegree] + QUALITY[rootDegree];
+      setStatus(
+        '▶ 播放中 · 进行 <b>' + progression.name + '</b> · 和弦 <b>' + chordLabel + '</b>（' +
+        chordNames.join(' ') + '）· ' + bars + ' 小节 · 张力 <b>' + energy.toFixed(2) +
+        '</b> · 鼓 <b>' + drumPattern.name + '</b> · 旋律 ' +
+        (melodyNotes.length ? melodyNotes.join(' ') : '（休止）')
+      );
+      log('[' + progression.name + '] ' + chordLabel + ' ' + chordNames.join(' ') +
+          '  ' + bars + ' 小节  鼓:' + drumPattern.name + '  旋律: ' + (melodyNotes.join(' ') || '—'));
+
+      /* ★ 递归：把下一次和弦排到 Transport 时间轴的未来（绝对不要用 setTimeout） */
+      Tone.Transport.scheduleOnce(playNextChord, '+' + duration);
+      } catch (err) {
+        /* 防御：单个和弦的调度出错绝不能杀死整首音乐（否则只剩持续层在响）。
+         * 记录错误、跳过本和弦、8 秒后继续 —— 错误可见，音乐不断 */
+        console.error('和弦调度出错（已自动恢复）:', err);
+        log('⚠ 和弦出错: ' + err.message + '（已跳过，继续播放）');
+        Tone.Transport.scheduleOnce(playNextChord, '+8');
+      }
+    };
+
+    /* 调度重启器（★ 急救核心）：完整重启调度 —— 清事件 → 释放长音 → 重新调度 → 重启时钟。
+     * 被三处复用：看门狗（自动）、健康检查（回前台）、「重启音乐」按钮（手动） */
+    const restart = () => {
+      try {
+        /* ★ 时钟重建兜底：强制切换 ticker 类型两次（触发销毁+重建），
+         * 最终稳定在 setInterval —— 即使时钟已死也能复活 */
+        try {
+          const _ctx = Tone.getContext();
+          if (_ctx._ticker) {
+            _ctx._ticker.type = _ctx._ticker.type === 'worker' ? 'timeout' : 'worker';
+            _ctx._ticker.type = 'timeout';
+          }
+        } catch (e) { /* 忽略 */ }
+        Tone.Transport.stop();
+        Tone.Transport.cancel();
+        pad.releaseAll(0.5);
+        bass.releaseAll(0.5);
+        activePadNotes = [];
+        lastChordTime = Tone.now();
+        playNextChord();
+        Tone.Transport.start();
+        console.warn('调度已重启');
+        log('⚠ 调度已重启');
+      } catch (err) {
+        console.error('重启失败:', err);
+      }
+    };
+    const healthCheck = () => {
+      if (isRunning && Tone.now() - lastChordTime > WATCHDOG_STALL_SECONDS) {
+        console.warn('健康检查：和弦停滞，自动重启');
+        restart();
+      }
+    };
+    restartScheduler = { restart, healthCheck };
+
+    /* 看门狗（★ 快速静默自愈）：不依赖 Transport 的主线程定时器。
+     * 每 5 秒检查一次，和弦 >15 秒未推进即自动重启 —— 恢复快、几乎无感；
+     * 触发时输出诊断数据（context 状态 / 时钟偏移），用于最终定位 Tone 时钟停滞根因 */
+    const watchdog = () => {
+      try {
+        const ctx = Tone.getContext();
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});   // AudioContext 挂起自动恢复
+        if (isRunning && Tone.now() - lastChordTime > WATCHDOG_STALL_SECONDS) {
+          console.warn(
+            '[看门狗] 和弦停滞 ' + (Tone.now() - lastChordTime).toFixed(0) +
+            's，自动重启。诊断: context=' + ctx.state +
+            ' transportSeconds=' + Tone.Transport.seconds.toFixed(2) +
+            ' audioNow=' + Tone.now().toFixed(2)
+          );
+          restart();
+        }
+      } catch (err) {
+        console.error('看门狗出错:', err);
+      }
+      watchdogTimer = setTimeout(watchdog, 5000);   // ★ 主线程定时器，不依赖 Transport
+    };
+
+    playNextChord();
+    watchdogTimer = setTimeout(watchdog, 5000);   // 启动自愈监视
+  };   // ★ schedule() 闭合（上次编辑丢失，导致语法错误）
+
+  const end = () => {
+    if (!isRunning) return;
+    isRunning = false;
+    clearTimeout(watchdogTimer);   // 停止看门狗
+    pad.releaseAll(0.6);       // 松开所有 Pad（释放包络）
+    bass.releaseAll(0.5);      // 松开 Bass 长音
+    drone.stop();              // 低音收掉
+    air.noise.stop();          // 风停
+    Tone.Transport.cancel();   // ★ 清空所有已排事件（包括下一次和弦）→ 音乐终止
+    Tone.Transport.stop();
+  };
+
+  const fadeIn = () => masterGain.gain.linearRampToValueAtTime(1, Tone.now() + 0.8);
+  const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.5);
+
+  const deactivate = () => {
+    end();
+    [pad, drone, bass, pluck, drums, air].forEach(x => x.dispose && x.dispose());
+    Object.values(trackGains).concat(
+      Object.values(duckGains),
+      [padEq1, padEq2, padWiden, droneEq, bassEq, pluckEq1, pluckEq2, pluckPan, airWiden],
+      [compressor, masterGain, limiter, masterHp]
+    ).forEach(n => n.dispose());
+  };
+
+  return {
+    deactivate, schedule, end, fadeIn, fadeOut, trackGains,
+    restart: () => restartScheduler && restartScheduler.restart(),          // 手动重启调度
+    checkHealth: () => restartScheduler && restartScheduler.healthCheck(),  // 回前台体检
+  };
+};
+
+/* ---------- ⑨ 控制器 ---------- */
+let engine = null;
+let currentSeed = null;
+let engineTransition = false;
+
+/* 音轨 Mute/Solo/音量（Ableton Live 语义）：
+ * - 没有任何轨被 Solo 时：所有未 Mute 的轨发声
+ * - 有轨被 Solo 时：只有被 Solo 且未 Mute 的轨发声
+ * - 状态存在 mutedTracks / soloedTracks / trackLevels（换一版重建引擎后仍保留） */
+const TRACK_IDS = ['pad', 'drone', 'bass', 'pluck', 'drums', 'air'];
+const mutedTracks = new Set();
+const soloedTracks = new Set();
+const trackLevels = { pad: 1, drone: 1, bass: 1, pluck: 1, drums: 1, air: 1 };
+
+const applyTrackMix = () => {
+  if (!engine) return;
+  const anySolo = soloedTracks.size > 0;
+  const t = Tone.now();
+  TRACK_IDS.forEach(id => {
+    const audible = !mutedTracks.has(id) && (!anySolo || soloedTracks.has(id));
+    // 可听见时用推子音量，静音/非独奏时归零；50ms 渐变防爆音
+    engine.trackGains[id].gain.linearRampToValueAtTime(audible ? trackLevels[id] : 0, t + 0.05);
+  });
+};
+
+TRACK_IDS.forEach(id => {
+  const muteBtn = $('mute-' + id);
+  const soloBtn = $('solo-' + id);
+  const fader = $('gain-' + id);
+  const faderVal = $('gain-val-' + id);
+  muteBtn.addEventListener('click', () => {
+    mutedTracks.has(id) ? mutedTracks.delete(id) : mutedTracks.add(id);
+    muteBtn.classList.toggle('muted', mutedTracks.has(id));
+    applyTrackMix();
+  });
+  soloBtn.addEventListener('click', () => {
+    soloedTracks.has(id) ? soloedTracks.delete(id) : soloedTracks.add(id);
+    soloBtn.classList.toggle('soloed', soloedTracks.has(id));
+    applyTrackMix();
+  });
+  fader.addEventListener('input', () => {
+    trackLevels[id] = fader.value / 100;   // 实时更新音量（0–1）
+    faderVal.textContent = fader.value;
+    applyTrackMix();
+  });
+});
+
+$('playBtn').addEventListener('click', async () => {
+  if (engineTransition) {
+    setStatus('正在完成淡出，请稍候再播放…');
+    return;
+  }
+  await Tone.start();   // 解锁 AudioContext（浏览器自动播放策略，对应 zed 前端 playPiece 里的 await start()）
+  try {
+    if (!engine) {
+      const text = $('seedInput').value.trim();
+      currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      setStatus('正在构建引擎（种子 ' + currentSeed + '）…');
+      engine = await activateEngine(currentSeed);
+      applyTrackMix();    // 把当前的 Mute/Solo/音量状态应用到新引擎
+    }
+    engine.schedule();
+    Tone.Transport.start();   // ★ 启动 Transport 时钟 —— 递归调度（下一个和弦）全靠它，漏掉则只有第一个和弦
+    engine.fadeIn();
+    setStatus('▶ 播放中 · 种子 ' + currentSeed);
+  } catch (err) {
+    console.error(err);
+    setStatus('⚠ 播放失败：' + err.message + '（详见控制台 F12）');
+  }
+});
+
+$('stopBtn').addEventListener('click', () => {
+  if (!engine || engineTransition) return;
+  const oldEngine = engine;
+  engineTransition = true;
+  oldEngine.fadeOut();
+  setTimeout(() => {
+    oldEngine.deactivate();
+    if (engine === oldEngine) engine = null; // 下次播放必须重建不可重启的 Oscillator/Noise
+    engineTransition = false;
+    setStatus('■ 已停止');
+  }, 600); // 淡出完再销毁，避免 stop 后复用一次性声源
+  setStatus('正在淡出…');
+});
+
+$('regenBtn').addEventListener('click', async () => {
+  if (engineTransition) return;
+  // 换一版 = 销毁引擎 + 新随机种子重建（对应 zed 的 deactivate → activate）
+  if (engine) {
+    const oldEngine = engine;
+    engineTransition = true;
+    oldEngine.fadeOut();
+    await new Promise(resolve => setTimeout(resolve, 600));
+    oldEngine.deactivate();
+    if (engine === oldEngine) engine = null;
+    engineTransition = false;
+  }
+  $('seedInput').value = '';
+  $('playBtn').click();
+});
+
+/* 页面回前台时体检：恢复被挂起的 AudioContext + 检查调度是否停滞 */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (engine) {
+    const ctx = Tone.getContext();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    engine.checkHealth();
+  }
+});
+</script>
+</body>
+</html>

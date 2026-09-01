@@ -1,0 +1,15 @@
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+node_modules/
+dist/
+*.log
+*.wav
+*.aiff
+*.flac
+*.mp3
+*.ogg
+*.m4a
+recordings/
