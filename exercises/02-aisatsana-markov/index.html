@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>02 · aisatsana 式极简钢琴（Markov 乐句重组）</title>
+<style>
+  :root { --bg:#0f1115; --panel:#161a21; --fg:#e6e9f0; --dim:#8b93a7; --accent:#c9a0dc; --accent2:#9ecbff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif; min-height:100vh; }
+  .wrap { max-width:860px; margin:0 auto; padding:36px 20px 70px; }
+  h1 { font-size:24px; margin:0 0 6px; }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:24px; line-height:1.8; }
+  .panel { background:var(--panel); border:1px solid #232936; border-radius:12px; padding:20px; margin-bottom:16px; }
+  .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button { background:var(--accent); color:#1c1026; border:none; border-radius:8px; padding:10px 22px; font-size:15px; font-weight:700; cursor:pointer; }
+  button.secondary { background:#232c3d; color:var(--fg); }
+  input[type=text] { background:#0d1119; border:1px solid #2a3448; color:var(--fg); border-radius:8px; padding:9px 12px; font-size:14px; width:180px; }
+  .status { margin-top:14px; font-size:14px; line-height:1.8; }
+  .status b { color:var(--accent2); }
+  .log { margin-top:12px; font-family:Consolas,monospace; font-size:12px; color:var(--dim); max-height:150px; overflow-y:auto; white-space:pre-wrap; border-top:1px dashed #232936; padding-top:10px; }
+  .matrix { margin-top:12px; font-family:Consolas,monospace; font-size:12px; color:var(--dim); line-height:1.6; }
+  .matrix b { color:var(--accent2); }
+  .hint { font-size:12.5px; color:var(--dim); line-height:2; }
+  .hint b { color:var(--fg); }
+  code { background:#0d1119; padding:1px 6px; border-radius:4px; font-size:12px; color:var(--accent2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>02 · aisatsana 式极简钢琴</h1>
+  <div class="sub">学习 Generative.fm 的 <code>piece-aisatsana</code>：<b>记忆 + 重排</b>的生成方式 —— 音符素材固定（自写的极简琶音），
+  但<b>乐句的排列顺序由马尔可夫链重组</b>，每次演奏都不同。</div>
+
+  <div class="panel">
+    <div class="controls">
+      <button id="playBtn">▶ 播放</button>
+      <button id="stopBtn" class="secondary">■ 停止</button>
+      <input id="seedInput" type="text" placeholder="随机种子（留空=随机）" />
+      <button id="regenBtn" class="secondary">🎲 换一版</button>
+    </div>
+    <div class="status" id="status">点击播放开始。日志会显示每次乐句转换（马尔可夫链的"行走"）。</div>
+    <div class="log" id="log"></div>
+    <div class="matrix" id="matrix"></div>
+  </div>
+
+  <div class="panel">
+    <div class="hint">
+      <b>机制（对照 aisatsana 源码）：</b>① 音符素材按八分音符网格量化 → ② 每 32 步切成一个乐句 →
+      ③ 乐句序列喂给马尔可夫链训练转换概率 → ④ 演出时 <code>chain.walk()</code> 沿概率生成乐句序列，
+      每次转换都不同。<br>
+      <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
+      音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
+      <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
+      （首次约 50MB，之后走浏览器缓存）；加载失败自动回退 FM 合成钢琴，不会卡死。<br>
+      <b>版权说明：</b>aisatsana 原曲谱面（Aphex Twin）不直接搬运，本练习使用同风格的<b>自写</b>极简琶音素材演示机制；采样库为 CC0 许可。
+    </div>
+  </div>
+</div>
+
+<!-- Tone.js v14.7.58 从 CDN 加载（unpkg） -->
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+/* ============================================================
+ * 02 · aisatsana 式极简钢琴（Markov 乐句重组）
+ * 对照源码：generative-music/pieces-alex-bainter 仓库内
+ *   packages/piece-aisatsana/src/piece.js（86 行，机制全貌）
+ *   packages/piece-aisatsana/src/instructions.json（原曲谱面数据）
+ * 学习点：
+ *   1. 谱面 → 八分音符网格量化（本练习简化：素材直接用步索引）
+ *   2. 乐句切分（32 步一组）+ 马尔可夫链训练乐句转换
+ *   3. chain.walk() 沿概率重组乐句顺序 —— 记忆 + 重排
+ *   4. 提前 1 秒触发 + ±25ms 人性化抖动（与 piece-zed 同源手法）
+ * ============================================================ */
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '⚠ 无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+/* ---------- ① 音符素材：自写的极简钢琴乐句库 ----------
+ * 每个乐句 32 步（八分音符网格），每步是音符数组 [{ n: 音名, v: 力度 0~1 }]（空数组 = 休止）。
+ * ★ 律动设计（对照原曲的"人类感"）：
+ *   - 节奏不均匀：切分、附点、前紧后松（不是每 4 步一音）
+ *   - 力度重音：某些音 v>0.7（乐句重音），其余轻
+ *   - 双音和弦块：2 音叠置（如低音+高音）
+ *   - 音区对比：低音点缀 / 偶发高音（C6）
+ * 真实 aisatsana 的素材来自原曲谱面（instructions.json），同样充满这类人类律动；
+ * 本练习手写 4 个乐句演示机制。 */
+const PHRASES = [
+  /* 乐句 A：切分上行琶音（3+3+2 感）+ 低八度重音 */
+  [
+    [{ n: 'C4', v: 0.7 }], [], [{ n: 'E4', v: 0.55 }], [], [{ n: 'G4', v: 0.75 }], [], [], [{ n: 'C5', v: 0.5 }],
+    [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.7 }], [{ n: 'G3', v: 0.8 }], [], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.7 }], [], [], [{ n: 'C5', v: 0.45 }],
+    [], [{ n: 'B4', v: 0.6 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'C4', v: 0.75 }], [], [],
+  ],
+  /* 乐句 B：双音和弦块 + 低音重音，密度对比强烈 */
+  [
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'E4', v: 0.65 }], [], [{ n: 'G3', v: 0.8 }, { n: 'C5', v: 0.45 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'F3', v: 0.8 }, { n: 'A4', v: 0.5 }], [], [],
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'D4', v: 0.6 }], [], [{ n: 'G3', v: 0.8 }, { n: 'B4', v: 0.5 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'C3', v: 0.75 }, { n: 'G4', v: 0.4 }], [], [],
+  ],
+  /* 乐句 C：附点长音对比（长-短-长），渐强句尾 */
+  [
+    [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'C5', v: 0.7 }], [], [], [{ n: 'G4', v: 0.55 }],
+    [{ n: 'E4', v: 0.6 }], [], [], [{ n: 'C4', v: 0.65 }], [], [{ n: 'D4', v: 0.5 }], [],
+    [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'B4', v: 0.7 }], [], [], [{ n: 'C5', v: 0.55 }],
+    [{ n: 'G4', v: 0.6 }], [], [], [{ n: 'E4', v: 0.65 }], [], [{ n: 'C4', v: 0.5 }], [{ n: 'G3', v: 0.75 }],
+  ],
+  /* 乐句 D：跨音区 + 高音点缀（C6）收尾 */
+  [
+    [{ n: 'C5', v: 0.6 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.65 }], [{ n: 'C5', v: 0.55 }],
+    [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.6 }],
+    [{ n: 'D4', v: 0.5 }], [{ n: 'E4', v: 0.65 }], [],
+    [{ n: 'C5', v: 0.6 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.65 }], [{ n: 'C5', v: 0.55 }],
+    [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'C6', v: 0.75 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.7 }], [], [],
+  ],
+];
+
+const STEP_DURATION_S = 0.3;      // 八分音符时长（≈ 100 BPM，aisatsana 用 102 BPM / 0.294s）
+const PHRASE_LENGTH = 32;         // 每乐句 32 步（对照源码 phraseLength）
+const PHRASE_DURATION_S = PHRASE_LENGTH * STEP_DURATION_S;
+
+/* ---------- ② 马尔可夫链（自实现一阶，对照 aisatsana 的 markov-chains 库） ----------
+ * 训练：统计每个乐句 → 下一个乐句的出现次数，转成概率。
+ * 行走：从随机乐句出发，每次按当前乐句的转移概率选下一个 —— 记忆 + 重排 */
+const buildMarkovChain = (phrases, rng) => {
+  const transitions = phrases.map(() => phrases.map(() => 0));
+  for (let i = 0; i < phrases.length - 1; i += 1) {
+    transitions[i][i + 1] += 1;          // 原顺序的转移记一次（保持素材的"语法"）
+  }
+  // 再加一些风格化的平滑：允许部分回流/重复，制造变化（可调系数）
+  for (let i = 0; i < phrases.length; i += 1) {
+    transitions[i][i] += 0.5;            // 偶尔重复当前乐句（音乐的"锚点"）
+    transitions[i][(i + 1) % phrases.length] += 0.5;  // 循环到下一个
+    transitions[i][(i + 2) % phrases.length] += 0.3;  // 偶尔跳过一个（"发展"）
+  }
+  return {
+    walk: () => {
+      let current = Math.floor(rng() * phrases.length);
+      return {
+        next: () => {
+          const weights = transitions[current];
+          const total = weights.reduce((a, b) => a + b, 0);
+          let roll = rng() * total;
+          for (let i = 0; i < weights.length; i += 1) {
+            roll -= weights[i];
+            if (roll <= 0) { current = i; break; }
+          }
+          return current;
+        },
+        getCurrent: () => current,
+        transitions,
+      };
+    },
+  };
+};
+
+/* ---------- ③ 钢琴：真实采样（vsco2-piano-mf）+ 合成回退 ----------
+ * 来源：samples-alex-bainter 仓库 samples/vsco2-piano-mf/（VSCO2 免费钢琴采样，CC0）。
+ * 加载策略（由快到慢，逐级回退，永不卡死）：
+ *   1) jsDelivr wav（GitHub 镜像，约 50MB 首次，之后走浏览器缓存）
+ *   2) FM 合成钢琴（最后兜底）
+ * 官方 CDN samples.alexbainter.com 对直连返回 403（有访问控制），所以不走它。
+ * 只加载旋律音区（C3~C6）所需 12 个采样。 */
+const PIANO_NOTES = ['A2', 'C#3', 'F3', 'A3', 'C#4', 'F4', 'A4', 'C#5', 'F5', 'A5', 'C#6', 'F6'];
+const sampleFile = (note, ext) => note.toLowerCase().replace('#', 'sharp') + ext;
+const JS_DELIVR_BASE = 'https://cdn.jsdelivr.net/gh/generative-music/samples-alex-bainter@master/samples/vsco2-piano-mf/';
+
+const wrapPiano = (piano, fxNodes) => ({
+  triggerAttack: (n, t, v) => piano.triggerAttack(n, t, v),
+  releaseAll: t => piano.releaseAll(t),
+  dispose: () => { piano.dispose(); fxNodes.forEach(node => node.dispose()); },
+});
+
+const createSampledPiano = async (destination, baseUrl, ext, timeoutMs) => {
+  const piano = await new Promise((resolve, reject) => {
+    const sampler = new Tone.Sampler({
+      urls: Object.fromEntries(PIANO_NOTES.map(n => [n, sampleFile(n, ext)])),
+      baseUrl,
+      release: 1.5,
+      onload: () => resolve(sampler),
+      onerror: err => reject(err),
+    });
+    setTimeout(() => reject(new Error('加载超时（' + timeoutMs / 1000 + 's）')), timeoutMs);
+  });
+  const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
+  await reverb.generate();
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
+  compressor.connect(destination);
+  piano.connect(reverb);
+  reverb.connect(compressor);
+  return wrapPiano(piano, [reverb, compressor]);
+};
+
+const createFallbackPiano = async destination => {
+  const piano = new Tone.PolySynth(Tone.FMSynth, {
+    harmonicity: 3, modulationIndex: 8,
+    oscillator: { type: 'sine' },
+    modulation: { type: 'triangle' },
+    envelope: { attack: 0.005, decay: 1.2, sustain: 0, release: 1.5 },
+    modulationEnvelope: { attack: 0.005, decay: 0.4, sustain: 0, release: 0.8 },
+    volume: -6,
+  });
+  const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
+  await reverb.generate();
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
+  compressor.connect(destination);
+  piano.connect(reverb);
+  reverb.connect(compressor);
+  return wrapPiano(piano, [reverb, compressor]);
+};
+
+const createPiano = async destination => {
+  try {
+    const piano = await createSampledPiano(destination, JS_DELIVR_BASE, '.wav', 45000);
+    console.info('[钢琴] 使用真实采样 vsco2-piano-mf（jsDelivr）');
+    return piano;
+  } catch (err) {
+    console.warn('[钢琴] 采样加载失败，回退 FM 合成:', err.message);
+    setStatus('⚠ 采样加载失败（' + err.message + '），已回退合成钢琴');
+    return createFallbackPiano(destination);
+  }
+};
+
+/* ---------- ④ 随机源（Mulberry32，种子可复现，与 01 一致） ---------- */
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h;
+};
+const $ = id => document.getElementById(id);
+const statusEl = $('status'), logEl = $('log'), matrixEl = $('matrix');
+const log = msg => { logEl.textContent += msg + '\n'; logEl.scrollTop = logEl.scrollHeight; };
+const setStatus = html => { statusEl.innerHTML = html; };
+
+/* ---------- ⑤ 引擎：activate(seed) → { deactivate, schedule, end } ----------
+ * 对照 aisatsana：activate 加载素材并训练链，schedule 沿 Transport 安排乐句 */
+let engine = null;
+let currentSeed = null;
+
+const activateEngine = async seed => {
+  const rng = makeRng(seed);
+  const chain = buildMarkovChain(PHRASES, rng);
+  const piano = await createPiano(Tone.Destination);
+
+  let walker = null;
+
+  const schedule = () => {
+    walker = chain.walk();
+    const showMatrix = () => {
+      let html = '<b>马尔可夫转移矩阵</b>（行=当前乐句，列=下一乐句概率）：<br>';
+      walker.transitions.forEach((row, i) => {
+        const total = row.reduce((a, b) => a + b, 0);
+        html += '乐句' + String.fromCharCode(65 + i) + ': ' +
+          row.map((c, j) => (c / total).toFixed(2)).join('  ') + '<br>';
+      });
+      matrixEl.innerHTML = html;
+    };
+    showMatrix();
+
+    /* 演出（对照 aisatsana 的 schedulePhrase + scheduleRepeat）：
+     * 每次取一个乐句，把其中每个音符安排在对应步的位置；
+     * 提前 1 秒触发 + ±25ms 人性化抖动（原样照搬 aisatsana 手法） */
+    const playPhrase = () => {
+      const phraseIndex = walker.next();
+      const phrase = PHRASES[phraseIndex];
+      phrase.forEach((notes, step) => {
+        notes.forEach(({ n, v }) => {
+          const waitTime = step * STEP_DURATION_S;
+          piano.triggerAttack(
+            n,
+            `+${waitTime + 1 + rng() * 0.05 - 0.025}`,   // 对照源码：+1 秒预延迟 + 抖动
+            v
+          );
+        });
+      });
+      setStatus(
+        '▶ 播放中 · 乐句 <b>' + String.fromCharCode(65 + phraseIndex) +
+        '</b> · 音符 ' + phrase.flat().length + ' 个 · 种子 ' + currentSeed
+      );
+      log('乐句 ' + String.fromCharCode(65 + phraseIndex) + ' ← ' + phrase.flat().map(x => x.n).join(' '));
+    };
+
+    playPhrase();
+    Tone.Transport.scheduleRepeat(playPhrase, PHRASE_DURATION_S);  // 对照源码 scheduleRepeat
+  };
+
+  const end = () => {
+    Tone.Transport.cancel();
+    Tone.Transport.stop();
+    piano.releaseAll(0);
+  };
+
+  const deactivate = () => {
+    end();
+    piano.dispose();
+  };
+
+  return { deactivate, schedule, end };
+};
+
+/* ---------- ⑥ 控制器 ---------- */
+$('playBtn').addEventListener('click', async () => {
+  await Tone.start();
+  try {
+    if (!engine) {
+      const text = $('seedInput').value.trim();
+      currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      setStatus('正在构建引擎（种子 ' + currentSeed + '）… 首次播放需下载真实钢琴采样（约 50MB，请耐心）');
+      engine = await activateEngine(currentSeed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    setStatus('▶ 播放中 · 种子 ' + currentSeed);
+  } catch (err) {
+    console.error(err);
+    setStatus('⚠ 播放失败：' + err.message);
+  }
+});
+
+$('stopBtn').addEventListener('click', () => {
+  if (!engine) return;
+  engine.end();
+  setStatus('■ 已停止');
+});
+
+$('regenBtn').addEventListener('click', () => {
+  if (engine) {
+    engine.deactivate();
+    engine = null;
+  }
+  $('seedInput').value = '';
+  $('playBtn').click();
+});
+
+/* 统一激活接口（AGENTS.md 约定） */
+window.exercise = {
+  activate: activateEngine,
+};
+</script>
+</body>
+</html>
