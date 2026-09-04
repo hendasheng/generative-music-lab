@@ -13,13 +13,6 @@
   h1 { font-size:25px; margin:0 0 6px; letter-spacing:.5px; }
   .sub { color:var(--dim); font-size:13px; margin-bottom:26px; line-height:1.7; }
   .panel { background:var(--panel); border:1px solid #1e2532; border-radius:12px; padding:20px; margin-bottom:16px; }
-  .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  button { background:var(--accent); color:#06281c; border:none; border-radius:8px; padding:11px 24px; font-size:15px; font-weight:700; cursor:pointer; transition:transform .05s; }
-  button:hover { transform:translateY(-1px); }
-  button:active { transform:translateY(1px); }
-  button.secondary { background:#243044; color:var(--fg); }
-  input[type=text] { background:#0d1119; border:1px solid #2a3448; color:var(--fg); border-radius:8px; padding:9px 12px; font-size:14px; width:190px; outline:none; }
-  input[type=text]:focus { border-color:var(--accent2); }
   .status { margin-top:16px; font-size:14px; line-height:1.8; }
   .status b { color:var(--accent); }
   .log { margin-top:12px; font-family:Consolas,"Courier New",monospace; font-size:12px; color:var(--dim); max-height:150px; overflow-y:auto; white-space:pre-wrap; border-top:1px dashed #1e2532; padding-top:10px; }
@@ -51,12 +44,7 @@
   <div class="sub">纯合成器 · 电子氛围 · C 自然小调 —— 架构完全照搬 generative.fm 的 piece-zed，双击打开即可播放。<br>生成式音乐 = 程序在<b>播放中实时作曲</b>：没有录音，每次播放都不一样，永远不会结束。</div>
 
   <div class="panel">
-    <div class="controls">
-      <button id="playBtn">▶ 播放</button>
-      <button id="stopBtn" class="secondary">■ 停止</button>
-      <input id="seedInput" type="text" placeholder="随机种子（留空=随机）" />
-      <button id="regenBtn" class="secondary">🎲 换一版</button>
-    </div>
+    <exercise-controls id="transportControls"></exercise-controls>
     <div class="status" id="status">点击「播放」开始 —— 浏览器会先解锁音频，然后作曲引擎开始运行。</div>
     <div class="log" id="log"></div>
     <div class="tracks">
@@ -133,6 +121,7 @@
 </div>
 
 <!-- Tone.js v14.7.58 从 CDN 加载（unpkg）。如需离线使用，可下载该文件到本地并改为 <script src="./vendor/Tone.js"></script> -->
+<script src="../../shared/exercise-controls.js"></script>
 <script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
 <script>
 'use strict';
@@ -1067,6 +1056,7 @@ const activateEngine = async seed => {
 let engine = null;
 let currentSeed = null;
 let engineTransition = false;
+const transportControls = $('transportControls');
 
 /* 音轨 Mute/Solo/音量（Ableton Live 语义）：
  * - 没有任何轨被 Solo 时：所有未 Mute 的轨发声
@@ -1110,15 +1100,16 @@ TRACK_IDS.forEach(id => {
   });
 });
 
-$('playBtn').addEventListener('click', async () => {
+const playCurrent = async () => {
   if (engineTransition) {
     setStatus('正在完成淡出，请稍候再播放…');
     return;
   }
+  transportControls.setBusy(true);
   await Tone.start();   // 解锁 AudioContext（浏览器自动播放策略，对应 zed 前端 playPiece 里的 await start()）
   try {
     if (!engine) {
-      const text = $('seedInput').value.trim();
+      const text = transportControls.seedValue;
       currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
       setStatus('正在构建引擎（种子 ' + currentSeed + '）…');
       engine = await activateEngine(currentSeed);
@@ -1127,29 +1118,39 @@ $('playBtn').addEventListener('click', async () => {
     engine.schedule();
     Tone.Transport.start();   // ★ 启动 Transport 时钟 —— 递归调度（下一个和弦）全靠它，漏掉则只有第一个和弦
     engine.fadeIn();
+    transportControls.setPlaying(true);
     setStatus('▶ 播放中 · 种子 ' + currentSeed);
   } catch (err) {
     console.error(err);
+    transportControls.setPlaying(false);
     setStatus('⚠ 播放失败：' + err.message + '（详见控制台 F12）');
+  } finally {
+    transportControls.setBusy(false);
   }
-});
+};
 
-$('stopBtn').addEventListener('click', () => {
+transportControls.addEventListener('exercise-play', playCurrent);
+
+transportControls.addEventListener('exercise-stop', () => {
   if (!engine || engineTransition) return;
   const oldEngine = engine;
   engineTransition = true;
+  transportControls.setBusy(true);
   oldEngine.fadeOut();
   setTimeout(() => {
     oldEngine.deactivate();
     if (engine === oldEngine) engine = null; // 下次播放必须重建不可重启的 Oscillator/Noise
     engineTransition = false;
+    transportControls.setPlaying(false);
+    transportControls.setBusy(false);
     setStatus('■ 已停止');
   }, 600); // 淡出完再销毁，避免 stop 后复用一次性声源
   setStatus('正在淡出…');
 });
 
-$('regenBtn').addEventListener('click', async () => {
+transportControls.addEventListener('exercise-regenerate', async () => {
   if (engineTransition) return;
+  transportControls.setBusy(true);
   // 换一版 = 销毁引擎 + 新随机种子重建（对应 zed 的 deactivate → activate）
   if (engine) {
     const oldEngine = engine;
@@ -1160,8 +1161,10 @@ $('regenBtn').addEventListener('click', async () => {
     if (engine === oldEngine) engine = null;
     engineTransition = false;
   }
-  $('seedInput').value = '';
-  $('playBtn').click();
+  transportControls.clearSeed();
+  transportControls.setPlaying(false);
+  transportControls.setBusy(false);
+  playCurrent();
 });
 
 /* 页面回前台时体检：恢复被挂起的 AudioContext + 检查调度是否停滞 */

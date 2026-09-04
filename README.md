@@ -22,6 +22,8 @@ generative-music-lab/
 │     ├─ README.md            # 本练习的目标与音乐设计
 │     └─ index.html           # 可直接运行的作品
 ├─ notes/                     # 源码阅读与学习笔记
+├─ shared/                    # 两个以上练习共用的轻量组件或工具
+│  └─ exercise-controls.js    # 公共播放/暂停、种子、reset 控件
 ├─ index.html                 # 仓库作品索引
 ├─ .editorconfig
 ├─ .gitignore

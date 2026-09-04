@@ -16,26 +16,36 @@
   h1 { font-size:24px; margin:0 0 6px; }
   .sub { color:var(--dim); font-size:13px; margin-bottom:24px; line-height:1.8; }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; }
-  .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  button { background:var(--accent); color:#211803; border:none; border-radius:8px; padding:10px 22px; font-size:15px; font-weight:700; cursor:pointer; }
-  button.secondary { background:#252d3a; color:var(--fg); }
-  input[type=text] { background:var(--cell); border:1px solid #303849; color:var(--fg); border-radius:8px; padding:9px 12px; font-size:14px; width:180px; outline:none; }
-  input[type=text]:focus { border-color:var(--accent2); }
   .status { margin-top:14px; font-size:14px; line-height:1.8; }
   .status b { color:var(--accent2); }
-  .loops { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:10px; margin-top:16px; }
-  .loop { background:var(--cell); border:1px solid #252d3a; border-radius:8px; padding:12px; }
+  .orbit-stage { display:flex; justify-content:center; margin:22px 0 10px; overflow:hidden; }
+  .orbit { width:min(100%,680px); max-height:680px; aspect-ratio:1; }
+  .orbit-track { fill:none; stroke:#55585d; stroke-width:14; opacity:.72; }
+  .orbit-arc { fill:none; stroke:var(--accent); stroke-width:14; stroke-linecap:round; opacity:.92; }
+  .orbit-arc.drone { stroke:var(--accent2); opacity:.62; }
+  .orbit-arc.hit { stroke-width:18; opacity:1; }
+  .playhead { stroke:#d58adf; stroke-width:8; opacity:.84; stroke-linecap:round; }
+  .playhead-guide { stroke:#d8d8d8; stroke-width:1.2; opacity:.26; }
+  .playhead-shape { fill:#d8d8d8; opacity:.12; stroke:#d8d8d8; stroke-width:1; }
+  .orbit-label { fill:var(--fg); font-size:10px; font-family:Consolas,"Courier New",monospace; text-anchor:end; dominant-baseline:middle; opacity:.86; }
+  .orbit-center { fill:#0b0d11; stroke:#222832; stroke-width:2; }
+  .loops { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px; margin-top:16px; }
+  .loop { background:var(--cell); border:1px solid #252d3a; border-radius:8px; padding:10px 11px; }
+  .loop.drone { background:#10151d; border-color:#33404a; }
   .loop.active { border-color:var(--accent); box-shadow:0 0 0 1px rgba(242,195,91,.25) inset; }
-  .loop-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .loop.drone.active { border-color:var(--accent2); box-shadow:0 0 0 1px rgba(125,214,200,.24) inset; }
+  .loop-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:6px; }
   .note { color:var(--fg); font-weight:700; letter-spacing:.04em; }
   .count { color:var(--dim); font-family:Consolas,"Courier New",monospace; font-size:12px; }
-  .bar { height:7px; overflow:hidden; background:#222936; border-radius:999px; }
-  .fill { width:0; height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .12s linear; }
-  .meta { margin-top:8px; color:var(--dim); font-family:Consolas,"Courier New",monospace; font-size:12px; line-height:1.7; }
+  .meta { color:var(--dim); font-family:Consolas,"Courier New",monospace; font-size:12px; line-height:1.7; }
   .log { margin-top:12px; font-family:Consolas,"Courier New",monospace; font-size:12px; color:var(--dim); max-height:150px; overflow-y:auto; white-space:pre-wrap; border-top:1px dashed var(--line); padding-top:10px; }
   .hint { font-size:12.5px; color:var(--dim); line-height:2; }
   .hint b { color:var(--fg); }
   code { background:var(--cell); padding:1px 6px; border-radius:4px; font-size:12px; color:var(--accent2); }
+  @media (max-width:560px) {
+    .orbit-track, .orbit-arc { stroke-width:11; }
+    .orbit-label { font-size:8px; }
+  }
 </style>
 </head>
 <body>
@@ -44,13 +54,11 @@
   <div class="sub">每个音符都是一条独立 loop：不同周期、不同声音长度、不同初始相位。系统不写固定旋律，而是让这些 loop 的相遇关系自己生成旋律与和声。</div>
 
   <div class="panel">
-    <div class="controls">
-      <button id="playBtn">播放</button>
-      <button id="stopBtn" class="secondary">停止</button>
-      <input id="seedInput" type="text" placeholder="随机种子（留空=随机）" />
-      <button id="regenBtn" class="secondary">换一版</button>
+    <exercise-controls id="transportControls"></exercise-controls>
+    <div class="status" id="status">点击播放开始。每个同心圆是一条独立循环；彩色音段转到右侧播放头时，该音响起。</div>
+    <div class="orbit-stage">
+      <svg class="orbit" id="orbitViz" viewBox="0 0 520 520" role="img" aria-label="Phase loop visualization"></svg>
     </div>
-    <div class="status" id="status">点击播放开始。每个卡片是一条独立循环，亮起时表示这个音正在触发。</div>
     <div class="loops" id="loops"></div>
     <div class="log" id="log"></div>
   </div>
@@ -63,6 +71,7 @@
   </div>
 </div>
 
+<script src="../../shared/exercise-controls.js"></script>
 <script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
 <script>
 'use strict';
@@ -75,9 +84,39 @@ if (typeof Tone === 'undefined') {
 const $ = id => document.getElementById(id);
 const statusEl = $('status');
 const loopsEl = $('loops');
+const orbitVizEl = $('orbitViz');
 const logEl = $('log');
 const setStatus = html => { statusEl.innerHTML = html; };
 const log = msg => { logEl.textContent += msg + '\n'; logEl.scrollTop = logEl.scrollHeight; };
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const ORBIT_CENTER = 260;
+const OUTER_RADIUS = 205;
+const RING_GAP = 18;
+
+const polarPoint = (radius, turn) => {
+  const angle = turn * Math.PI * 2;
+  return {
+    x: ORBIT_CENTER + Math.cos(angle) * radius,
+    y: ORBIT_CENTER + Math.sin(angle) * radius,
+  };
+};
+
+const arcPath = (radius, headTurn, spanTurn) => {
+  const span = Math.max(0.001, Math.min(0.985, spanTurn));
+  const start = polarPoint(radius, headTurn - span);
+  const end = polarPoint(radius, headTurn);
+  return [
+    'M', start.x.toFixed(2), start.y.toFixed(2),
+    'A', radius.toFixed(2), radius.toFixed(2), 0, span > 0.5 ? 1 : 0, 1,
+    end.x.toFixed(2), end.y.toFixed(2),
+  ].join(' ');
+};
+
+const createSvgEl = (tag, attrs = {}) => {
+  const el = document.createElementNS(SVG_NS, tag);
+  Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+  return el;
+};
 
 const makeRng = seed => {
   let a = seed >>> 0;
@@ -105,6 +144,12 @@ const NOTE_SET = [
   { note: 'C5', role: 'anchor', basePeriod: 15.25, baseDur: 4.4 },
 ];
 
+const DRONE_SET = [
+  { note: 'F2', role: 'low root', basePeriod: 41, baseDur: 18 },
+  { note: 'C3', role: 'low fifth', basePeriod: 53, baseDur: 22 },
+  { note: 'Ab2', role: 'low minor', basePeriod: 67, baseDur: 20 },
+];
+
 const makeMasterChain = () => {
   const compressor = new Tone.Compressor({ threshold: -18, ratio: 2.2, attack: 0.04, release: 0.55 });
   const highpass = new Tone.Filter({ type: 'highpass', frequency: 35 });
@@ -113,6 +158,189 @@ const makeMasterChain = () => {
   compressor.connect(highpass);
   highpass.connect(masterGain);
   return { compressor, highpass, limiter, masterGain };
+};
+
+const createDroneVoice = destination => {
+  const synth = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'sine' },
+    envelope: { attack: 4, decay: 1, sustain: 0.78, release: 8 },
+    volume: -13,
+  });
+  const filter = new Tone.Filter({ type: 'lowpass', frequency: 360, Q: 0.5 });
+  const gain = new Tone.Gain(0.8).connect(destination);
+  const breath = new Tone.LFO({ frequency: 0.035, min: 0.62, max: 1 }).connect(gain.gain).start();
+  synth.connect(filter);
+  filter.connect(gain);
+  return {
+    trigger: (note, dur, time, velocity) => synth.triggerAttackRelease(note, dur, time, velocity),
+    releaseAll: time => synth.releaseAll(time),
+    dispose: () => { synth.dispose(); filter.dispose(); gain.dispose(); breath.dispose(); },
+  };
+};
+
+const MOODIST_TEXTURES = [
+  {
+    name: 'brown noise',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/noise/brown-noise.wav',
+    periodRange: [75, 130],
+    durationRange: [35, 70],
+    probability: 0.85,
+    filter: 420,
+    targetGain: 0.1,
+    pan: -0.22,
+    fade: 8,
+  },
+  {
+    name: 'wind in trees',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/nature/wind-in-trees.mp3',
+    periodRange: [55, 110],
+    durationRange: [25, 55],
+    probability: 0.7,
+    filter: 1800,
+    targetGain: 0.085,
+    pan: 0.28,
+    fade: 7,
+  },
+  {
+    name: 'birds',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/animals/birds.mp3',
+    periodRange: [46, 105],
+    durationRange: [14, 30],
+    probability: 0.72,
+    filter: 4200,
+    targetGain: 0.03,
+    pan: 0.34,
+    fade: 4.5,
+    group: 'event',
+    early: true,
+  },
+  {
+    name: 'busy street',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/busy-street.mp3',
+    periodRange: [62, 135],
+    durationRange: [20, 46],
+    probability: 0.65,
+    filter: 2200,
+    targetGain: 0.2,
+    pan: -0.08,
+    fade: 6,
+    group: 'event',
+    early: true,
+  },
+  {
+    name: 'crowd',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/crowd.mp3',
+    periodRange: [74, 155],
+    durationRange: [24, 54],
+    probability: 0.58,
+    filter: 2400,
+    targetGain: 0.4,
+    pan: 0.08,
+    fade: 7,
+    group: 'event',
+    early: true,
+  },
+];
+
+const createMoodistTextures = async (destination, rng) => {
+  const loaded = [];
+  const eventIds = new Set();
+  const randomBetween = ([min, max]) => min + rng() * (max - min);
+  const loadOne = texture => new Promise(resolve => {
+    const gain = new Tone.Gain(0);
+    const filter = new Tone.Filter({ type: 'lowpass', frequency: texture.filter, Q: 0.5 });
+    const panner = new Tone.Panner(texture.pan).connect(destination);
+    const player = new Tone.Player({
+      url: texture.url,
+      loop: true,
+      fadeIn: texture.fade,
+      fadeOut: texture.fade,
+      onload: () => {
+        player.connect(filter);
+        filter.connect(gain);
+        gain.connect(panner);
+        loaded.push({ ...texture, player, filter, gain, panner, activeUntil: -Infinity });
+        resolve();
+      },
+      onerror: err => {
+        console.warn('[Moodist] 音效加载失败:', texture.name, err);
+        player.dispose();
+        filter.dispose();
+        gain.dispose();
+        panner.dispose();
+        resolve();
+      },
+    });
+    setTimeout(() => {
+      if (player.loaded) return;
+      console.warn('[Moodist] 音效加载超时:', texture.name);
+      player.dispose();
+      filter.dispose();
+      gain.dispose();
+      panner.dispose();
+      resolve();
+    }, 12000);
+  });
+
+  await Promise.all(MOODIST_TEXTURES.map(loadOne));
+  const activeCountAt = time => loaded.filter(texture => texture.activeUntil > time).length;
+  const activeEventCountAt = time => loaded.filter(texture => texture.group === 'event' && texture.activeUntil > time).length;
+  const scheduleTexture = (texture, at) => {
+    const eventId = Tone.Transport.scheduleOnce(time => {
+      eventIds.delete(eventId);
+      const duration = randomBetween(texture.durationRange);
+      const underTextureLimit = activeCountAt(time) < 4;
+      const underEventLimit = texture.group !== 'event' || activeEventCountAt(time) < 2;
+      const shouldPlay = rng() < texture.probability && underTextureLimit && underEventLimit && time >= texture.activeUntil;
+      if (shouldPlay) {
+        const fade = Math.min(texture.fade, duration * 0.42);
+        texture.activeUntil = time + duration + fade;
+        texture.gain.gain.cancelScheduledValues(time);
+        texture.gain.gain.setValueAtTime(0, time);
+        texture.gain.gain.linearRampToValueAtTime(texture.targetGain, time + fade);
+        texture.gain.gain.setValueAtTime(texture.targetGain, time + Math.max(fade, duration - fade));
+        texture.gain.gain.linearRampToValueAtTime(0, time + duration);
+        try {
+          texture.player.start(time);
+          texture.player.stop(time + duration + fade);
+          Tone.Draw.schedule(() => log('Moodist texture in: ' + texture.name + ' · ' + duration.toFixed(0) + 's'), time);
+        } catch (err) {
+          console.warn('[Moodist] 播放失败:', texture.name, err);
+          texture.activeUntil = time;
+        }
+      }
+      scheduleTexture(texture, time + randomBetween(texture.periodRange));
+    }, at);
+    eventIds.add(eventId);
+  };
+
+  return {
+    start: time => {
+      loaded.forEach(texture => {
+        const firstRange = texture.early ? [3, 10] : [4, 24];
+        scheduleTexture(texture, time + randomBetween(firstRange));
+      });
+      if (loaded.length) log('Moodist texture pool: ' + loaded.map(texture => texture.name).join(', '));
+    },
+    stop: time => {
+      eventIds.forEach(eventId => Tone.Transport.clear(eventId));
+      eventIds.clear();
+      loaded.forEach(texture => {
+        texture.gain.gain.cancelScheduledValues(time);
+        texture.gain.gain.linearRampToValueAtTime(0, time + 1.5);
+        try { texture.player.stop(time + 1.6); } catch (err) { /* 已停止则忽略 */ }
+        texture.activeUntil = time;
+      });
+    },
+    dispose: () => {
+      loaded.forEach(texture => {
+        texture.player.dispose();
+        texture.filter.dispose();
+        texture.gain.dispose();
+        texture.panner.dispose();
+      });
+    },
+  };
 };
 
 const PIANO_NOTES = ['A2', 'C#3', 'F3', 'A3', 'C#4', 'F4', 'A4', 'C#5', 'F5', 'A5', 'C#6', 'F6'];
@@ -179,11 +407,14 @@ const createPiano = async destination => {
 let engine = null;
 let currentSeed = null;
 let engineTransition = false;
+const transportControls = $('transportControls');
 
 const activateEngine = async seed => {
   const rng = makeRng(seed);
   const { compressor, highpass, limiter, masterGain } = makeMasterChain();
   const piano = await createPiano(compressor);
+  const droneVoice = createDroneVoice(compressor);
+  const moodistTextures = await createMoodistTextures(compressor, rng);
 
   const loops = NOTE_SET.map((item, index) => {
     const periodJitter = 0.94 + rng() * 0.14;
@@ -203,27 +434,102 @@ const activateEngine = async seed => {
       velocity,
       eventId: null,
       triggers: 0,
-      nextTriggerAt: nextIn,
+      scheduledFireAt: nextIn,
+      visibleFireAt: nextIn,
     };
   });
 
-  let uiTimer = null;
+  const droneLoops = DRONE_SET.map((item, index) => {
+    const period = item.basePeriod * (0.96 + rng() * 0.1);
+    const duration = Math.min(period * 0.62, item.baseDur * (0.9 + rng() * 0.18));
+    const phase = rng() * period;
+    const nextIn = (period - phase) % period;
+    const velocity = 0.34 + rng() * 0.18;
+    return {
+      ...item,
+      index: loops.length + index,
+      period,
+      duration,
+      phase,
+      nextIn,
+      velocity,
+      eventId: null,
+      triggers: 0,
+      scheduledFireAt: nextIn,
+      visibleFireAt: nextIn,
+      isDrone: true,
+    };
+  });
+  const allLoops = loops.concat(droneLoops);
+
+  let animationId = null;
   let scheduled = false;
 
-  const renderLoops = () => {
+  const renderVisual = () => {
+    orbitVizEl.innerHTML = '';
+    orbitVizEl.appendChild(createSvgEl('line', {
+      class: 'playhead-guide',
+      x1: ORBIT_CENTER,
+      y1: ORBIT_CENTER,
+      x2: 485,
+      y2: ORBIT_CENTER,
+    }));
+    orbitVizEl.appendChild(createSvgEl('polygon', {
+      class: 'playhead-shape',
+      points: '260,260 365,203 365,317',
+    }));
+    orbitVizEl.appendChild(createSvgEl('line', {
+      class: 'playhead',
+      x1: 315,
+      y1: ORBIT_CENTER,
+      x2: 485,
+      y2: ORBIT_CENTER,
+    }));
+
+    allLoops.forEach((loop, i) => {
+      const radius = OUTER_RADIUS - i * RING_GAP;
+      loop.radius = radius;
+      const track = createSvgEl('circle', {
+        class: 'orbit-track',
+        cx: ORBIT_CENTER,
+        cy: ORBIT_CENTER,
+        r: radius,
+      });
+      const arc = createSvgEl('path', {
+        class: 'orbit-arc' + (loop.isDrone ? ' drone' : ''),
+        id: 'orbit-arc-' + loop.index,
+      });
+      const labelPoint = polarPoint(radius + 19, 0.5);
+      const label = createSvgEl('text', {
+        class: 'orbit-label',
+        x: labelPoint.x.toFixed(2),
+        y: labelPoint.y.toFixed(2),
+      });
+      label.textContent = loop.note;
+      orbitVizEl.append(track, arc, label);
+    });
+
+    orbitVizEl.appendChild(createSvgEl('circle', {
+      class: 'orbit-center',
+      cx: ORBIT_CENTER,
+      cy: ORBIT_CENTER,
+      r: Math.max(28, OUTER_RADIUS - allLoops.length * RING_GAP - 3),
+    }));
+  };
+
+  const renderLoopList = () => {
     loopsEl.innerHTML = '';
-    loops.forEach(loop => {
+    allLoops.forEach(loop => {
       const card = document.createElement('div');
-      card.className = 'loop';
+      card.className = 'loop' + (loop.isDrone ? ' drone' : '');
       card.id = 'loop-' + loop.index;
       card.innerHTML =
         '<div class="loop-head">' +
           '<span class="note">' + loop.note + '</span>' +
           '<span class="count" id="count-' + loop.index + '">0</span>' +
         '</div>' +
-        '<div class="bar"><div class="fill" id="phase-' + loop.index + '"></div></div>' +
         '<div class="meta">' +
-          'period ' + loop.period.toFixed(2) + 's<br>' +
+          (loop.isDrone ? 'drone' : 'piano') + ' · period ' + loop.period.toFixed(2) + 's<br>' +
           'duration ' + loop.duration.toFixed(2) + 's<br>' +
           'phase ' + loop.phase.toFixed(2) + 's · velocity ' + loop.velocity.toFixed(2) +
         '</div>';
@@ -233,60 +539,92 @@ const activateEngine = async seed => {
 
   const refreshUi = () => {
     const seconds = Tone.Transport.seconds;
-    loops.forEach(loop => {
-      const position = (seconds + loop.phase) % loop.period;
-      const percent = position / loop.period * 100;
-      const fill = $('phase-' + loop.index);
+    allLoops.forEach(loop => {
+      if (loop.holdVisualHitUntil && performance.now() < loop.holdVisualHitUntil) return;
+      const timeUntilNext = Math.max(0, loop.visibleFireAt - seconds);
+      const headTurn = 1 - timeUntilNext / loop.period;
+      const arc = $('orbit-arc-' + loop.index);
       const count = $('count-' + loop.index);
-      if (fill) fill.style.width = percent.toFixed(1) + '%';
+      if (arc) arc.setAttribute('d', arcPath(loop.radius, headTurn, loop.duration / loop.period));
       if (count) count.textContent = String(loop.triggers);
     });
   };
 
+  const animateUi = () => {
+    refreshUi();
+    animationId = requestAnimationFrame(animateUi);
+  };
+
   const flashLoop = loop => {
     const card = $('loop-' + loop.index);
+    const arc = $('orbit-arc-' + loop.index);
     if (!card) return;
     card.classList.add('active');
-    setTimeout(() => card.classList.remove('active'), 180);
+    if (arc) {
+      arc.classList.add('hit');
+      arc.setAttribute('d', arcPath(loop.radius, 0, loop.duration / loop.period));
+    }
+    loop.holdVisualHitUntil = performance.now() + 120;
+    setTimeout(() => {
+      card.classList.remove('active');
+      if (arc) arc.classList.remove('hit');
+      loop.holdVisualHitUntil = 0;
+      refreshUi();
+    }, 120);
+  };
+
+  const scheduleLoop = (loop, trigger) => {
+    const fireAt = loop.scheduledFireAt;
+    loop.eventId = Tone.Transport.scheduleOnce(time => {
+      trigger(loop, time);
+      loop.scheduledFireAt = fireAt + loop.period;
+      Tone.Draw.schedule(() => {
+        loop.triggers += 1;
+        flashLoop(loop);
+        loop.visibleFireAt = fireAt + loop.period;
+        setStatus(
+          '播放中 · ' + (loop.isDrone ? 'Drone' : '钢琴') + ' <b>' + loop.note +
+          '</b> · 周期 <b>' + loop.period.toFixed(2) + 's</b> · 时值 <b>' +
+          loop.duration.toFixed(2) + 's</b> · 种子 ' + currentSeed
+        );
+        log((loop.isDrone ? 'drone ' : '') + loop.note + '  period=' +
+            loop.period.toFixed(2) + 's  dur=' + loop.duration.toFixed(2) + 's');
+      }, time);
+      scheduleLoop(loop, trigger);
+    }, fireAt);
   };
 
   const schedule = () => {
     if (scheduled) return;
     scheduled = true;
-    renderLoops();
+    renderVisual();
+    renderLoopList();
     refreshUi();
     log('seed ' + seed + ' · independent note loops');
-    loops.forEach(loop => {
-      loop.eventId = Tone.Transport.scheduleRepeat(time => {
-        piano.trigger(loop.note, loop.duration, time, loop.velocity);
-        loop.triggers += 1;
-        loop.nextTriggerAt = Tone.Transport.seconds + loop.period;
-        Tone.Draw.schedule(() => {
-          flashLoop(loop);
-          setStatus(
-            '播放中 · 最近触发 <b>' + loop.note + '</b> · 周期 <b>' +
-            loop.period.toFixed(2) + 's</b> · 时值 <b>' + loop.duration.toFixed(2) +
-            's</b> · 种子 ' + currentSeed
-          );
-          log(loop.note + '  period=' + loop.period.toFixed(2) + 's  dur=' + loop.duration.toFixed(2) + 's');
-        }, time);
-      }, loop.period, loop.nextIn);
-    });
-    uiTimer = setInterval(refreshUi, 150);
+    loops.forEach(loop => scheduleLoop(loop, (item, time) => {
+      piano.trigger(item.note, item.duration, time, item.velocity);
+    }));
+    droneLoops.forEach(loop => scheduleLoop(loop, (item, time) => {
+      droneVoice.trigger(item.note, item.duration, time, item.velocity);
+    }));
+    moodistTextures.start(Tone.now() + 0.05);
+    animationId = requestAnimationFrame(animateUi);
   };
 
   const fadeIn = () => masterGain.gain.linearRampToValueAtTime(1, Tone.now() + 1.2);
   const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.8);
 
   const end = () => {
-    clearInterval(uiTimer);
-    uiTimer = null;
+    cancelAnimationFrame(animationId);
+    animationId = null;
     scheduled = false;
-    loops.forEach(loop => {
+    allLoops.forEach(loop => {
       if (loop.eventId !== null) Tone.Transport.clear(loop.eventId);
       loop.eventId = null;
     });
     piano.releaseAll(Tone.now() + 0.1);
+    droneVoice.releaseAll(Tone.now() + 0.1);
+    moodistTextures.stop(Tone.now());
     Tone.Transport.stop();
     Tone.Transport.cancel();
   };
@@ -294,18 +632,21 @@ const activateEngine = async seed => {
   const deactivate = () => {
     end();
     piano.dispose();
+    droneVoice.dispose();
+    moodistTextures.dispose();
     [compressor, highpass, limiter, masterGain].forEach(node => node.dispose());
   };
 
   return { deactivate, schedule, end, fadeIn, fadeOut };
 };
 
-$('playBtn').addEventListener('click', async () => {
+const playCurrent = async () => {
   if (engineTransition) return;
+  transportControls.setBusy(true);
   await Tone.start();
   try {
     if (!engine) {
-      const text = $('seedInput').value.trim();
+      const text = transportControls.seedValue;
       currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
       setStatus('正在构建引擎（种子 ' + currentSeed + '）...');
       engine = await activateEngine(currentSeed);
@@ -313,27 +654,37 @@ $('playBtn').addEventListener('click', async () => {
     engine.schedule();
     Tone.Transport.start();
     engine.fadeIn();
+    transportControls.setPlaying(true);
   } catch (err) {
     console.error(err);
+    transportControls.setPlaying(false);
     setStatus('播放失败：' + err.message);
+  } finally {
+    transportControls.setBusy(false);
   }
-});
+};
 
-$('stopBtn').addEventListener('click', () => {
+transportControls.addEventListener('exercise-play', playCurrent);
+
+transportControls.addEventListener('exercise-stop', () => {
   if (!engine || engineTransition) return;
   const oldEngine = engine;
   engineTransition = true;
+  transportControls.setBusy(true);
   oldEngine.fadeOut();
   setTimeout(() => {
     oldEngine.deactivate();
     if (engine === oldEngine) engine = null;
     engineTransition = false;
+    transportControls.setPlaying(false);
+    transportControls.setBusy(false);
     setStatus('已停止');
   }, 900);
 });
 
-$('regenBtn').addEventListener('click', async () => {
+transportControls.addEventListener('exercise-regenerate', async () => {
   if (engineTransition) return;
+  transportControls.setBusy(true);
   if (engine) {
     const oldEngine = engine;
     engineTransition = true;
@@ -343,8 +694,10 @@ $('regenBtn').addEventListener('click', async () => {
     if (engine === oldEngine) engine = null;
     engineTransition = false;
   }
-  $('seedInput').value = '';
-  $('playBtn').click();
+  transportControls.clearSeed();
+  transportControls.setPlaying(false);
+  transportControls.setBusy(false);
+  playCurrent();
 });
 
 window.exercise = {

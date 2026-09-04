@@ -26,4 +26,6 @@
 
 需要额外代码时，可以在练习内部增加 `src/`、`styles/` 或 `assets/`。只有多个练习确实共用的内容，才提升到仓库根目录，避免过早抽象。
 
+公共播放控件放在 `shared/exercise-controls.js`。新练习直接使用 `<exercise-controls id="transportControls"></exercise-controls>`，监听 `exercise-play`、`exercise-stop`、`exercise-regenerate` 事件，并通过 `seedValue`、`clearSeed()`、`setPlaying()`、`setBusy()` 同步状态。组件只负责 UI，各练习仍保留自己的音频引擎和调度逻辑；不要再复制旧的播放、停止、种子、换一版按钮代码。
+
 新增练习后，同时更新根目录 `README.md` 和 `index.html` 的作品列表。

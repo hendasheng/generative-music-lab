@@ -9,14 +9,17 @@
 - 固定音符集合如何通过不同 loop 周期产生长期变化
 - 初始相位偏移：系统开始时，每条 loop 从自己的不同位置进入
 - 每个音符独立设置声音长度、周期与力度
+- 低音 drone 也遵守独立 loop 规则，用更长周期托住调性中心
 - 复用 02 的 `vsco2-piano-mf` 采样钢琴，便于比较不同生成机制
-- 使用 `Tone.Transport.scheduleRepeat` 管理多个长期循环
+- 引入 Moodist 的环境音效作为背景 texture events：按周期、概率和淡入淡出出现，不常驻播放
+- 使用递归 `Tone.Transport.scheduleOnce` 管理多个长期循环：`scheduledFireAt` 提前交给 Tone 排音频，`visibleFireAt` 只在实际发声时刻推进，避免 lookAhead 造成音画错位
+- 用同心圆环显示每条 loop 的旋转音段，并用 `requestAnimationFrame` 平滑刷新
 - 用种子随机生成可复现的 loop 参数
 - 停止、换一版时正确清理 Transport 事件和 Web Audio 节点
 
 ## 运行
 
-直接打开 `index.html`。页面通过 unpkg 加载 Tone.js 14.7.58，并通过 jsDelivr 加载 02 同款 `vsco2-piano-mf` 钢琴采样，因此首次播放需要联网；采样加载失败会自动回退 FM 合成钢琴。
+直接打开 `index.html`。页面通过 unpkg 加载 Tone.js 14.7.58，通过 jsDelivr 加载 02 同款 `vsco2-piano-mf` 钢琴采样，并远程引用 Moodist 仓库中的背景音效，因此首次播放需要联网；钢琴采样加载失败会自动回退 FM 合成钢琴，Moodist 音效加载失败则静默跳过。
 
 也可以在仓库根目录运行：
 
@@ -32,12 +35,24 @@ http://localhost:8000/exercises/03-phase-process/
 
 ## 音乐规则
 
-- 音符集合：F 小调色彩的七个音，外加一个低音锚点。
+- 音符集合：F 小调色彩的七个钢琴音，外加三条低音 drone。
 - 每个音符是一条独立 loop，不共享节拍网格。
 - 每条 loop 有 7.5 到 23 秒之间的周期，彼此刻意错开。
 - 每个音符有自己的声音长度，短音像点，长音像云。
+- Drone 使用 F2、C3、Ab2，周期约 40 到 70 秒，attack/release 都很长，像慢慢浮现的低频地平线。
+- Moodist texture pool 包含 `brown-noise.wav`、`wind-in-trees.mp3`、`birds.mp3`、`busy-street.mp3`、`crowd.mp3`。它们不会永远播放，而是作为环境事件按不同周期和概率淡入淡出；鸟类、街道和人群会在播放后较早尝试入场，当前三者目标增益都设为 `0.4`，以保证可听见但仍通过事件调度避免常驻；同一时间最多允许少数几条活跃，避免盖住钢琴 loop。
 - 初始相位不是“延迟开始”，而是“这条虚拟磁带已经转到某个位置”：页面启动时会计算它下一次触发还要等多久。
 - 采用 02 同款钢琴采样；混响较长，但干声保留清楚，让重叠关系仍然可辨认。
+- 页面中的每个同心圆代表一条 loop：彩色弧段是声音长度；当弧段前端顺时针滚动到右侧播放头时，该音响起。
+
+## 视觉参考
+
+同心圆 loop 可视化参考 Tero Parviainen 的 [JavaScript Systems Music](https://teropa.info/blog/2016/07/28/javascript-systems-music) 一文中对 tape loop / phase loop 的展示方式：每条圆环代表一条独立循环，彩色弧段代表该 loop 中会发声的片段，固定播放头用于观察不同周期的音段如何逐渐错位。本练习没有直接复制原文代码或素材，而是按同一视觉语义重新实现。
+
+## 素材来源
+
+- 钢琴：`vsco2-piano-mf`，来自 `generative-music/samples-alex-bainter`，VSCO2 免费钢琴采样（CC0）。
+- 背景 texture：`brown-noise.wav`、`wind-in-trees.mp3`、`birds.mp3`、`busy-street.mp3`、`crowd.mp3`，远程引用自 [Moodist](https://github.com/remvze/moodist) 仓库的 `public/sounds/`。Moodist 项目代码为 MIT；其 README 说明部分声音来自 Pixabay Content License 或 CC0。本练习当前仅作学习实验引用，后续若发布或分发，应逐个素材核对原始授权与归属说明。
 
 ## 与前两个练习的对照
 
@@ -50,6 +65,5 @@ http://localhost:8000/exercises/03-phase-process/
 ## 后续想法
 
 - 增加 loop 参数编辑器：手动修改周期、相位、时值
-- 用圆环可视化每条 loop 当前相位
-- 检测“重叠密度”，在过满时自动降低某些 loop 力度
+- 检测“重叠密度”，在过满时自动缩短少数 loop 的时值或推迟下一次触发
 - 做 Music for Airports 风格的采样人声版本
