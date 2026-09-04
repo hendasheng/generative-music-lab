@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>03 · Phase Loops</title>
+<style>
+  :root {
+    --bg:#101116; --panel:#171a21; --cell:#0d1118; --fg:#edf0f5; --dim:#9aa3b4;
+    --accent:#f2c35b; --accent2:#7dd6c8; --line:#2a303c; --warn:#e7a0a0;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif; min-height:100vh; }
+  .wrap { max-width:920px; margin:0 auto; padding:36px 20px 72px; }
+  h1 { font-size:24px; margin:0 0 6px; }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:24px; line-height:1.8; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; }
+  .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button { background:var(--accent); color:#211803; border:none; border-radius:8px; padding:10px 22px; font-size:15px; font-weight:700; cursor:pointer; }
+  button.secondary { background:#252d3a; color:var(--fg); }
+  input[type=text] { background:var(--cell); border:1px solid #303849; color:var(--fg); border-radius:8px; padding:9px 12px; font-size:14px; width:180px; outline:none; }
+  input[type=text]:focus { border-color:var(--accent2); }
+  .status { margin-top:14px; font-size:14px; line-height:1.8; }
+  .status b { color:var(--accent2); }
+  .loops { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:10px; margin-top:16px; }
+  .loop { background:var(--cell); border:1px solid #252d3a; border-radius:8px; padding:12px; }
+  .loop.active { border-color:var(--accent); box-shadow:0 0 0 1px rgba(242,195,91,.25) inset; }
+  .loop-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .note { color:var(--fg); font-weight:700; letter-spacing:.04em; }
+  .count { color:var(--dim); font-family:Consolas,"Courier New",monospace; font-size:12px; }
+  .bar { height:7px; overflow:hidden; background:#222936; border-radius:999px; }
+  .fill { width:0; height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .12s linear; }
+  .meta { margin-top:8px; color:var(--dim); font-family:Consolas,"Courier New",monospace; font-size:12px; line-height:1.7; }
+  .log { margin-top:12px; font-family:Consolas,"Courier New",monospace; font-size:12px; color:var(--dim); max-height:150px; overflow-y:auto; white-space:pre-wrap; border-top:1px dashed var(--line); padding-top:10px; }
+  .hint { font-size:12.5px; color:var(--dim); line-height:2; }
+  .hint b { color:var(--fg); }
+  code { background:var(--cell); padding:1px 6px; border-radius:4px; font-size:12px; color:var(--accent2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>03 · Phase Loops</h1>
+  <div class="sub">每个音符都是一条独立 loop：不同周期、不同声音长度、不同初始相位。系统不写固定旋律，而是让这些 loop 的相遇关系自己生成旋律与和声。</div>
+
+  <div class="panel">
+    <div class="controls">
+      <button id="playBtn">播放</button>
+      <button id="stopBtn" class="secondary">停止</button>
+      <input id="seedInput" type="text" placeholder="随机种子（留空=随机）" />
+      <button id="regenBtn" class="secondary">换一版</button>
+    </div>
+    <div class="status" id="status">点击播放开始。每个卡片是一条独立循环，亮起时表示这个音正在触发。</div>
+    <div class="loops" id="loops"></div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="panel">
+    <div class="hint">
+      <b>机制：</b>固定音符集合不变，但每个音都有自己的周期、时值和初始相位。由于周期彼此错开，任何两个音的先后顺序和重叠关系都会慢慢改变。<br>
+      <b>灵感：</b>Tero Parviainen 的 <code>JavaScript Systems Music</code> 中，Music for Airports 的核心是多个不同长度的单音 tape loop；这里先沿用 02 的采样钢琴，方便比较两种生成机制。
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+const $ = id => document.getElementById(id);
+const statusEl = $('status');
+const loopsEl = $('loops');
+const logEl = $('log');
+const setStatus = html => { statusEl.innerHTML = html; };
+const log = msg => { logEl.textContent += msg + '\n'; logEl.scrollTop = logEl.scrollHeight; };
+
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i += 1) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h;
+};
+
+const NOTE_SET = [
+  { note: 'F3', role: 'root', basePeriod: 17.5, baseDur: 6.5 },
+  { note: 'C4', role: 'fifth', basePeriod: 19.25, baseDur: 5.5 },
+  { note: 'Ab4', role: 'minor', basePeriod: 23, baseDur: 7.25 },
+  { note: 'Bb4', role: 'color', basePeriod: 13.75, baseDur: 3.8 },
+  { note: 'Eb5', role: 'seventh', basePeriod: 11.5, baseDur: 3.2 },
+  { note: 'G5', role: 'light', basePeriod: 9.75, baseDur: 2.4 },
+  { note: 'C5', role: 'anchor', basePeriod: 15.25, baseDur: 4.4 },
+];
+
+const makeMasterChain = () => {
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 2.2, attack: 0.04, release: 0.55 });
+  const highpass = new Tone.Filter({ type: 'highpass', frequency: 35 });
+  const limiter = new Tone.Limiter(-1).connect(Tone.Destination);
+  const masterGain = new Tone.Gain(0).connect(limiter);
+  compressor.connect(highpass);
+  highpass.connect(masterGain);
+  return { compressor, highpass, limiter, masterGain };
+};
+
+const PIANO_NOTES = ['A2', 'C#3', 'F3', 'A3', 'C#4', 'F4', 'A4', 'C#5', 'F5', 'A5', 'C#6', 'F6'];
+const JS_DELIVR_BASE = 'https://cdn.jsdelivr.net/gh/generative-music/samples-alex-bainter@master/samples/vsco2-piano-mf/';
+const sampleFile = (note, ext) => note.toLowerCase().replace('#', 'sharp') + ext;
+
+const wrapPiano = (piano, fxNodes) => ({
+  trigger: (note, dur, time, velocity) => piano.triggerAttackRelease(note, dur, time, velocity),
+  releaseAll: time => piano.releaseAll(time),
+  dispose: () => {
+    piano.dispose();
+    fxNodes.forEach(node => node.dispose());
+  },
+});
+
+const createSampledPiano = async (destination, timeoutMs) => {
+  const piano = await new Promise((resolve, reject) => {
+    const sampler = new Tone.Sampler({
+      urls: Object.fromEntries(PIANO_NOTES.map(note => [note, sampleFile(note, '.wav')])),
+      baseUrl: JS_DELIVR_BASE,
+      release: 3.5,
+      volume: 12,
+      onload: () => resolve(sampler),
+      onerror: err => reject(err),
+    });
+    setTimeout(() => reject(new Error('加载超时（' + timeoutMs / 1000 + 's）')), timeoutMs);
+  });
+  const reverb = new Tone.Reverb({ decay: 10, wet: 0.38 });
+  await reverb.generate();
+  piano.connect(reverb);
+  reverb.connect(destination);
+  return wrapPiano(piano, [reverb]);
+};
+
+const createFallbackPiano = async destination => {
+  const piano = new Tone.PolySynth(Tone.FMSynth, {
+    harmonicity: 3,
+    modulationIndex: 8,
+    oscillator: { type: 'sine' },
+    modulation: { type: 'triangle' },
+    envelope: { attack: 0.005, decay: 1.2, sustain: 0, release: 2.8 },
+    modulationEnvelope: { attack: 0.005, decay: 0.4, sustain: 0, release: 0.8 },
+    volume: 6,
+  });
+  const reverb = new Tone.Reverb({ decay: 8, wet: 0.34 });
+  await reverb.generate();
+  piano.connect(reverb);
+  reverb.connect(destination);
+  return wrapPiano(piano, [reverb]);
+};
+
+const createPiano = async destination => {
+  try {
+    const piano = await createSampledPiano(destination, 45000);
+    console.info('[钢琴] 使用 02 同款真实采样 vsco2-piano-mf（jsDelivr）');
+    return piano;
+  } catch (err) {
+    console.warn('[钢琴] 采样加载失败，回退 FM 合成:', err.message);
+    setStatus('采样加载失败（' + err.message + '），已回退合成钢琴');
+    return createFallbackPiano(destination);
+  }
+};
+
+let engine = null;
+let currentSeed = null;
+let engineTransition = false;
+
+const activateEngine = async seed => {
+  const rng = makeRng(seed);
+  const { compressor, highpass, limiter, masterGain } = makeMasterChain();
+  const piano = await createPiano(compressor);
+
+  const loops = NOTE_SET.map((item, index) => {
+    const periodJitter = 0.94 + rng() * 0.14;
+    const durJitter = 0.86 + rng() * 0.28;
+    const period = item.basePeriod * periodJitter;
+    const duration = Math.min(period * 0.72, item.baseDur * durJitter);
+    const phase = rng() * period;
+    const nextIn = (period - phase) % period;
+    const velocity = 0.7 + rng() * 0.3;
+    return {
+      ...item,
+      index,
+      period,
+      duration,
+      phase,
+      nextIn,
+      velocity,
+      eventId: null,
+      triggers: 0,
+      nextTriggerAt: nextIn,
+    };
+  });
+
+  let uiTimer = null;
+  let scheduled = false;
+
+  const renderLoops = () => {
+    loopsEl.innerHTML = '';
+    loops.forEach(loop => {
+      const card = document.createElement('div');
+      card.className = 'loop';
+      card.id = 'loop-' + loop.index;
+      card.innerHTML =
+        '<div class="loop-head">' +
+          '<span class="note">' + loop.note + '</span>' +
+          '<span class="count" id="count-' + loop.index + '">0</span>' +
+        '</div>' +
+        '<div class="bar"><div class="fill" id="phase-' + loop.index + '"></div></div>' +
+        '<div class="meta">' +
+          'period ' + loop.period.toFixed(2) + 's<br>' +
+          'duration ' + loop.duration.toFixed(2) + 's<br>' +
+          'phase ' + loop.phase.toFixed(2) + 's · velocity ' + loop.velocity.toFixed(2) +
+        '</div>';
+      loopsEl.appendChild(card);
+    });
+  };
+
+  const refreshUi = () => {
+    const seconds = Tone.Transport.seconds;
+    loops.forEach(loop => {
+      const position = (seconds + loop.phase) % loop.period;
+      const percent = position / loop.period * 100;
+      const fill = $('phase-' + loop.index);
+      const count = $('count-' + loop.index);
+      if (fill) fill.style.width = percent.toFixed(1) + '%';
+      if (count) count.textContent = String(loop.triggers);
+    });
+  };
+
+  const flashLoop = loop => {
+    const card = $('loop-' + loop.index);
+    if (!card) return;
+    card.classList.add('active');
+    setTimeout(() => card.classList.remove('active'), 180);
+  };
+
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    renderLoops();
+    refreshUi();
+    log('seed ' + seed + ' · independent note loops');
+    loops.forEach(loop => {
+      loop.eventId = Tone.Transport.scheduleRepeat(time => {
+        piano.trigger(loop.note, loop.duration, time, loop.velocity);
+        loop.triggers += 1;
+        loop.nextTriggerAt = Tone.Transport.seconds + loop.period;
+        Tone.Draw.schedule(() => {
+          flashLoop(loop);
+          setStatus(
+            '播放中 · 最近触发 <b>' + loop.note + '</b> · 周期 <b>' +
+            loop.period.toFixed(2) + 's</b> · 时值 <b>' + loop.duration.toFixed(2) +
+            's</b> · 种子 ' + currentSeed
+          );
+          log(loop.note + '  period=' + loop.period.toFixed(2) + 's  dur=' + loop.duration.toFixed(2) + 's');
+        }, time);
+      }, loop.period, loop.nextIn);
+    });
+    uiTimer = setInterval(refreshUi, 150);
+  };
+
+  const fadeIn = () => masterGain.gain.linearRampToValueAtTime(1, Tone.now() + 1.2);
+  const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.8);
+
+  const end = () => {
+    clearInterval(uiTimer);
+    uiTimer = null;
+    scheduled = false;
+    loops.forEach(loop => {
+      if (loop.eventId !== null) Tone.Transport.clear(loop.eventId);
+      loop.eventId = null;
+    });
+    piano.releaseAll(Tone.now() + 0.1);
+    Tone.Transport.stop();
+    Tone.Transport.cancel();
+  };
+
+  const deactivate = () => {
+    end();
+    piano.dispose();
+    [compressor, highpass, limiter, masterGain].forEach(node => node.dispose());
+  };
+
+  return { deactivate, schedule, end, fadeIn, fadeOut };
+};
+
+$('playBtn').addEventListener('click', async () => {
+  if (engineTransition) return;
+  await Tone.start();
+  try {
+    if (!engine) {
+      const text = $('seedInput').value.trim();
+      currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      setStatus('正在构建引擎（种子 ' + currentSeed + '）...');
+      engine = await activateEngine(currentSeed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    engine.fadeIn();
+  } catch (err) {
+    console.error(err);
+    setStatus('播放失败：' + err.message);
+  }
+});
+
+$('stopBtn').addEventListener('click', () => {
+  if (!engine || engineTransition) return;
+  const oldEngine = engine;
+  engineTransition = true;
+  oldEngine.fadeOut();
+  setTimeout(() => {
+    oldEngine.deactivate();
+    if (engine === oldEngine) engine = null;
+    engineTransition = false;
+    setStatus('已停止');
+  }, 900);
+});
+
+$('regenBtn').addEventListener('click', async () => {
+  if (engineTransition) return;
+  if (engine) {
+    const oldEngine = engine;
+    engineTransition = true;
+    oldEngine.fadeOut();
+    await new Promise(resolve => setTimeout(resolve, 900));
+    oldEngine.deactivate();
+    if (engine === oldEngine) engine = null;
+    engineTransition = false;
+  }
+  $('seedInput').value = '';
+  $('playBtn').click();
+});
+
+window.exercise = {
+  activate: activateEngine,
+};
+</script>
+</body>
+</html>

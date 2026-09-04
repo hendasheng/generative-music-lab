@@ -320,6 +320,42 @@ const activateEngine = async seed => {
   const piano = await createPiano(Tone.Destination);
 
   let currentSection = 0;
+  let lastSection = 0;
+  let phraseCount = 0;
+  let densityMemory = 1;
+
+  const PLAYBACK_VARIANTS = [
+    { name: '完整', keep: 1, velocity: 1, late: 0, tail: 0.72, chordLimit: 2 },
+    { name: '骨架', keep: 0.52, velocity: 0.9, late: 0, tail: 0.5, chordLimit: 1 },
+    { name: '回声', keep: 0.38, velocity: 0.72, late: 0.6, tail: 0.38, chordLimit: 1 },
+    { name: '迟到回应', keep: 0.62, velocity: 0.82, late: 2.4, tail: 0.46, chordLimit: 1 },
+  ];
+
+  const chooseVariant = section => {
+    const weightsBySection = [
+      [0.18, 0.36, 0.34, 0.12],  // A 安静：更多骨架与回声
+      [0.42, 0.26, 0.14, 0.18],  // B 主题：主题可以完整，但不总是完整
+      [0.24, 0.32, 0.1, 0.34],   // C 发展：前冲后留呼吸
+      [0.12, 0.26, 0.52, 0.1],   // D 结尾：更像残影
+    ][section];
+    let roll = rng() * weightsBySection.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < weightsBySection.length; i += 1) {
+      roll -= weightsBySection[i];
+      if (roll <= 0) return PLAYBACK_VARIANTS[i];
+    }
+    return PLAYBACK_VARIANTS[0];
+  };
+
+  const shouldKeepStep = (step, noteCount, variant, section) => {
+    const beatRole = step % 8 === 0 ? 0.34 : step % 4 === 0 ? 0.2 : 0;
+    const tailStart = PHRASE_LENGTH * (section === 2 ? 0.56 : 0.68);
+    const tailFade = step >= tailStart
+      ? Math.max(0.12, 1 - (step - tailStart) / (PHRASE_LENGTH - tailStart) * variant.tail)
+      : 1;
+    const chordPenalty = noteCount > variant.chordLimit ? 0.62 : 1;
+    const probability = Math.min(0.98, (variant.keep * densityMemory + beatRole) * tailFade * chordPenalty);
+    return rng() < probability;
+  };
 
   const schedule = () => {
     const showMatrix = () => {
@@ -337,27 +373,55 @@ const activateEngine = async seed => {
      * 提前 1 秒触发 + ±25ms 人性化抖动（原样照搬 aisatsana 手法） */
     const playPhrase = () => {
       const { phraseIndex, section } = chain.next();
+      const variant = chooseVariant(section);
+      const comingDownFromDevelopment = lastSection === 2 && section !== 2;
+      const sectionChanged = phraseCount > 0 && section !== lastSection;
       currentSection = section;
       const phrase = PHRASES[phraseIndex];
+      const playedNotes = [];
+      const rawNoteCount = phrase.flat().length;
+
       phrase.forEach((notes, step) => {
+        if (!notes.length || !shouldKeepStep(step, notes.length, variant, section)) return;
+        const limitedNotes = notes.slice(0, variant.chordLimit);
         notes.forEach(({ n, v }) => {
+          if (!limitedNotes.some(note => note.n === n)) return;
           const waitTime = step * STEP_DURATION_S;
+          const tailStart = PHRASE_LENGTH * 0.68;
+          const tailScale = step >= tailStart
+            ? Math.max(0.45, 1 - (step - tailStart) / (PHRASE_LENGTH - tailStart) * 0.45)
+            : 1;
+          const transitionBreath = sectionChanged && step < 4 ? 0.68 : 1;
+          const velocity = (0.62 + v * 0.28) * variant.velocity * tailScale * transitionBreath;
           /* ★ 力度上移补偿：原版 aisatsana 不传力度（满响度），
-           * 我们把律动力度 0.4~0.8 映射到 0.82~0.94 —— 保留重音对比，又不拉低整体音量 */
+           * 现在再叠加演奏版本、句尾衰减和转场呼吸：留白来自说话方式，而不是插入空段。 */
           piano.triggerAttack(
             n,
-            `+${waitTime + 1 + rng() * 0.05 - 0.025}`,   // 对照源码：+1 秒预延迟 + 抖动
-            0.7 + v * 0.3
+            `+${waitTime + 1 + variant.late + rng() * 0.05 - 0.025}`,   // 对照源码：+1 秒预延迟 + 抖动
+            velocity
           );
+          playedNotes.push(n);
         });
       });
+      if (section === 2) {
+        densityMemory = Math.max(0.58, densityMemory - 0.12);
+      } else if (comingDownFromDevelopment) {
+        densityMemory = 0.5;
+      } else {
+        densityMemory = Math.min(1, densityMemory + 0.08);
+      }
+      lastSection = section;
+      phraseCount += 1;
       setStatus(
         '▶ 播放中 · 段落 <b>' + SECTION_NAMES[currentSection] +
         '</b> · 乐句 <b>' + String.fromCharCode(65 + phraseIndex) +
-        '</b> · 音符 ' + phrase.flat().length + ' 个 · 种子 ' + currentSeed
+        '</b> · 演奏 <b>' + variant.name +
+        '</b> · 音符 ' + playedNotes.length + '/' + rawNoteCount +
+        ' · 种子 ' + currentSeed
       );
       log('[' + SECTION_NAMES[currentSection] + '] 乐句 ' + String.fromCharCode(65 + phraseIndex) +
-          ' ← ' + phrase.flat().map(x => x.n).join(' '));
+          ' · ' + variant.name + ' · ' + playedNotes.length + '/' + rawNoteCount +
+          ' ← ' + (playedNotes.join(' ') || '余响'));
     };
 
     playPhrase();
