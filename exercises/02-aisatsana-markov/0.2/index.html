@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>02 · Aisatsana Markov 0.2（Markov 乐句重组）</title>
+<style>
+  :root { --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32; --section-color:#8b5cf6; --accent2:#fafafa; }
+  * { box-sizing:border-box; }
+  html, body { width:100%; height:100%; }
+  body { margin:0; overflow:hidden; background:var(--bg); color:var(--fg); font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  .wrap { position:relative; width:100%; height:100%; }
+  h1 { font-size:24px; font-weight:650; letter-spacing:-.035em; margin:0 0 5px; }
+  h1 small { color:var(--dim); font:500 13px/1 Consolas,monospace; letter-spacing:0; vertical-align:5px; }
+  .sub { color:var(--dim); font-size:12px; line-height:1.5; }
+  .hud { position:fixed; z-index:10; background:var(--panel); border:1px solid var(--line); border-radius:7px; transition:opacity .2s ease; }
+  .intro-hud { top:20px; left:20px; padding:14px 16px; }
+  .controls-hud { top:20px; right:20px; width:310px; padding:14px; }
+  .status { margin-top:12px; padding-top:10px; border-top:1px solid #2a2a2e; color:var(--dim); font-size:11px; line-height:1.5; }
+  .status b { color:var(--fg); }
+  .visual-head { position:absolute; z-index:3; right:20px; bottom:16px; display:flex; align-items:baseline; gap:8px; color:var(--dim); opacity:.55; transition:opacity .2s ease; }
+  .visual-title { color:inherit; font-size:11px; font-weight:500; }
+  .visual-meta { color:inherit; font:10px Consolas,monospace; }
+  .markov-stage { position:fixed; z-index:1; inset:0; overflow:hidden; width:100vw; height:100vh; background:#0d0d0f; isolation:isolate; }
+  .markov-map { position:absolute; z-index:2; inset:0; display:block; width:100%; height:100%; background:transparent; }
+  .chain-edge { fill:none; stroke:#71717a; stroke-width:1.1; opacity:.52; transition:stroke 1.2s ease-out,opacity 1.2s ease-out,stroke-width 1.2s ease-out; }
+  .chain-edge.strong { opacity:.7; }
+  .chain-edge.active { stroke:var(--section-color); stroke-width:1.5; opacity:1; transition-duration:.08s; }
+  .chain-node { fill:#52525b; stroke:#71717a; stroke-width:1; transition:fill 1.6s ease-out,stroke 1.6s ease-out; }
+  .chain-node.active { fill:var(--section-color); stroke:var(--section-color); transition-duration:.08s; }
+  .node-label { fill:#fff; font:600 12px Consolas,monospace; text-anchor:middle; dominant-baseline:middle; pointer-events:none; }
+  .legend { position:absolute; z-index:3; left:50%; bottom:18px; display:flex; gap:18px; color:var(--dim); font-size:11px; transform:translateX(-50%); transition:opacity .2s ease; }
+  body.hud-hidden .hud,
+  body.hud-hidden .visual-head,
+  body.hud-hidden .legend { opacity:0; pointer-events:none; }
+  .key { display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; vertical-align:1px; }
+  .key.source { background:#52525b; border:1px solid #71717a; }
+  .key.played { background:var(--section-color); }
+  .log { position:absolute; z-index:1; inset:110px 5vw 54px; display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; color:#f4f4f5; font:13px/1.775 Consolas,monospace; text-align:left; opacity:.8; pointer-events:none; }
+  .log-content { flex:0 0 auto; width:100%; white-space:pre-wrap; will-change:transform; }
+  .log-line { min-height:1.775em; }
+  .info-hud { left:20px; bottom:20px; width:min(620px,calc(100vw - 40px)); max-height:65vh; padding:10px 13px; overflow:auto; color:var(--dim); }
+  .info-hud:not([open]) { width:auto; }
+  .info-hud summary { color:var(--fg); font-size:12px; cursor:pointer; user-select:none; }
+  .matrix { margin-top:12px; padding-top:12px; border-top:1px solid #2a2a2e; font-family:Consolas,monospace; font-size:11px; color:var(--dim); line-height:1.6; }
+  .matrix b { color:var(--fg); }
+  .hint { font-size:12.5px; color:var(--dim); line-height:1.9; }
+  .hint b { color:var(--fg); }
+  code { background:#27272a; padding:2px 5px; border-radius:3px; font-size:12px; color:#e4e4e7; }
+  exercise-controls {
+    --exercise-control-radius:4px;
+    --exercise-control-primary:#fafafa;
+    --exercise-control-primary-fg:#18181b;
+    --exercise-control-secondary:#27272a;
+    --exercise-control-secondary-fg:#fafafa;
+    --exercise-control-input-border:#3f3f46;
+    --exercise-control-input-bg:#0d0d0f;
+    --exercise-control-input-fg:#fafafa;
+    --exercise-control-focus:#a1a1aa;
+  }
+  @media (max-width:640px) {
+    .intro-hud { top:10px; left:10px; padding:10px 12px; }
+    h1 { font-size:18px; }
+    h1 small { font-size:10px; vertical-align:3px; }
+    .sub { display:none; }
+    .controls-hud { top:76px; left:10px; right:10px; width:auto; padding:10px; }
+    .status { margin-top:8px; padding-top:8px; }
+    .log { inset:140px 16px 50vh; font-size:11px; line-height:1.55; }
+    .visual-head { right:10px; bottom:40px; }
+    .legend { left:auto; right:10px; bottom:12px; gap:8px 12px; transform:none; }
+    .info-hud { left:10px; bottom:10px; width:auto; max-width:calc(100vw - 170px); padding:8px 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="markov-stage">
+    <div class="log" id="log"><div class="log-content" id="logContent"></div></div>
+    <svg class="markov-map" id="markovMap" viewBox="0 0 960 430" role="img" aria-label="当前段落的马尔可夫音高状态网络"></svg>
+    <div class="visual-head">
+      <div class="visual-title" id="visualTitle">等待第一条乐句</div>
+      <div class="visual-meta" id="visualMeta">32 steps</div>
+    </div>
+    <div class="legend"><span><i class="key source"></i>可到达状态</span><span><i class="key played"></i>当前状态与刚发生的转移</span></div>
+  </div>
+
+  <header class="hud intro-hud">
+    <h1>02 · Aisatsana Markov <small>0.2</small></h1>
+    <div class="sub">乐句顺序与句内音高沿马尔可夫链重组。</div>
+  </header>
+
+  <div class="hud controls-hud">
+    <exercise-controls id="transportControls"></exercise-controls>
+    <div class="status" id="status">点击播放开始。日志会显示每次乐句转换（马尔可夫链的"行走"）。</div>
+  </div>
+
+  <details class="hud info-hud">
+    <summary>机制与转移</summary>
+    <div class="matrix" id="matrix"></div>
+    <div class="hint">
+      <b>机制（对照 aisatsana 源码）：</b>① 音符素材按八分音符网格量化 → ② 每 32 步切成一个乐句 →
+      ③ 乐句序列喂给段落链训练转换概率 → ④ 当前段落内的音符相邻关系训练第二条链 →
+      ⑤ 演出时两条链分别重组乐句顺序和句内音高。节奏位置、力度与演奏版本仍沿用 0.1。<br>
+      <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
+      音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
+      <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
+      （首次约 50MB，之后走浏览器缓存）；加载失败自动回退 FM 合成钢琴，不会卡死。<br>
+      <b>版权说明：</b>aisatsana 原曲谱面（Aphex Twin）不直接搬运，本练习使用同风格的<b>自写</b>极简琶音素材演示机制；采样库为 CC0 许可。
+    </div>
+  </details>
+</div>
+
+<!-- Tone.js v14.7.58 从 CDN 加载（unpkg） -->
+<script src="../../../shared/exercise-controls.js"></script>
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+/* ============================================================
+ * 02 · aisatsana 式极简钢琴（Markov 乐句重组）
+ * 对照源码：generative-music/pieces-alex-bainter 仓库内
+ *   packages/piece-aisatsana/src/piece.js（86 行，机制全貌）
+ *   packages/piece-aisatsana/src/instructions.json（原曲谱面数据）
+ * 学习点：
+ *   1. 谱面 → 八分音符网格量化（本练习简化：素材直接用步索引）
+ *   2. 乐句切分（32 步一组）+ 马尔可夫链训练乐句转换
+ *   3. 段落链沿概率重组乐句顺序 —— 记忆 + 重排
+ *   4. 段落内音高链沿素材中的相邻关系重组句内音符
+ *   5. 提前 1 秒触发 + ±25ms 人性化抖动（与 piece-zed 同源手法）
+ * ============================================================ */
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '⚠ 无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+/* ---------- ① 音符素材：段落化乐句库 ----------
+ * ★ 段落感来自素材结构（对照原版：301 秒谱面含 intro→主题→发展→结尾的段落性格）。
+ * 本练习 10 个乐句分 4 段：
+ *   A 安静段（0-1）：稀疏、低音区、长休止
+ *   B 主题段（2-4）：完整琶音、主旋律
+ *   C 发展段（5-7）：密集、双音、切分、高音
+ *   D 结尾段（8-9）：下行走势、渐弱收束
+ * 每步格式 [{ n: 音名, v: 力度 0~1 }]，空数组 = 休止。 */
+const PHRASES = [
+  /* --- 段落 A：安静（稀疏低音） --- */
+  /* A0：低音琶音，每 4~6 步一个音 */
+  [
+    [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.55 }], [], [], [],
+    [{ n: 'E3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'C3', v: 0.55 }], [], [], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'E3', v: 0.55 }], [], [], [], [{ n: 'C3', v: 0.65 }], [], [], [],
+  ],
+  /* A1：低音 + 高音点缀，仍稀疏 */
+  [
+    [{ n: 'C3', v: 0.55 }], [], [{ n: 'E4', v: 0.4 }], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'E3', v: 0.55 }], [], [{ n: 'C4', v: 0.4 }], [], [{ n: 'G3', v: 0.45 }], [], [], [],
+    [{ n: 'C3', v: 0.5 }], [], [{ n: 'G4', v: 0.35 }], [], [{ n: 'E3', v: 0.5 }], [], [], [],
+    [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.45 }], [], [], [],
+  ],
+  /* --- 段落 B：主题（完整琶音、主旋律） --- */
+  /* B0：切分上行琶音（3+3+2 感）+ 低八度重音 */
+  [
+    [{ n: 'C4', v: 0.7 }], [], [{ n: 'E4', v: 0.55 }], [], [{ n: 'G4', v: 0.75 }], [], [], [{ n: 'C5', v: 0.5 }],
+    [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.7 }], [{ n: 'G3', v: 0.8 }], [], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.7 }], [], [], [{ n: 'C5', v: 0.45 }],
+    [], [{ n: 'B4', v: 0.6 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'C4', v: 0.75 }], [], [],
+  ],
+  /* B1：跨音区 + 高音点缀（C6） */
+  [
+    [{ n: 'C5', v: 0.6 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.65 }], [{ n: 'C5', v: 0.55 }],
+    [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.6 }],
+    [{ n: 'D4', v: 0.5 }], [{ n: 'E4', v: 0.65 }], [],
+    [{ n: 'C5', v: 0.6 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.65 }], [{ n: 'C5', v: 0.55 }],
+    [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'C6', v: 0.75 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.7 }], [], [],
+  ],
+  /* B2：五音上行 C4-E4-G4-C5-E5 + 回落 */
+  [
+    [{ n: 'C4', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.7 }], [], [{ n: 'C5', v: 0.65 }], [],
+    [{ n: 'E5', v: 0.7 }], [], [{ n: 'C5', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'E4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'G3', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'C4', v: 0.65 }], [],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'C5', v: 0.55 }], [],
+  ],
+  /* --- 段落 C：发展（密集、双音、切分） --- */
+  /* C0：双音和弦块 + 低音重音 */
+  [
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'E4', v: 0.65 }], [], [{ n: 'G3', v: 0.8 }, { n: 'C5', v: 0.45 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'F3', v: 0.8 }, { n: 'A4', v: 0.5 }], [], [],
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'D4', v: 0.6 }], [], [{ n: 'G3', v: 0.8 }, { n: 'B4', v: 0.5 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'C3', v: 0.75 }, { n: 'G4', v: 0.4 }], [], [],
+  ],
+  /* C1：密集切分 + 双音 */
+  [
+    [{ n: 'C4', v: 0.7 }, { n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'G4', v: 0.6 }], [],
+    [{ n: 'C5', v: 0.7 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.7 }], [], [{ n: 'C4', v: 0.6 }],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'G4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.7 }, { n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'B4', v: 0.6 }], [],
+    [{ n: 'C5', v: 0.7 }], [{ n: 'B4', v: 0.55 }], [], [{ n: 'G4', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'C4', v: 0.7 }], [{ n: 'G3', v: 0.75 }], [], [],
+  ],
+  /* C2：附点长音对比 + 渐强 */
+  [
+    [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'C5', v: 0.7 }], [], [], [{ n: 'G4', v: 0.55 }],
+    [{ n: 'E4', v: 0.6 }], [], [], [{ n: 'C4', v: 0.65 }], [], [{ n: 'D4', v: 0.5 }], [],
+    [{ n: 'E4', v: 0.65 }], [], [{ n: 'G4', v: 0.7 }], [], [], [{ n: 'B4', v: 0.75 }], [], [], [{ n: 'C5', v: 0.6 }],
+    [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'E4', v: 0.7 }], [], [{ n: 'C4', v: 0.55 }], [{ n: 'G3', v: 0.8 }],
+  ],
+  /* --- 段落 D：结尾（下行走势、收束） --- */
+  /* D0：长下行走势 + 尾部留白 */
+  [
+    [{ n: 'C5', v: 0.65 }], [], [{ n: 'B4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'E4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'G3', v: 0.6 }], [], [{ n: 'E3', v: 0.65 }], [], [{ n: 'C3', v: 0.7 }], [],
+    [{ n: 'C3', v: 0.6 }], [], [], [{ n: 'G3', v: 0.55 }], [], [], [{ n: 'E3', v: 0.5 }], [], [], [{ n: 'C3', v: 0.6 }],
+    [], [], [], [], [], [], [],
+  ],
+  /* D1：收束到根音 G2/C3，长尾 */
+  [
+    [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.5 }], [], [{ n: 'G3', v: 0.55 }], [], [], [{ n: 'E3', v: 0.5 }],
+    [], [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G2', v: 0.7 }], [], [],
+    [], [], [], [], [], [{ n: 'C3', v: 0.55 }], [], [], [], [], [], [], [], [], [], [],
+  ],
+];
+
+/* ★ 段落结构（对照原版的段落衔接）：
+ * 乐句索引 → 段落分组；段落 → 下一段落概率矩阵。
+ * 主循环 A→B→C→A（安静→主题→发展→回安静），D 结尾偶尔出现后循环回 A。 */
+const SECTION_PHRASES = [
+  [0, 1],          // A 安静
+  [2, 3, 4],       // B 主题
+  [5, 6, 7],       // C 发展
+  [8, 9],          // D 结尾
+];
+const SECTION_NAMES = ['A 安静', 'B 主题', 'C 发展', 'D 结尾'];
+const SECTION_COLORS = ['#8b5cf6', '#00c896', '#ff8a00', '#ff2876'];
+const SECTION_TRANSITIONS = [
+  [0.1, 0.75, 0.1, 0.05],   // A → 主要进主题
+  [0.1, 0.2, 0.6, 0.1],     // B → 主要进发展
+  [0.55, 0.15, 0.15, 0.15], // C → 主要回落安静
+  [0.7, 0.1, 0.1, 0.1],     // D → 回到安静（循环）
+];
+
+/* 0.2：从每个段落的原始乐句学习“当前音 → 下一音”。
+ * 不跨乐句首尾建立转移，避免人为制造素材中不存在的衔接；重复出现的
+ * 转移会自然拥有更高权重。句内节奏、力度和音符数量仍由原乐句决定。 */
+const NOTE_CHAINS = SECTION_PHRASES.map(phraseIndexes => {
+  const transitions = new Map();
+  const starts = [];
+  phraseIndexes.forEach(phraseIndex => {
+    const sequence = PHRASES[phraseIndex].flat().map(note => note.n);
+    if (sequence.length) starts.push(sequence[0]);
+    for (let i = 0; i < sequence.length - 1; i += 1) {
+      const choices = transitions.get(sequence[i]) || [];
+      choices.push(sequence[i + 1]);
+      transitions.set(sequence[i], choices);
+    }
+  });
+  return { transitions, starts };
+});
+
+const walkNote = (currentNote, section, rng, fallbackNote) => {
+  const chain = NOTE_CHAINS[section];
+  const choices = chain.transitions.get(currentNote);
+  if (choices && choices.length) return choices[Math.floor(rng() * choices.length)];
+  if (chain.starts.length) return chain.starts[Math.floor(rng() * chain.starts.length)];
+  return fallbackNote;
+};
+
+const STEP_DURATION_S = 0.3;      // 八分音符时长（≈ 100 BPM，aisatsana 用 102 BPM / 0.294s）
+const PHRASE_LENGTH = 32;         // 每乐句 32 步（对照源码 phraseLength）
+const PHRASE_DURATION_S = PHRASE_LENGTH * STEP_DURATION_S;
+
+/* ---------- ② 段落感知马尔可夫链（对照 aisatsana 的 markov-chains 库） ----------
+ * 两层随机：
+ *   段落层：按 SECTION_TRANSITIONS 选下一段落（主循环 A→B→C→A）
+ *   句层：段落内随机选一个乐句
+ * 这模拟原版的段落衔接规律（intro→主题→发展→结尾），
+ * 而不是把所有乐句混在一起随机转 —— 段落感来自这里。 */
+const buildSectionChain = rng => {
+  let currentSection = 0;              // 从 A 安静段开始
+  return {
+    next: () => {
+      const weights = SECTION_TRANSITIONS[currentSection];
+      const total = weights.reduce((a, b) => a + b, 0);
+      let roll = rng() * total;
+      let nextSection = 0;
+      for (let i = 0; i < weights.length; i += 1) {
+        roll -= weights[i];
+        if (roll <= 0) { nextSection = i; break; }
+      }
+      const pool = SECTION_PHRASES[nextSection];
+      const phraseIndex = pool[Math.floor(rng() * pool.length)];
+      currentSection = nextSection;
+      return { phraseIndex, section: nextSection };
+    },
+    getSection: () => currentSection,
+    transitions: SECTION_TRANSITIONS,
+  };
+};
+
+/* ---------- ③ 钢琴：真实采样（vsco2-piano-mf）+ 合成回退 ----------
+ * 来源：samples-alex-bainter 仓库 samples/vsco2-piano-mf/（VSCO2 免费钢琴采样，CC0）。
+ * 加载策略（由快到慢，逐级回退，永不卡死）：
+ *   1) jsDelivr wav（GitHub 镜像，约 50MB 首次，之后走浏览器缓存）
+ *   2) FM 合成钢琴（最后兜底）
+ * 官方 CDN samples.alexbainter.com 对直连返回 403（有访问控制），所以不走它。
+ * 只加载旋律音区（C3~C6）所需 12 个采样。 */
+const PIANO_NOTES = ['A2', 'C#3', 'F3', 'A3', 'C#4', 'F4', 'A4', 'C#5', 'F5', 'A5', 'C#6', 'F6'];
+const sampleFile = (note, ext) => note.toLowerCase().replace('#', 'sharp') + ext;
+const JS_DELIVR_BASE = 'https://cdn.jsdelivr.net/gh/generative-music/samples-alex-bainter@master/samples/vsco2-piano-mf/';
+
+const wrapPiano = (piano, fxNodes) => ({
+  triggerAttack: (n, t, v) => piano.triggerAttack(n, t, v),
+  releaseAll: t => piano.releaseAll(t),
+  dispose: () => { piano.dispose(); fxNodes.forEach(node => node.dispose()); },
+});
+
+const createSampledPiano = async (destination, baseUrl, ext, timeoutMs) => {
+  const piano = await new Promise((resolve, reject) => {
+    const sampler = new Tone.Sampler({
+      urls: Object.fromEntries(PIANO_NOTES.map(n => [n, sampleFile(n, ext)])),
+      baseUrl,
+      release: 1.5,
+      volume: 12,                               // ★ +12dB：对齐原版 gain=5（≈+14dB）的归一化量级
+      onload: () => resolve(sampler),
+      onerror: err => reject(err),
+    });
+    setTimeout(() => reject(new Error('加载超时（' + timeoutMs / 1000 + 's）')), timeoutMs);
+  });
+  const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
+  await reverb.generate();
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
+  const limiter = new Tone.Limiter(-1).connect(destination);   // ★ 母带限幅：补偿后防削波
+  compressor.connect(limiter);
+  piano.connect(reverb);
+  reverb.connect(compressor);
+  return wrapPiano(piano, [reverb, compressor, limiter]);
+};
+
+const createFallbackPiano = async destination => {
+  const piano = new Tone.PolySynth(Tone.FMSynth, {
+    harmonicity: 3, modulationIndex: 8,
+    oscillator: { type: 'sine' },
+    modulation: { type: 'triangle' },
+    envelope: { attack: 0.005, decay: 1.2, sustain: 0, release: 1.5 },
+    modulationEnvelope: { attack: 0.005, decay: 0.4, sustain: 0, release: 0.8 },
+    volume: 6,                                  // 合成回退也提响（对齐 +12dB 量级的一半）
+  });
+  const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
+  await reverb.generate();
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
+  const limiter = new Tone.Limiter(-1).connect(destination);
+  compressor.connect(limiter);
+  piano.connect(reverb);
+  reverb.connect(compressor);
+  return wrapPiano(piano, [reverb, compressor, limiter]);
+};
+
+const createPiano = async destination => {
+  try {
+    const piano = await createSampledPiano(destination, JS_DELIVR_BASE, '.wav', 45000);
+    console.info('[钢琴] 使用真实采样 vsco2-piano-mf（jsDelivr）');
+    return piano;
+  } catch (err) {
+    console.warn('[钢琴] 采样加载失败，回退 FM 合成:', err.message);
+    setStatus('⚠ 采样加载失败（' + err.message + '），已回退合成钢琴');
+    return createFallbackPiano(destination);
+  }
+};
+
+/* ---------- 背景 texture：复用 03 的 Moodist 环境素材 ----------
+ * 使用独立随机源，确保 texture 的加载速度和调度不会改变钢琴的 Markov 路径。 */
+const MOODIST_TEXTURES = [
+  {
+    name: 'brown noise',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/noise/brown-noise.wav',
+    periodRange: [80, 140], durationRange: [35, 65], probability: 0.78,
+    filter: 380, targetGain: 0.3, pan: -0.18, fade: 9,
+  },
+  {
+    name: 'wind in trees',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/nature/wind-in-trees.mp3',
+    periodRange: [65, 125], durationRange: [24, 50], probability: 0.66,
+    filter: 1600, targetGain: 0.3, pan: 0.22, fade: 8,
+  },
+  {
+    name: 'jungle',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/nature/jungle.mp3',
+    periodRange: [75, 145], durationRange: [28, 58], probability: 0.62,
+    filter: 2800, targetGain: 0.1, pan: -0.12, fade: 9,
+  },
+  {
+    name: 'birds',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/animals/birds.mp3',
+    periodRange: [55, 115], durationRange: [12, 25], probability: 0.5,
+    filter: 3800, targetGain: 0.1, pan: 0.3, fade: 5, group: 'event', early: true,
+  },
+  {
+    name: 'busy street',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/busy-street.mp3',
+    periodRange: [85, 155], durationRange: [18, 38], probability: 0.42,
+    filter: 1900, targetGain: 0.025, pan: -0.1, fade: 7, group: 'event', early: true,
+  },
+  {
+    name: 'crowd',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/crowd.mp3',
+    periodRange: [100, 180], durationRange: [20, 42], probability: 0.36,
+    filter: 2100, targetGain: 0.022, pan: 0.08, fade: 8, group: 'event', early: true,
+  },
+];
+
+const createMoodistTextures = async (destination, rng) => {
+  const loaded = [];
+  const eventIds = new Set();
+  const randomBetween = ([min, max]) => min + rng() * (max - min);
+  const loadOne = texture => new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return false;
+      settled = true;
+      resolve();
+      return true;
+    };
+    const gain = new Tone.Gain(0);
+    const filter = new Tone.Filter({ type: 'lowpass', frequency: texture.filter, Q: 0.5 });
+    const panner = new Tone.Panner(texture.pan).connect(destination);
+    const player = new Tone.Player({
+      url: texture.url,
+      loop: true,
+      fadeIn: texture.fade,
+      fadeOut: texture.fade,
+      onload: () => {
+        if (!finish()) return;
+        player.connect(filter);
+        filter.connect(gain);
+        gain.connect(panner);
+        loaded.push({ ...texture, player, filter, gain, panner, activeUntil: -Infinity });
+      },
+      onerror: err => {
+        if (!finish()) return;
+        console.warn('[Moodist] 音效加载失败:', texture.name, err);
+        player.dispose(); filter.dispose(); gain.dispose(); panner.dispose();
+      },
+    });
+    setTimeout(() => {
+      if (settled || player.loaded) return;
+      if (!finish()) return;
+      console.warn('[Moodist] 音效加载超时:', texture.name);
+      player.dispose(); filter.dispose(); gain.dispose(); panner.dispose();
+    }, 12000);
+  });
+
+  await Promise.all(MOODIST_TEXTURES.map(loadOne));
+  const activeCountAt = time => loaded.filter(texture => texture.activeUntil > time).length;
+  const activeEventCountAt = time => loaded.filter(texture => texture.group === 'event' && texture.activeUntil > time).length;
+  const scheduleTexture = (texture, transportAt) => {
+    const eventId = Tone.Transport.scheduleOnce(time => {
+      eventIds.delete(eventId);
+      const duration = randomBetween(texture.durationRange);
+      const canPlay = activeCountAt(time) < 2 &&
+        (texture.group !== 'event' || activeEventCountAt(time) < 1) &&
+        time >= texture.activeUntil;
+      if (canPlay && rng() < texture.probability) {
+        const fade = Math.min(texture.fade, duration * 0.42);
+        texture.activeUntil = time + duration + fade;
+        texture.gain.gain.cancelScheduledValues(time);
+        texture.gain.gain.setValueAtTime(0, time);
+        texture.gain.gain.linearRampToValueAtTime(texture.targetGain, time + fade);
+        texture.gain.gain.setValueAtTime(texture.targetGain, time + Math.max(fade, duration - fade));
+        texture.gain.gain.linearRampToValueAtTime(0, time + duration);
+        try {
+          texture.player.start(time);
+          texture.player.stop(time + duration + fade);
+          console.info('[Moodist] texture in:', texture.name, duration.toFixed(0) + 's');
+        } catch (err) {
+          console.warn('[Moodist] 播放失败:', texture.name, err);
+          texture.activeUntil = time;
+        }
+      }
+      scheduleTexture(texture, transportAt + randomBetween(texture.periodRange));
+    }, transportAt);
+    eventIds.add(eventId);
+  };
+
+  return {
+    start: transportAt => loaded.forEach(texture => {
+      const firstRange = texture.early ? [5, 14] : [8, 28];
+      scheduleTexture(texture, transportAt + randomBetween(firstRange));
+    }),
+    stop: time => {
+      eventIds.forEach(eventId => Tone.Transport.clear(eventId));
+      eventIds.clear();
+      loaded.forEach(texture => {
+        texture.gain.gain.cancelScheduledValues(time);
+        texture.gain.gain.linearRampToValueAtTime(0, time + 1.5);
+        try { texture.player.stop(time + 1.6); } catch (err) { /* 已停止则忽略 */ }
+        texture.activeUntil = time;
+      });
+    },
+    dispose: () => loaded.forEach(texture => {
+      texture.player.dispose(); texture.filter.dispose(); texture.gain.dispose(); texture.panner.dispose();
+    }),
+  };
+};
+
+/* ---------- ④ 随机源（Mulberry32，种子可复现，与 01 一致） ---------- */
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h;
+};
+const $ = id => document.getElementById(id);
+const statusEl = $('status'), logContentEl = $('logContent'), matrixEl = $('matrix');
+const visualEl = document.querySelector('.markov-stage');
+const markovMapEl = $('markovMap'), visualTitleEl = $('visualTitle'), visualMetaEl = $('visualMeta');
+const hudElements = [...document.querySelectorAll('.hud, .visual-head, .legend')];
+visualEl.addEventListener('click', () => {
+  const hidden = document.body.classList.toggle('hud-hidden');
+  hudElements.forEach(element => element.setAttribute('aria-hidden', String(hidden)));
+});
+let graphViewport = {
+  width: Math.max(320, window.innerWidth),
+  height: Math.max(320, window.innerHeight),
+  centerX: Math.max(320, window.innerWidth) / 2,
+  centerY: Math.max(320, window.innerHeight) / 2,
+};
+const updateGraphViewBox = (rescaleNodes = false) => {
+  const previous = graphViewport;
+  const width = Math.max(320, window.innerWidth);
+  const height = Math.max(320, window.innerHeight);
+  graphViewport = { width, height, centerX: width / 2, centerY: height / 2 };
+  markovMapEl.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  if (rescaleNodes) {
+    graphMotion.nodes.forEach(node => {
+      node.x = graphViewport.centerX + (node.x - previous.centerX) * width / previous.width;
+      node.y = graphViewport.centerY + (node.y - previous.centerY) * height / previous.height;
+    });
+    graphMotion.energy = 1;
+  }
+};
+const logLines = [];
+const log = (msg, color) => {
+  logLines.push({ msg, color });
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.style.color = color;
+  line.textContent = msg;
+  logContentEl.appendChild(line);
+  if (logLines.length > 80) {
+    logLines.shift();
+    logContentEl.firstElementChild.remove();
+  }
+  const pushDistance = line.getBoundingClientRect().height;
+  logContentEl.style.transition = 'none';
+  logContentEl.style.transform = `translateY(${pushDistance}px)`;
+  void logContentEl.offsetHeight;
+  logContentEl.style.transition = 'transform .6s cubic-bezier(.22,1,.36,1)';
+  logContentEl.style.transform = 'translateY(0)';
+};
+const setStatus = html => { statusEl.innerHTML = html; };
+
+const noteToMidi = note => {
+  const match = /^([A-G])(#?)(-?\d+)$/.exec(note);
+  if (!match) return 60;
+  const semitones = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  return (Number(match[3]) + 1) * 12 + semitones[match[1]] + (match[2] ? 1 : 0);
+};
+const svgNode = (name, attrs = {}) => {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+  Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+  return node;
+};
+const stateId = note => note.replace('#', 's').replace('-', 'm');
+const edgeId = (from, to) => 'edge-' + stateId(from) + '-' + stateId(to);
+const GRAPH_NODE_RADIUS = 17;
+
+let visualPhraseId = 0;
+let previousVisualNote = null;
+let graphMotion = { nodes: [], edges: [], energy: 0 };
+let graphAnimationFrame = null;
+updateGraphViewBox();
+window.addEventListener('resize', () => updateGraphViewBox(true), { passive: true });
+
+const dynamicEdgePath = (a, b) => {
+  if (a.note === b.note) {
+    return `M ${a.x - 7} ${a.y - 15} C ${a.x - 38} ${a.y - 58}, ${a.x + 38} ${a.y - 58}, ${a.x + 7} ${a.y - 15}`;
+  }
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const bend = ((noteToMidi(a.note) + noteToMidi(b.note)) % 2 ? 1 : -1) * Math.min(38, length * 0.16);
+  const cx = (a.x + b.x) / 2 - dy / length * bend;
+  const cy = (a.y + b.y) / 2 + dx / length * bend;
+  const startX = a.x + dx / length * (GRAPH_NODE_RADIUS + 2);
+  const startY = a.y + dy / length * (GRAPH_NODE_RADIUS + 2);
+  const endX = b.x - dx / length * (GRAPH_NODE_RADIUS + 4);
+  const endY = b.y - dy / length * (GRAPH_NODE_RADIUS + 4);
+  return `M ${startX} ${startY} Q ${cx} ${cy} ${endX} ${endY}`;
+};
+
+const animateGraph = () => {
+  const { nodes, edges } = graphMotion;
+  if (nodes.length) {
+    const energy = Math.max(0.08, graphMotion.energy);
+    graphMotion.energy *= 0.982;
+    nodes.forEach(node => { node.fx = 0; node.fy = 0; });
+    for (let i = 0; i < nodes.length; i += 1) {
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const a = nodes[i], b = nodes[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const distanceSq = Math.max(900, dx * dx + dy * dy);
+        const force = 3200 / distanceSq * energy;
+        const distance = Math.sqrt(distanceSq);
+        a.fx -= dx / distance * force; a.fy -= dy / distance * force;
+        b.fx += dx / distance * force; b.fy += dy / distance * force;
+      }
+    }
+    edges.forEach(edge => {
+      if (edge.from === edge.to) return;
+      const dx = edge.to.x - edge.from.x, dy = edge.to.y - edge.from.y;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const responsiveDistance = Math.min(280, Math.max(170, Math.min(graphViewport.width, graphViewport.height) * 0.38));
+      const desired = Math.max(145, responsiveDistance - edge.count * 8);
+      const force = (distance - desired) * 0.0015 * energy;
+      edge.from.fx += dx / distance * force; edge.from.fy += dy / distance * force;
+      edge.to.fx -= dx / distance * force; edge.to.fy -= dy / distance * force;
+    });
+    nodes.forEach((node, index) => {
+      const cx = node.x - graphViewport.centerX, cy = node.y - graphViewport.centerY;
+      node.fx += -cx * 0.00045 * energy - cy * 0.000025;
+      node.fy += -cy * 0.00045 * energy + cx * 0.000025;
+      node.fx += Math.sin(performance.now() * 0.0007 + index * 2.3) * 0.006;
+      node.fy += Math.cos(performance.now() * 0.0006 + index * 1.7) * 0.006;
+      node.vx = (node.vx + node.fx) * 0.94;
+      node.vy = (node.vy + node.fy) * 0.94;
+      node.x = Math.max(36, Math.min(graphViewport.width - 36, node.x + node.vx));
+      node.y = Math.max(36, Math.min(graphViewport.height - 36, node.y + node.vy));
+      node.circle.setAttribute('cx', node.x);
+      node.circle.setAttribute('cy', node.y);
+      node.label.setAttribute('x', node.x);
+      node.label.setAttribute('y', node.y + 1);
+    });
+    edges.forEach(edge => edge.path.setAttribute('d', dynamicEdgePath(edge.from, edge.to)));
+  }
+  graphAnimationFrame = requestAnimationFrame(animateGraph);
+};
+
+const ensureGraphAnimation = () => {
+  if (graphAnimationFrame === null) graphAnimationFrame = requestAnimationFrame(animateGraph);
+};
+
+const renderPhraseVisual = ({ section, phraseIndex, variant, rawNoteCount }, events) => {
+  visualPhraseId += 1;
+  previousVisualNote = null;
+  visualEl.style.setProperty('--section-color', SECTION_COLORS[section]);
+  visualTitleEl.textContent = SECTION_NAMES[section] + ' · 乐句 ' + String.fromCharCode(65 + phraseIndex);
+  visualMetaEl.textContent = variant.name + ' · ' + events.length + '/' + rawNoteCount;
+  markovMapEl.replaceChildren();
+
+  const defs = svgNode('defs');
+  const marker = svgNode('marker', {
+    id: 'arrowhead', markerWidth: 8, markerHeight: 8, refX: 7, refY: 4,
+    orient: 'auto', markerUnits: 'strokeWidth',
+  });
+  marker.appendChild(svgNode('path', { d: 'M0,0 L8,4 L0,8 Z', fill: 'context-stroke' }));
+  defs.appendChild(marker);
+  markovMapEl.appendChild(defs);
+
+  const chain = NOTE_CHAINS[section];
+  const noteSet = new Set();
+  const edgeCounts = new Map();
+  chain.transitions.forEach((targets, from) => {
+    noteSet.add(from);
+    targets.forEach(to => {
+      noteSet.add(to);
+      const key = from + '|' + to;
+      edgeCounts.set(key, (edgeCounts.get(key) || 0) + 1);
+    });
+  });
+  const notes = [...noteSet].sort((a, b) => noteToMidi(a) - noteToMidi(b));
+  const positions = new Map();
+  notes.forEach((note, index) => {
+    const angle = index / Math.max(1, notes.length) * Math.PI * 2 - Math.PI / 2;
+    const baseRadiusX = Math.min(380, graphViewport.width * 0.36);
+    const baseRadiusY = Math.min(330, graphViewport.height * 0.32);
+    const rx = baseRadiusX * (0.88 + Math.sin(index * 2.17) * 0.12);
+    const ry = baseRadiusY * (0.88 + Math.cos(index * 1.71) * 0.12);
+    positions.set(note, {
+      note,
+      x: graphViewport.centerX + Math.cos(angle) * rx,
+      y: graphViewport.centerY + Math.sin(angle) * ry,
+      vx: 0,
+      vy: 0,
+    });
+  });
+
+  const motionEdges = [];
+  edgeCounts.forEach((count, key) => {
+    const [from, to] = key.split('|');
+    const a = positions.get(from), b = positions.get(to);
+    const path = svgNode('path', {
+      id: edgeId(from, to), d: dynamicEdgePath(a, b), class: count > 2 ? 'chain-edge strong' : 'chain-edge',
+      'marker-end': 'url(#arrowhead)',
+    });
+    markovMapEl.appendChild(path);
+    motionEdges.push({ from: a, to: b, path, count });
+  });
+  const motionNodes = [];
+  notes.forEach(note => {
+    const position = positions.get(note);
+    const circle = svgNode('circle', {
+      id: 'state-' + stateId(note), cx: position.x, cy: position.y, r: GRAPH_NODE_RADIUS, class: 'chain-node',
+    });
+    markovMapEl.appendChild(circle);
+    const label = svgNode('text', { x: position.x, y: position.y + 1, class: 'node-label' });
+    label.textContent = note;
+    markovMapEl.appendChild(label);
+    Object.assign(position, { circle, label, fx: 0, fy: 0 });
+    motionNodes.push(position);
+  });
+  graphMotion = { nodes: motionNodes, edges: motionEdges, energy: 1 };
+  ensureGraphAnimation();
+  return visualPhraseId;
+};
+
+const showVisualNote = (phraseId, note) => {
+  if (phraseId !== visualPhraseId) return;
+  markovMapEl.querySelectorAll('.chain-node.active').forEach(node => {
+    node.setAttribute('class', 'chain-node');
+  });
+  markovMapEl.querySelectorAll('.chain-edge.active').forEach(edge => {
+    edge.classList.remove('active');
+  });
+  if (previousVisualNote !== null) {
+    const edge = $(edgeId(previousVisualNote, note));
+    if (edge) edge.classList.add('active');
+  }
+  const node = $('state-' + stateId(note));
+  if (node) node.setAttribute('class', 'chain-node active');
+  const movingNode = graphMotion.nodes.find(candidate => candidate.note === note);
+  if (movingNode) {
+    const dx = movingNode.x - graphViewport.centerX, dy = movingNode.y - graphViewport.centerY;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    movingNode.vx += -dy / length * 1.8;
+    movingNode.vy += dx / length * 1.8;
+  }
+  graphMotion.energy = 1;
+  previousVisualNote = note;
+};
+
+/* ---------- ⑤ 引擎：activate(seed) → { deactivate, schedule, end } ----------
+ * 对照 aisatsana：activate 加载素材并训练链，schedule 沿 Transport 安排乐句 */
+let engine = null;
+let currentSeed = null;
+
+const activateEngine = async seed => {
+  const rng = makeRng(seed);
+  const textureRng = makeRng((seed ^ 0x9e3779b9) >>> 0);
+  const chain = buildSectionChain(rng);
+  const [piano, moodistTextures] = await Promise.all([
+    createPiano(Tone.Destination),
+    createMoodistTextures(Tone.Destination, textureRng),
+  ]);
+
+  let currentSection = 0;
+  let lastSection = 0;
+  let phraseCount = 0;
+  let densityMemory = 1;
+
+  const PLAYBACK_VARIANTS = [
+    { name: '完整', keep: 1, velocity: 1, late: 0, tail: 0.72, chordLimit: 2 },
+    { name: '骨架', keep: 0.52, velocity: 0.9, late: 0, tail: 0.5, chordLimit: 1 },
+    { name: '回声', keep: 0.38, velocity: 0.72, late: 0.6, tail: 0.38, chordLimit: 1 },
+    { name: '迟到回应', keep: 0.62, velocity: 0.82, late: 2.4, tail: 0.46, chordLimit: 1 },
+  ];
+
+  const chooseVariant = section => {
+    const weightsBySection = [
+      [0.18, 0.36, 0.34, 0.12],  // A 安静：更多骨架与回声
+      [0.42, 0.26, 0.14, 0.18],  // B 主题：主题可以完整，但不总是完整
+      [0.24, 0.32, 0.1, 0.34],   // C 发展：前冲后留呼吸
+      [0.12, 0.26, 0.52, 0.1],   // D 结尾：更像残影
+    ][section];
+    let roll = rng() * weightsBySection.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < weightsBySection.length; i += 1) {
+      roll -= weightsBySection[i];
+      if (roll <= 0) return PLAYBACK_VARIANTS[i];
+    }
+    return PLAYBACK_VARIANTS[0];
+  };
+
+  const shouldKeepStep = (step, noteCount, variant, section) => {
+    const beatRole = step % 8 === 0 ? 0.34 : step % 4 === 0 ? 0.2 : 0;
+    const tailStart = PHRASE_LENGTH * (section === 2 ? 0.56 : 0.68);
+    const tailFade = step >= tailStart
+      ? Math.max(0.12, 1 - (step - tailStart) / (PHRASE_LENGTH - tailStart) * variant.tail)
+      : 1;
+    const chordPenalty = noteCount > variant.chordLimit ? 0.62 : 1;
+    const probability = Math.min(0.98, (variant.keep * densityMemory + beatRole) * tailFade * chordPenalty);
+    return rng() < probability;
+  };
+
+  const schedule = () => {
+    const showMatrix = () => {
+      let html = '<b>段落转移矩阵</b>（行=当前段落，列=下一段落概率）：<br>';
+      SECTION_NAMES.forEach((name, i) => {
+        const row = chain.transitions[i];
+        const total = row.reduce((a, b) => a + b, 0);
+        html += name + ': ' + row.map((c, j) => (c / total).toFixed(2)).join('  ') + '<br>';
+      });
+      matrixEl.innerHTML = html;
+    };
+    showMatrix();
+    moodistTextures.start(Tone.Transport.seconds + 0.05);
+
+    /* 演出：每次取一个乐句（段落层 + 句层两步随机），把音符安排在对应步。
+     * 提前 1 秒触发 + ±25ms 人性化抖动（原样照搬 aisatsana 手法） */
+    const playPhrase = time => {
+      const phraseTime = typeof time === 'number' ? time : Tone.now();
+      const { phraseIndex, section } = chain.next();
+      const variant = chooseVariant(section);
+      const comingDownFromDevelopment = lastSection === 2 && section !== 2;
+      const sectionChanged = phraseCount > 0 && section !== lastSection;
+      currentSection = section;
+      const phrase = PHRASES[phraseIndex];
+      const playedNotes = [];
+      const playedEvents = [];
+      const rawNoteCount = phrase.flat().length;
+      let noteState = null;
+
+      phrase.forEach((notes, step) => {
+        if (!notes.length || !shouldKeepStep(step, notes.length, variant, section)) return;
+        const limitedNotes = notes.slice(0, variant.chordLimit);
+        notes.forEach(({ n, v }) => {
+          if (!limitedNotes.some(note => note.n === n)) return;
+          const playedNote = noteState === null ? n : walkNote(noteState, section, rng, n);
+          noteState = playedNote;
+          const waitTime = step * STEP_DURATION_S;
+          const tailStart = PHRASE_LENGTH * 0.68;
+          const tailScale = step >= tailStart
+            ? Math.max(0.45, 1 - (step - tailStart) / (PHRASE_LENGTH - tailStart) * 0.45)
+            : 1;
+          const transitionBreath = sectionChanged && step < 4 ? 0.68 : 1;
+          const velocity = (0.62 + v * 0.28) * variant.velocity * tailScale * transitionBreath;
+          const audioTime = phraseTime + waitTime + 1 + variant.late + rng() * 0.05 - 0.025;
+          /* ★ 力度上移补偿：原版 aisatsana 不传力度（满响度），
+           * 现在再叠加演奏版本、句尾衰减和转场呼吸：留白来自说话方式，而不是插入空段。 */
+          piano.triggerAttack(
+            playedNote,
+            audioTime,   // 对照源码：+1 秒预延迟 + 抖动
+            velocity
+          );
+          playedNotes.push(playedNote);
+          playedEvents.push({ step, note: playedNote, audioTime });
+        });
+      });
+      if (section === 2) {
+        densityMemory = Math.max(0.58, densityMemory - 0.12);
+      } else if (comingDownFromDevelopment) {
+        densityMemory = 0.5;
+      } else {
+        densityMemory = Math.min(1, densityMemory + 0.08);
+      }
+      lastSection = section;
+      phraseCount += 1;
+      const statusHtml =
+        '▶ 播放中 · 段落 <b>' + SECTION_NAMES[currentSection] +
+        '</b> · 乐句 <b>' + String.fromCharCode(65 + phraseIndex) +
+        '</b> · 演奏 <b>' + variant.name +
+        '</b> · 音符 ' + playedNotes.length + '/' + rawNoteCount +
+        ' · 种子 ' + currentSeed;
+      const logLine = playedNotes.length + '/' + rawNoteCount + ' ← ' + (playedNotes.join(' ') || '余响');
+      const visualStartTime = playedEvents.length
+        ? Math.min(...playedEvents.map(event => event.audioTime)) - 0.01
+        : phraseTime + 1 + variant.late;
+      let phraseVisualId = null;
+      Tone.Draw.schedule(() => {
+        setStatus(statusHtml);
+        log(logLine, SECTION_COLORS[section]);
+        phraseVisualId = renderPhraseVisual(
+          { section, phraseIndex, variant, rawNoteCount }, playedEvents
+        );
+      }, visualStartTime);
+      playedEvents.forEach(event => {
+        Tone.Draw.schedule(() => showVisualNote(phraseVisualId, event.note), event.audioTime);
+      });
+      console.info('[' + SECTION_NAMES[currentSection] + '] 乐句 ' + String.fromCharCode(65 + phraseIndex) +
+          ' · ' + variant.name + ' · ' + playedNotes.length + '/' + rawNoteCount +
+          ' ← ' + (playedNotes.join(' ') || '余响'));
+    };
+
+    Tone.Transport.scheduleRepeat(playPhrase, PHRASE_DURATION_S, 0);  // 对照源码 scheduleRepeat
+  };
+
+  const end = () => {
+    moodistTextures.stop(Tone.now());
+    Tone.Transport.cancel();
+    Tone.Transport.stop();
+    Tone.Draw.cancel(0);
+    piano.releaseAll(0);
+  };
+
+  const deactivate = () => {
+    end();
+    piano.dispose();
+    moodistTextures.dispose();
+  };
+
+  return { deactivate, schedule, end };
+};
+
+/* ---------- ⑥ 控制器 ---------- */
+const transportControls = $('transportControls');
+
+const playCurrent = async () => {
+  transportControls.setBusy(true);
+  await Tone.start();
+  try {
+    if (!engine) {
+      const text = transportControls.seedValue;
+      currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      setStatus('正在构建引擎（种子 ' + currentSeed + '）… 首次播放需下载钢琴与背景 texture 素材，请耐心');
+      engine = await activateEngine(currentSeed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    transportControls.setPlaying(true);
+    setStatus('▶ 播放中 · 种子 ' + currentSeed);
+  } catch (err) {
+    console.error(err);
+    transportControls.setPlaying(false);
+    setStatus('⚠ 播放失败：' + err.message);
+  } finally {
+    transportControls.setBusy(false);
+  }
+};
+
+transportControls.addEventListener('exercise-play', playCurrent);
+
+transportControls.addEventListener('exercise-stop', () => {
+  if (!engine) return;
+  engine.end();
+  transportControls.setPlaying(false);
+  setStatus('■ 已停止');
+});
+
+transportControls.addEventListener('exercise-regenerate', () => {
+  transportControls.setBusy(true);
+  if (engine) {
+    engine.deactivate();
+    engine = null;
+  }
+  transportControls.clearSeed();
+  transportControls.setPlaying(false);
+  transportControls.setBusy(false);
+  playCurrent();
+});
+
+/* 统一激活接口（AGENTS.md 约定） */
+window.exercise = {
+  activate: activateEngine,
+};
+</script>
+</body>
+</html>

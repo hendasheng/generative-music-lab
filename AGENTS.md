@@ -60,6 +60,7 @@
 - 低频问题首先检查 Pad、Drone、Bass、Kick sub 的叠加，不要只靠 Limiter 或整体降音量解决。
 - 03 Phase Loops 的圆环动画必须与音频触发共享同一套时间状态。Tone.Transport 回调会受 lookAhead 影响提前执行，不能在 Transport 回调里直接推进视觉状态，否则会出现播放头和音符触发对不上的问题。做法：音频预排使用 `scheduledFireAt`；视觉显示使用 `visibleFireAt`；只有在 `Tone.Draw.schedule(..., audioTime)` 对应的实际发声时刻才推进 `visibleFireAt` 和触发视觉高亮。
 - 03 的同心圆视觉语义：右侧固定播放头不动，彩色音段顺时针转动；当音段前端到达播放头时，该音触发。不要再加入独立的“当前相位圆点”或“初始相位小刻度”，这些标记容易让音画关系变得含混。
+- 02 0.2 的 Moodist 背景 texture 必须使用由演出种子派生的独立 RNG，不能与钢琴共用随机流，否则增删素材或网络加载结果会改变 Markov 乐句路径。远程环境音应逐项设置加载超时，允许单项失败，并在 `end/deactivate` 中同时清理 Transport 事件和音频节点。
 
 ## 修改与验证要求
 

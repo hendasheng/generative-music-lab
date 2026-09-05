@@ -7,7 +7,7 @@
 | 编号 | 名称 | 内容 | 运行方式 |
 | --- | --- | --- | --- |
 | 01 | [Ambient Pulse](exercises/01-ambient-pulse/) | C 自然小调、氛围合成、动机发展与呼吸型节奏 | 打开 `exercises/01-ambient-pulse/index.html` |
-| 02 | [Aisatsana Markov](exercises/02-aisatsana-markov/) | 极简钢琴、马尔可夫链乐句重组（记忆 + 重排） | 打开 `exercises/02-aisatsana-markov/index.html` |
+| 02 | [Aisatsana Markov 0.2](exercises/02-aisatsana-markov/0.2/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture | 打开 `exercises/02-aisatsana-markov/0.2/index.html` |
 | 03 | [Phase Loops](exercises/03-phase-process/) | 独立音符循环、初始相位偏移与系统音乐 | 打开 `exercises/03-phase-process/index.html` |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
