@@ -22,13 +22,8 @@
   .controls-hud { top:20px; right:20px; width:310px; padding:14px; }
   .status { margin-top:12px; padding-top:10px; border-top:1px solid #2a2a2e; color:var(--dim); font-size:11px; line-height:1.5; }
   .status b { color:var(--fg); }
-  .texture-test { width:100%; margin-top:10px; padding:8px 10px; border:1px solid #3f3f46; border-radius:4px; background:#27272a; color:var(--fg); font:600 11px/1.2 inherit; cursor:pointer; }
-  .texture-test:hover { border-color:#71717a; background:#303034; }
-  .texture-test:disabled { opacity:.45; cursor:wait; }
   .orbit-stage { position:fixed; z-index:1; inset:0; display:flex; align-items:center; justify-content:center; overflow:hidden; background:var(--stage); }
   .orbit { display:block; width:min(78vmin,760px); height:min(78vmin,760px); }
-  .texture-field { pointer-events:none; }
-  .texture-contour { fill:none; stroke:#f4f4f5; stroke-width:1.35; opacity:.9; vector-effect:non-scaling-stroke; }
   .orbit-track { fill:none; stroke:#242428; stroke-width:14; opacity:1; }
   .orbit-arc { --arc-width:14px; --arc-opacity:.92; fill:none; stroke:var(--accent); stroke-width:var(--arc-width); stroke-linecap:round; opacity:var(--arc-opacity); }
   .orbit-arc.drone { --arc-opacity:.68; stroke:var(--accent2); }
@@ -83,7 +78,6 @@
   </header>
   <section class="hud controls-hud">
     <exercise-controls id="transportControls"></exercise-controls>
-    <button class="texture-test" id="textureTestBtn" type="button">测试 Texture</button>
     <div class="status" id="status">点击播放开始。每个同心圆是一条独立循环；彩色音段转到右侧播放头时，该音响起。</div>
   </section>
   <details class="hud info-hud">
@@ -118,7 +112,6 @@ const statusEl = $('status');
 const loopsEl = $('loops');
 const orbitVizEl = $('orbitViz');
 const logEl = $('log');
-const textureTestBtn = $('textureTestBtn');
 const orbitStageEl = $('orbitStage');
 const setStatus = html => { statusEl.innerHTML = html; };
 const log = msg => { logEl.textContent += msg + '\n'; logEl.scrollTop = logEl.scrollHeight; };
@@ -127,7 +120,6 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const ORBIT_CENTER = 260;
 const OUTER_RADIUS = 205;
 const RING_GAP = 18;
-const TEXTURE_CONTOUR_LAYERS = 5;
 // 保持两类清晰的单一配色：钢琴为橙色，Drone 为绿色。
 const colorFor = loop => loop.isDrone ? '#00c896' : '#ff8a00';
 
@@ -283,7 +275,6 @@ const MOODIST_TEXTURES = [
 const createMoodistTextures = async (destination, rng) => {
   const loaded = [];
   const eventIds = new Set();
-  let previewIndex = 0;
   const randomBetween = ([min, max]) => min + rng() * (max - min);
   const loadOne = texture => new Promise(resolve => {
     const gain = new Tone.Gain(0);
@@ -292,8 +283,9 @@ const createMoodistTextures = async (destination, rng) => {
     const player = new Tone.Player({
       url: texture.url,
       loop: true,
-      fadeIn: texture.fade,
-      fadeOut: texture.fade,
+      // 淡入淡出统一由下游 Gain 调度，避免 Player 的长淡入再次压低测试声音。
+      fadeIn: 0,
+      fadeOut: 0,
       onload: () => {
         player.connect(filter);
         filter.connect(gain);
@@ -302,9 +294,6 @@ const createMoodistTextures = async (destination, rng) => {
           ...texture,
           player, filter, gain, panner,
           activeUntil: -Infinity,
-          visualStartAt: Infinity,
-          visualEndAt: -Infinity,
-          visualFade: texture.fade,
           visualIndex: MOODIST_TEXTURES.indexOf(texture),
         });
         resolve();
@@ -333,12 +322,8 @@ const createMoodistTextures = async (destination, rng) => {
   loaded.sort((a, b) => a.visualIndex - b.visualIndex);
   const activeCountAt = time => loaded.filter(texture => texture.activeUntil > time).length;
   const activeEventCountAt = time => loaded.filter(texture => texture.group === 'event' && texture.activeUntil > time).length;
-  const playTexture = (texture, time, duration, fade, visualStrength = 1) => {
+  const playTexture = (texture, time, duration, fade) => {
     texture.activeUntil = time + duration + fade;
-    texture.visualStartAt = time;
-    texture.visualEndAt = time + duration;
-    texture.visualFade = fade;
-    texture.visualStrength = visualStrength;
     texture.gain.gain.cancelScheduledValues(time);
     texture.gain.gain.setValueAtTime(0, time);
     texture.gain.gain.linearRampToValueAtTime(texture.targetGain, time + fade);
@@ -370,21 +355,6 @@ const createMoodistTextures = async (destination, rng) => {
   };
 
   return {
-    visuals: loaded,
-    previewNext: time => {
-      if (!loaded.length) return null;
-      const texture = loaded[previewIndex % loaded.length];
-      previewIndex += 1;
-      const duration = 12;
-      const fade = 1.2;
-      try {
-        playTexture(texture, time, duration, fade, 4);
-        return { name: texture.name, duration };
-      } catch (err) {
-        console.warn('[Moodist] 测试播放失败:', texture.name, err);
-        return null;
-      }
-    },
     start: time => {
       loaded.forEach(texture => {
         const firstRange = texture.early ? [3, 10] : [4, 24];
@@ -400,8 +370,6 @@ const createMoodistTextures = async (destination, rng) => {
         texture.gain.gain.linearRampToValueAtTime(0, time + 1.5);
         try { texture.player.stop(time + 1.6); } catch (err) { /* 已停止则忽略 */ }
         texture.activeUntil = time;
-        texture.visualEndAt = Math.min(texture.visualEndAt, time + 1.5);
-        texture.visualFade = Math.min(texture.visualFade, 1.5);
       });
     },
     dispose: () => {
@@ -538,86 +506,9 @@ const activateEngine = async seed => {
   let scheduled = false;
   let triggerEffects = [];
 
-  const smoothClosedContour = points => {
-    const firstMid = {
-      x: (points[0].x + points[points.length - 1].x) / 2,
-      y: (points[0].y + points[points.length - 1].y) / 2,
-    };
-    const parts = ['M', firstMid.x.toFixed(2), firstMid.y.toFixed(2)];
-    points.forEach((point, index) => {
-      const next = points[(index + 1) % points.length];
-      parts.push(
-        'Q', point.x.toFixed(2), point.y.toFixed(2),
-        ((point.x + next.x) / 2).toFixed(2), ((point.y + next.y) / 2).toFixed(2)
-      );
-    });
-    return parts.join(' ') + ' Z';
-  };
-
-  const textureContourPath = (texture, layer, audioNow) => {
-    const count = 40;
-    const detail = Math.max(2, Math.min(7, Math.round(texture.filter / 800)));
-    const phase = audioNow * (0.035 + detail * 0.004) + texture.visualIndex * 1.7 + layer * 0.9;
-    const baseRadius = 92 + layer * 40 + texture.visualIndex * 4;
-    const amplitude = 5 + detail * 1.35 + layer * 1.5;
-    const centerX = ORBIT_CENTER + texture.pan * 72;
-    const centerY = ORBIT_CENTER + Math.sin(phase * 0.43) * 12;
-    const points = Array.from({ length: count }, (_, index) => {
-      const angle = index / count * Math.PI * 2;
-      const ripple =
-        Math.sin(angle * detail + phase) * amplitude +
-        Math.sin(angle * (detail + 2) - phase * 0.63) * amplitude * 0.42;
-      const radius = baseRadius + ripple;
-      return {
-        x: centerX + Math.cos(angle) * radius,
-        y: centerY + Math.sin(angle) * radius * (0.72 + texture.visualIndex * 0.025),
-      };
-    });
-    return smoothClosedContour(points);
-  };
-
-  const textureLevelAt = (texture, audioNow) => {
-    if (audioNow < texture.visualStartAt || audioNow >= texture.visualEndAt) return 0;
-    const fade = Math.max(0.001, texture.visualFade);
-    const fadeIn = Math.min(1, (audioNow - texture.visualStartAt) / fade);
-    const fadeOut = Math.min(1, (texture.visualEndAt - audioNow) / fade);
-    return Math.max(0, Math.min(fadeIn, fadeOut));
-  };
-
-  const updateTextureField = audioNow => {
-    moodistTextures.visuals.forEach(texture => {
-      const group = $('texture-contours-' + texture.visualIndex);
-      if (!group) return;
-      const level = textureLevelAt(texture, audioNow);
-      const strength = texture.visualStrength || 1;
-      group.setAttribute('opacity', (level * strength * (texture.group === 'event' ? 0.24 : 0.18)).toFixed(3));
-      if (level <= 0) return;
-      for (let layer = 0; layer < TEXTURE_CONTOUR_LAYERS; layer += 1) {
-        const contour = $('texture-contour-' + texture.visualIndex + '-' + layer);
-        if (contour) contour.setAttribute('d', textureContourPath(texture, layer, audioNow));
-      }
-    });
-  };
-
   const renderVisual = () => {
     triggerEffects = [];
     orbitVizEl.innerHTML = '';
-
-    const textureField = createSvgEl('g', { class: 'texture-field' });
-    moodistTextures.visuals.forEach(texture => {
-      const group = createSvgEl('g', {
-        id: 'texture-contours-' + texture.visualIndex,
-        opacity: '0',
-      });
-      for (let layer = 0; layer < TEXTURE_CONTOUR_LAYERS; layer += 1) {
-        group.appendChild(createSvgEl('path', {
-          id: 'texture-contour-' + texture.visualIndex + '-' + layer,
-          class: 'texture-contour',
-        }));
-      }
-      textureField.appendChild(group);
-    });
-    orbitVizEl.appendChild(textureField);
 
     // SVG 后绘制的元素位于上层：轨道 < 播放头 < 音符与音名 < 触发轮廓。
     allLoops.forEach((loop, i) => {
@@ -630,7 +521,6 @@ const activateEngine = async seed => {
         r: radius,
       }));
     });
-
     orbitVizEl.appendChild(createSvgEl('line', {
       class: 'playhead-guide',
       x1: ORBIT_CENTER,
@@ -736,7 +626,6 @@ const activateEngine = async seed => {
 
   const refreshUi = () => {
     const seconds = Tone.Transport.seconds;
-    updateTextureField(Tone.now());
     allLoops.forEach(loop => {
       const timeUntilNext = Math.max(0, loop.visibleFireAt - seconds);
       const headTurn = 1 - timeUntilNext / loop.period;
@@ -853,10 +742,7 @@ const activateEngine = async seed => {
     [compressor, highpass, limiter, masterGain].forEach(node => node.dispose());
   };
 
-  return {
-    deactivate, schedule, end, fadeIn, fadeOut,
-    previewTexture: () => moodistTextures.previewNext(Tone.now() + 0.05),
-  };
+  return { deactivate, schedule, end, fadeIn, fadeOut };
 };
 
 const playCurrent = async () => {
@@ -884,28 +770,6 @@ const playCurrent = async () => {
 };
 
 transportControls.addEventListener('exercise-play', playCurrent);
-
-textureTestBtn.addEventListener('click', async () => {
-  if (engineTransition || textureTestBtn.disabled) return;
-  await Tone.start();
-  if (!engine) {
-    setStatus('请先点击播放，待素材加载完成后再测试 Texture。');
-    return;
-  }
-  textureTestBtn.disabled = true;
-  const preview = engine.previewTexture();
-  if (preview) {
-    textureTestBtn.textContent = '正在测试 · ' + preview.name;
-    setStatus('Texture 测试 · <b>' + preview.name + '</b> · ' + preview.duration + 's');
-    setTimeout(() => {
-      textureTestBtn.disabled = false;
-      textureTestBtn.textContent = '测试下一个 Texture';
-    }, 1400);
-  } else {
-    textureTestBtn.disabled = false;
-    setStatus('没有可用的 Texture 素材。');
-  }
-});
 
 transportControls.addEventListener('exercise-stop', () => {
   if (!engine || engineTransition) return;
