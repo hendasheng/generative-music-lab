@@ -7,7 +7,7 @@
 | 编号 | 名称 | 内容 | 运行方式 |
 | --- | --- | --- | --- |
 | 01 | [Ambient Pulse](exercises/01-ambient-pulse/) | C 自然小调、氛围合成、动机发展与呼吸型节奏 | 打开 `exercises/01-ambient-pulse/index.html` |
-| 02 | [Aisatsana Markov 0.2](exercises/02-aisatsana-markov/0.2/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture | 打开 `exercises/02-aisatsana-markov/0.2/index.html` |
+| 02 | [Aisatsana Markov 0.3](exercises/02-aisatsana-markov/0.3/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture | 打开 `exercises/02-aisatsana-markov/0.3/index.html` |
 | 03 | [Phase Loops 0.2](exercises/03-phase-process/0.2/) | 独立音符循环、全屏圆环、触发轮廓与环境等高线 | 打开 `exercises/03-phase-process/0.2/index.html` |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
@@ -18,10 +18,14 @@
 generative-music-lab/
 ├─ exercises/                 # 独立、可运行的生成式音乐练习
 │  ├─ README.md               # 新增练习的约定
-│  └─ 01-ambient-pulse/
-│     ├─ README.md            # 本练习的目标与音乐设计
-│     └─ index.html           # 可直接运行的作品
-├─ notes/                     # 源码阅读与学习笔记
+│  ├─ 01-ambient-pulse/
+│  │  ├─ README.md            # 本练习的目标与音乐设计
+│  │  └─ index.html           # 可直接运行的作品
+│  └─ 02-aisatsana-markov/
+│     ├─ README.md            # 本练习的演进与实测数据
+│     ├─ 视觉规则.md          # 本练习专有的视觉规范（可复用的规则文档）
+│     ├─ 0.1/ 0.2/ 0.3/       # 各版本的实现文件
+├─ notes/                     # 跨练习的源码阅读与学习笔记
 ├─ shared/                    # 两个以上练习共用的轻量组件或工具
 │  └─ exercise-controls.js    # 公共播放/暂停、种子、reset 控件
 ├─ index.html                 # 仓库作品索引
@@ -70,9 +74,11 @@ Tone.js 当前从 CDN 加载，因此首次运行需要联网。若以后需要�
 
 ### 本仓库笔记
 
+- [02 视觉规则](exercises/02-aisatsana-markov/视觉规则.md) —— **练习专有的视觉规范**（放在该练习目录内）：02 0.3 那套「持续存在的状态图」的完整规则 —— 分层与遮挡、由音乐间隔驱动的时长公式、节点与连线的状态机、连线即铰链的力学、参数总表、明确禁止的做法、可量化的验收清单。要在别的练习里复用同一套观感，直接读这份
 - [piece-zed 中文注解](notes/piece-zed-注解版.md) —— 对照 pieces-alex-bainter 仓库内 `packages/piece-zed/src/piece.js` 逐段阅读
 - [piece-aisatsana 中文注解（代码注释版）](notes/piece-aisatsana-注解版.js) —— 对照 `packages/piece-aisatsana/src/piece.js` 逐行阅读（记忆 + 重排范式，对应 02 练习）
 - [piece-aisatsana 素材数据说明](notes/piece-aisatsana-数据说明.md) —— instructions.json 的结构、真实示例与量化演示
+- [aisatsana 创作过程实录](notes/aisatsana-创作过程实录.md) —— 用原曲 355 个音符的真实数据把「素材 → 网格 → 乐句 → 衔接」完整走一遍（所有数字由脚本算出）
 - [aisatsana 式创作思维](notes/aisatsana-创作思维.md) —— **创作方法论**：怎么想、怎么动手（素材 → 网格 → 乐句块 → 衔接 → 重组），不讲代码
 
 ## 许可

@@ -1,0 +1,1623 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>02 · Aisatsana Markov 0.3（Markov 乐句重组）</title>
+<style>
+  :root { --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32; --section-color:#8b5cf6; --accent2:#fafafa; }
+  * { box-sizing:border-box; }
+  html, body { width:100%; height:100%; }
+  body { margin:0; overflow:hidden; background:var(--bg); color:var(--fg); font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  .wrap { position:relative; width:100%; height:100%; }
+  h1 { font-size:24px; font-weight:650; letter-spacing:-.035em; margin:0 0 5px; }
+  h1 small { color:var(--dim); font:500 13px/1 Consolas,monospace; letter-spacing:0; vertical-align:5px; }
+  .sub { color:var(--dim); font-size:12px; line-height:1.5; }
+  .hud { position:fixed; z-index:10; background:var(--panel); border:1px solid var(--line); border-radius:7px; transition:opacity .2s ease; }
+  .intro-hud { top:20px; left:20px; padding:14px 16px; }
+  .controls-hud { top:20px; right:20px; width:310px; padding:14px; }
+  .status { margin-top:12px; padding-top:10px; border-top:1px solid #2a2a2e; color:var(--dim); font-size:11px; line-height:1.5; }
+  .status b { color:var(--fg); }
+  .visual-head { position:absolute; z-index:3; right:20px; bottom:16px; display:flex; align-items:baseline; gap:8px; color:var(--dim); opacity:.55; transition:opacity .2s ease; }
+  .visual-title { color:inherit; font-size:11px; font-weight:500; transition:opacity .18s ease; }
+  .visual-meta { color:inherit; font:10px Consolas,monospace; transition:opacity .18s ease; }
+  .markov-stage { position:fixed; z-index:1; inset:0; overflow:hidden; width:100vw; height:100vh; background:#0d0d0f; isolation:isolate; }
+  .markov-map { position:absolute; z-index:2; inset:0; display:block; width:100%; height:100%; background:transparent; }
+  /* 乐句之间是“变形”，不是“切换”：节点与边一次建好、永不增删。
+     存在度（opacity）表达“这个音高/转移是否属于当前段落”，用慢过渡；
+     当前状态（颜色与描边）表达“刚刚发声”，用快过渡。两者分离，所以
+     段落的更替不会产生任何瞬时跳变。CSS 时长与 JS 里的 GRAPH_*_S 需保持一致。 */
+  /* 灰色转移边：是否属于当前段落由 JS 用 dash 生长表达（从起点画到终点），不是淡入，
+     所以这里不写 opacity 过渡，避免和逐帧写入的内联样式打架。
+     ★ 明度（= 该转移的马尔可夫概率）也由 JS 写内联样式。 */
+  .chain-edge { fill:none; stroke:#71717a; stroke-width:1.1; stroke-opacity:.8;
+    transition:stroke 1.2s ease-out,stroke-opacity 1.2s ease-out,stroke-width 1.2s ease-out; }
+  /* 行进到位后底边只换颜色：★ 绝不能同时改 stroke-width —— 箭头是 markerUnits="strokeWidth"，
+     描边一变粗箭头就会跟着放大（0.3 早期版本就是这样让彩色箭头比灰箭头大了一倍多）。
+     颜色用 0.12 秒快速切换（箭头要“到点亮起”），退色仍走基础规则的 1.2 秒。 */
+  .chain-edge.active { stroke:var(--section-color);
+    transition:stroke .12s ease-out,stroke-opacity 1.2s ease-out,stroke-width 1.2s ease-out; }
+  /* 激活的转移不用“整条变色”，而是让彩色沿曲线从起点长到终点：
+     覆盖层用 stroke-dasharray = 全长、stroke-dashoffset 由全长推到 0，
+     走完之前只有头段被揭示出来。进度由 JS 逐帧写入（时长按音程算，见 startEdgePulse）。
+     ★ 透明度只能由 JS 写内联样式：CSS 里一旦写 opacity，SVG 呈现属性就会被它覆盖，
+       表现就是“属性写了 1 但画面完全不显示”。 */
+  .chain-edge-pulse { fill:none; stroke:var(--section-color); stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
+  /* 节点的存在度、半径、颜色由 JS 逐帧写入（见 paintNode）：节点会在“藏身层”和
+     “在场层”之间搬动，而 DOM 搬动会重启动 CSS 过渡，所以节点不用 CSS 过渡。 */
+  .chain-node { stroke-width:1; }
+  .node-label { fill:#fff; font:600 12px Consolas,monospace; text-anchor:middle; dominant-baseline:middle; pointer-events:none; }
+  .legend { position:absolute; z-index:3; left:50%; bottom:18px; display:flex; gap:18px; color:var(--dim); font-size:11px; transform:translateX(-50%); transition:opacity .2s ease; }
+  body.hud-hidden .hud,
+  body.hud-hidden .visual-head,
+  body.hud-hidden .legend { opacity:0; pointer-events:none; }
+  .key { display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; vertical-align:1px; }
+  .key.source { background:#52525b; border:1px solid #71717a; }
+  .key.played { background:var(--section-color); }
+  .log { position:absolute; z-index:1; inset:110px 5vw 54px; display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; color:#f4f4f5; font:13px/1.775 Consolas,monospace; text-align:left; opacity:.8; pointer-events:none; }
+  .log-content { flex:0 0 auto; width:100%; white-space:pre-wrap; will-change:transform; }
+  .log-line { min-height:1.775em; animation:logLineIn .55s cubic-bezier(.22,1,.36,1) both; }
+  @keyframes logLineIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+  .info-hud { left:20px; bottom:20px; width:min(620px,calc(100vw - 40px)); max-height:65vh; padding:10px 13px; overflow:auto; color:var(--dim); }
+  .info-hud:not([open]) { width:auto; }
+  .info-hud summary { color:var(--fg); font-size:12px; cursor:pointer; user-select:none; }
+  .matrix { margin-top:12px; padding-top:12px; border-top:1px solid #2a2a2e; font-family:Consolas,monospace; font-size:11px; color:var(--dim); line-height:1.6; }
+  .matrix b { color:var(--fg); }
+  .hint { font-size:12.5px; color:var(--dim); line-height:1.9; }
+  .hint b { color:var(--fg); }
+  code { background:#27272a; padding:2px 5px; border-radius:3px; font-size:12px; color:#e4e4e7; }
+  exercise-controls {
+    --exercise-control-radius:4px;
+    --exercise-control-primary:#fafafa;
+    --exercise-control-primary-fg:#18181b;
+    --exercise-control-secondary:#27272a;
+    --exercise-control-secondary-fg:#fafafa;
+    --exercise-control-input-border:#3f3f46;
+    --exercise-control-input-bg:#0d0d0f;
+    --exercise-control-input-fg:#fafafa;
+    --exercise-control-focus:#a1a1aa;
+  }
+  @media (max-width:640px) {
+    .intro-hud { top:10px; left:10px; padding:10px 12px; }
+    h1 { font-size:18px; }
+    h1 small { font-size:10px; vertical-align:3px; }
+    .sub { display:none; }
+    .controls-hud { top:76px; left:10px; right:10px; width:auto; padding:10px; }
+    .status { margin-top:8px; padding-top:8px; }
+    .log { inset:140px 16px 50vh; font-size:11px; line-height:1.55; }
+    .visual-head { right:10px; bottom:40px; }
+    .legend { left:auto; right:10px; bottom:12px; gap:8px 12px; transform:none; }
+    .info-hud { left:10px; bottom:10px; width:auto; max-width:calc(100vw - 170px); padding:8px 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="markov-stage">
+    <div class="log" id="log"><div class="log-content" id="logContent"></div></div>
+    <svg class="markov-map" id="markovMap" viewBox="0 0 960 430" role="img" aria-label="当前段落的马尔可夫音高状态网络"></svg>
+    <div class="visual-head">
+      <div class="visual-title" id="visualTitle">等待第一条乐句</div>
+      <div class="visual-meta" id="visualMeta">32 steps</div>
+    </div>
+    <div class="legend"><span><i class="key source"></i>本段落可到达状态</span><span><i class="key played"></i>当前状态与刚发生的转移</span><span>连线越亮 = 该转移在马尔可夫链里概率越高</span></div>
+  </div>
+
+  <header class="hud intro-hud">
+    <h1>02 · Aisatsana Markov <small>0.3</small></h1>
+    <div class="sub">乐句顺序与句内音高沿马尔可夫链重组。</div>
+  </header>
+
+  <div class="hud controls-hud">
+    <exercise-controls id="transportControls"></exercise-controls>
+    <div class="status" id="status">点击播放开始。日志会显示每次乐句转换（马尔可夫链的"行走"）。</div>
+  </div>
+
+  <details class="hud info-hud">
+    <summary>机制与转移</summary>
+    <div class="matrix" id="matrix"></div>
+    <div class="hint">
+      <b>机制（对照 aisatsana 源码）：</b>① 音符素材按八分音符网格量化 → ② 每 32 步切成一个乐句 →
+      ③ 乐句序列喂给段落链训练转换概率 → ④ 当前段落内的音符相邻关系训练第二条链 →
+      ⑤ 演出时两条链分别重组乐句顺序和句内音高。节奏位置、力度与演奏版本仍沿用 0.1。<br>
+      <b>0.3 视觉：</b>节点（全部段落用过的音高）与边（全部出现过的转移）只建一次、永不重建。
+      <b>连线的明度 = 转移概率</b>：`walkNote` 是从当前音的后继里等概率挑一个（重复项就是权重），
+      所以 from→to 的概率 = 出现次数 ÷ 该音后继总数；越常走的转移画得越亮。
+      属于当前段落的音高留在环上，其余音高收进下层、<b>滑到某个在场节点背后被挡住</b>；
+      变成乐句点时它从宿主背后<b>一次弹出</b>：起步很猛，临到落点单次过冲再收回；
+      <b>每次换句所有点都会移动一段距离</b>（环的相位与半径每句轻微改变），
+      刚变成乐句点的点用“弹”、本来就是乐句点的点用平滑滑位；
+      <b>每个点速度不同</b>，而且允许飞到首音之后才落位。
+      <b>连线也一起生长</b>：一端刚变成乐句点的转移<b>朝那个新点</b>长过去（新点在起点端就从另一端长过来）；
+      两端本来就是在场的乐句点时，连线只是跟着点移动，不重新生长。
+      整段结构变化都发生在“上一个音 → 本句首音”这个<b>实际间隔</b>里、正好在首音收尾，
+      所以不会出现“一条还没长完、另一条已经开始”。
+      转移被激活时不是整条变色，而是<b>彩色沿曲线从起点走到终点，到达终点时箭头才亮起</b>；
+      <b>同一个音程同时决定三件事</b>：彩色行进走多久、这个点从亮到暗用多久、箭头何时亮 ——
+      音密处一闪即暗、留白处余韵长（不是每个音都固定时长）。
+      换句时不是整体外扩，而是给在场节点一次<b>切向</b>抖动，位移<b>沿连线传给邻居</b>：
+      连线是铰链，弹因此是传开的。力度分两级：<b>换句/段落切换</b>抖得明显，
+      单个<b>音符发声</b>只是很轻地推一下。段落色逐帧插值，不在句界跳变。<br>
+      <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
+      音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
+      <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
+      （首次约 50MB，之后走浏览器缓存）；加载失败自动回退 FM 合成钢琴，不会卡死。<br>
+      <b>版权说明：</b>aisatsana 原曲谱面（Aphex Twin）不直接搬运，本练习使用同风格的<b>自写</b>极简琶音素材演示机制；采样库为 CC0 许可。
+    </div>
+  </details>
+</div>
+
+<!-- Tone.js v14.7.58 从 CDN 加载（unpkg） -->
+<script src="../../../shared/exercise-controls.js"></script>
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+/* ============================================================
+ * 02 · aisatsana 式极简钢琴（Markov 乐句重组）
+ * 对照源码：generative-music/pieces-alex-bainter 仓库内
+ *   packages/piece-aisatsana/src/piece.js（86 行，机制全貌）
+ *   packages/piece-aisatsana/src/instructions.json（原曲谱面数据）
+ * 版本：0.3 起点 = 0.2 的完整实现（乐句链 + 句内音高链 + Moodist texture + 状态网络视觉），
+ *   先建立可运行的基线，再按需求推进；0.2 的文件保持不动，方便 A/B 对照。
+ * 学习点：
+ *   1. 谱面 → 八分音符网格量化（本练习简化：素材直接用步索引）
+ *   2. 乐句切分（32 步一组）+ 马尔可夫链训练乐句转换
+ *   3. 段落链沿概率重组乐句顺序 —— 记忆 + 重排
+ *   4. 段落内音高链沿素材中的相邻关系重组句内音符
+ *   5. 提前 1 秒触发 + ±25ms 人性化抖动（与 piece-zed 同源手法）
+ * ============================================================ */
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '⚠ 无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+/* ---------- ① 音符素材：段落化乐句库 ----------
+ * ★ 段落感来自素材结构（对照原版：301 秒谱面含 intro→主题→发展→结尾的段落性格）。
+ * 本练习 10 个乐句分 4 段：
+ *   A 安静段（0-1）：稀疏、低音区、长休止
+ *   B 主题段（2-4）：完整琶音、主旋律
+ *   C 发展段（5-7）：密集、双音、切分、高音
+ *   D 结尾段（8-9）：下行走势、渐弱收束
+ * 每步格式 [{ n: 音名, v: 力度 0~1 }]，空数组 = 休止。 */
+const PHRASES = [
+  /* --- 段落 A：安静（稀疏低音） --- */
+  /* A0：低音琶音，每 4~6 步一个音 */
+  [
+    [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.55 }], [], [], [],
+    [{ n: 'E3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'C3', v: 0.55 }], [], [], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'E3', v: 0.55 }], [], [], [], [{ n: 'C3', v: 0.65 }], [], [], [],
+  ],
+  /* A1：低音 + 高音点缀，仍稀疏 */
+  [
+    [{ n: 'C3', v: 0.55 }], [], [{ n: 'E4', v: 0.4 }], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'E3', v: 0.55 }], [], [{ n: 'C4', v: 0.4 }], [], [{ n: 'G3', v: 0.45 }], [], [], [],
+    [{ n: 'C3', v: 0.5 }], [], [{ n: 'G4', v: 0.35 }], [], [{ n: 'E3', v: 0.5 }], [], [], [],
+    [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.45 }], [], [], [],
+  ],
+  /* --- 段落 B：主题（完整琶音、主旋律） --- */
+  /* B0：切分上行琶音（3+3+2 感）+ 低八度重音 */
+  [
+    [{ n: 'C4', v: 0.7 }], [], [{ n: 'E4', v: 0.55 }], [], [{ n: 'G4', v: 0.75 }], [], [], [{ n: 'C5', v: 0.5 }],
+    [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.7 }], [{ n: 'G3', v: 0.8 }], [], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.7 }], [], [], [{ n: 'C5', v: 0.45 }],
+    [], [{ n: 'B4', v: 0.6 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'C4', v: 0.75 }], [], [],
+  ],
+  /* B1：跨音区 + 高音点缀（C6） */
+  [
+    [{ n: 'C5', v: 0.6 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.65 }], [{ n: 'C5', v: 0.55 }],
+    [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.6 }],
+    [{ n: 'D4', v: 0.5 }], [{ n: 'E4', v: 0.65 }], [],
+    [{ n: 'C5', v: 0.6 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.65 }], [{ n: 'C5', v: 0.55 }],
+    [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'C6', v: 0.75 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.7 }], [], [],
+  ],
+  /* B2：五音上行 C4-E4-G4-C5-E5 + 回落 */
+  [
+    [{ n: 'C4', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.7 }], [], [{ n: 'C5', v: 0.65 }], [],
+    [{ n: 'E5', v: 0.7 }], [], [{ n: 'C5', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'E4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'G3', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'C4', v: 0.65 }], [],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'C5', v: 0.55 }], [],
+  ],
+  /* --- 段落 C：发展（密集、双音、切分） --- */
+  /* C0：双音和弦块 + 低音重音 */
+  [
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'E4', v: 0.65 }], [], [{ n: 'G3', v: 0.8 }, { n: 'C5', v: 0.45 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'F3', v: 0.8 }, { n: 'A4', v: 0.5 }], [], [],
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'D4', v: 0.6 }], [], [{ n: 'G3', v: 0.8 }, { n: 'B4', v: 0.5 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'C3', v: 0.75 }, { n: 'G4', v: 0.4 }], [], [],
+  ],
+  /* C1：密集切分 + 双音 */
+  [
+    [{ n: 'C4', v: 0.7 }, { n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'G4', v: 0.6 }], [],
+    [{ n: 'C5', v: 0.7 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.7 }], [], [{ n: 'C4', v: 0.6 }],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'G4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.7 }, { n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'B4', v: 0.6 }], [],
+    [{ n: 'C5', v: 0.7 }], [{ n: 'B4', v: 0.55 }], [], [{ n: 'G4', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'C4', v: 0.7 }], [{ n: 'G3', v: 0.75 }], [], [],
+  ],
+  /* C2：附点长音对比 + 渐强 */
+  [
+    [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'C5', v: 0.7 }], [], [], [{ n: 'G4', v: 0.55 }],
+    [{ n: 'E4', v: 0.6 }], [], [], [{ n: 'C4', v: 0.65 }], [], [{ n: 'D4', v: 0.5 }], [],
+    [{ n: 'E4', v: 0.65 }], [], [{ n: 'G4', v: 0.7 }], [], [], [{ n: 'B4', v: 0.75 }], [], [], [{ n: 'C5', v: 0.6 }],
+    [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'E4', v: 0.7 }], [], [{ n: 'C4', v: 0.55 }], [{ n: 'G3', v: 0.8 }],
+  ],
+  /* --- 段落 D：结尾（下行走势、收束） --- */
+  /* D0：长下行走势 + 尾部留白 */
+  [
+    [{ n: 'C5', v: 0.65 }], [], [{ n: 'B4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'E4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'G3', v: 0.6 }], [], [{ n: 'E3', v: 0.65 }], [], [{ n: 'C3', v: 0.7 }], [],
+    [{ n: 'C3', v: 0.6 }], [], [], [{ n: 'G3', v: 0.55 }], [], [], [{ n: 'E3', v: 0.5 }], [], [], [{ n: 'C3', v: 0.6 }],
+    [], [], [], [], [], [], [],
+  ],
+  /* D1：收束到根音 G2/C3，长尾 */
+  [
+    [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.5 }], [], [{ n: 'G3', v: 0.55 }], [], [], [{ n: 'E3', v: 0.5 }],
+    [], [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G2', v: 0.7 }], [], [],
+    [], [], [], [], [], [{ n: 'C3', v: 0.55 }], [], [], [], [], [], [], [], [], [], [],
+  ],
+];
+
+/* ★ 段落结构（对照原版的段落衔接）：
+ * 乐句索引 → 段落分组；段落 → 下一段落概率矩阵。
+ * 主循环 A→B→C→A（安静→主题→发展→回安静），D 结尾偶尔出现后循环回 A。 */
+const SECTION_PHRASES = [
+  [0, 1],          // A 安静
+  [2, 3, 4],       // B 主题
+  [5, 6, 7],       // C 发展
+  [8, 9],          // D 结尾
+];
+const SECTION_NAMES = ['A 安静', 'B 主题', 'C 发展', 'D 结尾'];
+const SECTION_COLORS = ['#8b5cf6', '#00c896', '#ff8a00', '#ff2876'];
+const SECTION_TRANSITIONS = [
+  [0.1, 0.75, 0.1, 0.05],   // A → 主要进主题
+  [0.1, 0.2, 0.6, 0.1],     // B → 主要进发展
+  [0.55, 0.15, 0.15, 0.15], // C → 主要回落安静
+  [0.7, 0.1, 0.1, 0.1],     // D → 回到安静（循环）
+];
+
+/* 0.2：从每个段落的原始乐句学习“当前音 → 下一音”。
+ * 不跨乐句首尾建立转移，避免人为制造素材中不存在的衔接；重复出现的
+ * 转移会自然拥有更高权重。句内节奏、力度和音符数量仍由原乐句决定。 */
+const NOTE_CHAINS = SECTION_PHRASES.map(phraseIndexes => {
+  const transitions = new Map();
+  const starts = [];
+  phraseIndexes.forEach(phraseIndex => {
+    const sequence = PHRASES[phraseIndex].flat().map(note => note.n);
+    if (sequence.length) starts.push(sequence[0]);
+    for (let i = 0; i < sequence.length - 1; i += 1) {
+      const choices = transitions.get(sequence[i]) || [];
+      choices.push(sequence[i + 1]);
+      transitions.set(sequence[i], choices);
+    }
+  });
+  return { transitions, starts };
+});
+
+const walkNote = (currentNote, section, rng, fallbackNote) => {
+  const chain = NOTE_CHAINS[section];
+  const choices = chain.transitions.get(currentNote);
+  if (choices && choices.length) return choices[Math.floor(rng() * choices.length)];
+  if (chain.starts.length) return chain.starts[Math.floor(rng() * chain.starts.length)];
+  return fallbackNote;
+};
+
+const STEP_DURATION_S = 0.3;      // 八分音符时长（≈ 100 BPM，aisatsana 用 102 BPM / 0.294s）
+const PHRASE_LENGTH = 32;         // 每乐句 32 步（对照源码 phraseLength）
+const PHRASE_DURATION_S = PHRASE_LENGTH * STEP_DURATION_S;
+
+/* ---------- ② 段落感知马尔可夫链（对照 aisatsana 的 markov-chains 库） ----------
+ * 两层随机：
+ *   段落层：按 SECTION_TRANSITIONS 选下一段落（主循环 A→B→C→A）
+ *   句层：段落内随机选一个乐句
+ * 这模拟原版的段落衔接规律（intro→主题→发展→结尾），
+ * 而不是把所有乐句混在一起随机转 —— 段落感来自这里。 */
+const buildSectionChain = rng => {
+  let currentSection = 0;              // 从 A 安静段开始
+  return {
+    next: () => {
+      const weights = SECTION_TRANSITIONS[currentSection];
+      const total = weights.reduce((a, b) => a + b, 0);
+      let roll = rng() * total;
+      let nextSection = 0;
+      for (let i = 0; i < weights.length; i += 1) {
+        roll -= weights[i];
+        if (roll <= 0) { nextSection = i; break; }
+      }
+      const pool = SECTION_PHRASES[nextSection];
+      const phraseIndex = pool[Math.floor(rng() * pool.length)];
+      currentSection = nextSection;
+      return { phraseIndex, section: nextSection };
+    },
+    getSection: () => currentSection,
+    transitions: SECTION_TRANSITIONS,
+  };
+};
+
+/* ---------- ③ 钢琴：真实采样（vsco2-piano-mf）+ 合成回退 ----------
+ * 来源：samples-alex-bainter 仓库 samples/vsco2-piano-mf/（VSCO2 免费钢琴采样，CC0）。
+ * 加载策略（由快到慢，逐级回退，永不卡死）：
+ *   1) jsDelivr wav（GitHub 镜像，约 50MB 首次，之后走浏览器缓存）
+ *   2) FM 合成钢琴（最后兜底）
+ * 官方 CDN samples.alexbainter.com 对直连返回 403（有访问控制），所以不走它。
+ * 只加载旋律音区（C3~C6）所需 12 个采样。 */
+const PIANO_NOTES = ['A2', 'C#3', 'F3', 'A3', 'C#4', 'F4', 'A4', 'C#5', 'F5', 'A5', 'C#6', 'F6'];
+const sampleFile = (note, ext) => note.toLowerCase().replace('#', 'sharp') + ext;
+const JS_DELIVR_BASE = 'https://cdn.jsdelivr.net/gh/generative-music/samples-alex-bainter@master/samples/vsco2-piano-mf/';
+
+const wrapPiano = (piano, fxNodes) => ({
+  triggerAttack: (n, t, v) => piano.triggerAttack(n, t, v),
+  releaseAll: t => piano.releaseAll(t),
+  dispose: () => { piano.dispose(); fxNodes.forEach(node => node.dispose()); },
+});
+
+const createSampledPiano = async (destination, baseUrl, ext, timeoutMs) => {
+  const piano = await new Promise((resolve, reject) => {
+    const sampler = new Tone.Sampler({
+      urls: Object.fromEntries(PIANO_NOTES.map(n => [n, sampleFile(n, ext)])),
+      baseUrl,
+      release: 1.5,
+      volume: 12,                               // ★ +12dB：对齐原版 gain=5（≈+14dB）的归一化量级
+      onload: () => resolve(sampler),
+      onerror: err => reject(err),
+    });
+    setTimeout(() => reject(new Error('加载超时（' + timeoutMs / 1000 + 's）')), timeoutMs);
+  });
+  const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
+  await reverb.generate();
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
+  const limiter = new Tone.Limiter(-1).connect(destination);   // ★ 母带限幅：补偿后防削波
+  compressor.connect(limiter);
+  piano.connect(reverb);
+  reverb.connect(compressor);
+  return wrapPiano(piano, [reverb, compressor, limiter]);
+};
+
+const createFallbackPiano = async destination => {
+  const piano = new Tone.PolySynth(Tone.FMSynth, {
+    harmonicity: 3, modulationIndex: 8,
+    oscillator: { type: 'sine' },
+    modulation: { type: 'triangle' },
+    envelope: { attack: 0.005, decay: 1.2, sustain: 0, release: 1.5 },
+    modulationEnvelope: { attack: 0.005, decay: 0.4, sustain: 0, release: 0.8 },
+    volume: 6,                                  // 合成回退也提响（对齐 +12dB 量级的一半）
+  });
+  const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
+  await reverb.generate();
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
+  const limiter = new Tone.Limiter(-1).connect(destination);
+  compressor.connect(limiter);
+  piano.connect(reverb);
+  reverb.connect(compressor);
+  return wrapPiano(piano, [reverb, compressor, limiter]);
+};
+
+const createPiano = async destination => {
+  try {
+    const piano = await createSampledPiano(destination, JS_DELIVR_BASE, '.wav', 45000);
+    console.info('[钢琴] 使用真实采样 vsco2-piano-mf（jsDelivr）');
+    return piano;
+  } catch (err) {
+    console.warn('[钢琴] 采样加载失败，回退 FM 合成:', err.message);
+    setStatus('⚠ 采样加载失败（' + err.message + '），已回退合成钢琴');
+    return createFallbackPiano(destination);
+  }
+};
+
+/* ---------- 背景 texture：复用 03 的 Moodist 环境素材 ----------
+ * 使用独立随机源，确保 texture 的加载速度和调度不会改变钢琴的 Markov 路径。 */
+const MOODIST_TEXTURES = [
+  {
+    name: 'brown noise',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/noise/brown-noise.wav',
+    periodRange: [80, 140], durationRange: [35, 65], probability: 0.78,
+    filter: 380, targetGain: 0.3, pan: -0.18, fade: 9,
+  },
+  {
+    name: 'wind in trees',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/nature/wind-in-trees.mp3',
+    periodRange: [65, 125], durationRange: [24, 50], probability: 0.66,
+    filter: 1600, targetGain: 0.3, pan: 0.22, fade: 8,
+  },
+  {
+    name: 'jungle',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/nature/jungle.mp3',
+    periodRange: [75, 145], durationRange: [28, 58], probability: 0.62,
+    filter: 2800, targetGain: 0.1, pan: -0.12, fade: 9,
+  },
+  {
+    name: 'birds',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/animals/birds.mp3',
+    periodRange: [55, 115], durationRange: [12, 25], probability: 0.5,
+    filter: 3800, targetGain: 0.1, pan: 0.3, fade: 5, group: 'event', early: true,
+  },
+  {
+    name: 'busy street',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/busy-street.mp3',
+    periodRange: [85, 155], durationRange: [18, 38], probability: 0.42,
+    filter: 1900, targetGain: 0.025, pan: -0.1, fade: 7, group: 'event', early: true,
+  },
+  {
+    name: 'crowd',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/crowd.mp3',
+    periodRange: [100, 180], durationRange: [20, 42], probability: 0.36,
+    filter: 2100, targetGain: 0.022, pan: 0.08, fade: 8, group: 'event', early: true,
+  },
+];
+
+const createMoodistTextures = async (destination, rng) => {
+  const loaded = [];
+  const eventIds = new Set();
+  const randomBetween = ([min, max]) => min + rng() * (max - min);
+  const loadOne = texture => new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return false;
+      settled = true;
+      resolve();
+      return true;
+    };
+    const gain = new Tone.Gain(0);
+    const filter = new Tone.Filter({ type: 'lowpass', frequency: texture.filter, Q: 0.5 });
+    const panner = new Tone.Panner(texture.pan).connect(destination);
+    const player = new Tone.Player({
+      url: texture.url,
+      loop: true,
+      fadeIn: texture.fade,
+      fadeOut: texture.fade,
+      onload: () => {
+        if (!finish()) return;
+        player.connect(filter);
+        filter.connect(gain);
+        gain.connect(panner);
+        loaded.push({ ...texture, player, filter, gain, panner, activeUntil: -Infinity });
+      },
+      onerror: err => {
+        if (!finish()) return;
+        console.warn('[Moodist] 音效加载失败:', texture.name, err);
+        player.dispose(); filter.dispose(); gain.dispose(); panner.dispose();
+      },
+    });
+    setTimeout(() => {
+      if (settled || player.loaded) return;
+      if (!finish()) return;
+      console.warn('[Moodist] 音效加载超时:', texture.name);
+      player.dispose(); filter.dispose(); gain.dispose(); panner.dispose();
+    }, 12000);
+  });
+
+  await Promise.all(MOODIST_TEXTURES.map(loadOne));
+  const activeCountAt = time => loaded.filter(texture => texture.activeUntil > time).length;
+  const activeEventCountAt = time => loaded.filter(texture => texture.group === 'event' && texture.activeUntil > time).length;
+  const scheduleTexture = (texture, transportAt) => {
+    const eventId = Tone.Transport.scheduleOnce(time => {
+      eventIds.delete(eventId);
+      const duration = randomBetween(texture.durationRange);
+      const canPlay = activeCountAt(time) < 2 &&
+        (texture.group !== 'event' || activeEventCountAt(time) < 1) &&
+        time >= texture.activeUntil;
+      if (canPlay && rng() < texture.probability) {
+        const fade = Math.min(texture.fade, duration * 0.42);
+        texture.activeUntil = time + duration + fade;
+        texture.gain.gain.cancelScheduledValues(time);
+        texture.gain.gain.setValueAtTime(0, time);
+        texture.gain.gain.linearRampToValueAtTime(texture.targetGain, time + fade);
+        texture.gain.gain.setValueAtTime(texture.targetGain, time + Math.max(fade, duration - fade));
+        texture.gain.gain.linearRampToValueAtTime(0, time + duration);
+        try {
+          texture.player.start(time);
+          texture.player.stop(time + duration + fade);
+          console.info('[Moodist] texture in:', texture.name, duration.toFixed(0) + 's');
+        } catch (err) {
+          console.warn('[Moodist] 播放失败:', texture.name, err);
+          texture.activeUntil = time;
+        }
+      }
+      scheduleTexture(texture, transportAt + randomBetween(texture.periodRange));
+    }, transportAt);
+    eventIds.add(eventId);
+  };
+
+  return {
+    start: transportAt => loaded.forEach(texture => {
+      const firstRange = texture.early ? [5, 14] : [8, 28];
+      scheduleTexture(texture, transportAt + randomBetween(firstRange));
+    }),
+    stop: time => {
+      eventIds.forEach(eventId => Tone.Transport.clear(eventId));
+      eventIds.clear();
+      loaded.forEach(texture => {
+        texture.gain.gain.cancelScheduledValues(time);
+        texture.gain.gain.linearRampToValueAtTime(0, time + 1.5);
+        try { texture.player.stop(time + 1.6); } catch (err) { /* 已停止则忽略 */ }
+        texture.activeUntil = time;
+      });
+    },
+    dispose: () => loaded.forEach(texture => {
+      texture.player.dispose(); texture.filter.dispose(); texture.gain.dispose(); texture.panner.dispose();
+    }),
+  };
+};
+
+/* ---------- ④ 随机源（Mulberry32，种子可复现，与 01 一致） ---------- */
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h;
+};
+const $ = id => document.getElementById(id);
+const statusEl = $('status'), logContentEl = $('logContent'), matrixEl = $('matrix');
+const visualEl = document.querySelector('.markov-stage');
+const markovMapEl = $('markovMap'), visualTitleEl = $('visualTitle'), visualMetaEl = $('visualMeta');
+const hudElements = [...document.querySelectorAll('.hud, .visual-head, .legend')];
+visualEl.addEventListener('click', () => {
+  const hidden = document.body.classList.toggle('hud-hidden');
+  hudElements.forEach(element => element.setAttribute('aria-hidden', String(hidden)));
+});
+let graphViewport = {
+  width: Math.max(320, window.innerWidth),
+  height: Math.max(320, window.innerHeight),
+  centerX: Math.max(320, window.innerWidth) / 2,
+  centerY: Math.max(320, window.innerHeight) / 2,
+};
+const updateGraphViewBox = (rescaleNodes = false) => {
+  const previous = graphViewport;
+  const width = Math.max(320, window.innerWidth);
+  const height = Math.max(320, window.innerHeight);
+  graphViewport = { width, height, centerX: width / 2, centerY: height / 2 };
+  markovMapEl.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  if (rescaleNodes) {
+    graphMotion.nodes.forEach(node => {
+      node.x = graphViewport.centerX + (node.x - previous.centerX) * width / previous.width;
+      node.y = graphViewport.centerY + (node.y - previous.centerY) * height / previous.height;
+    });
+    layoutGraph();   // 环上的“家”按新视口重算，弹簧会把节点带过去
+  }
+};
+const logLines = [];
+const log = (msg, color) => {
+  logLines.push({ msg, color });
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.style.color = color;
+  line.textContent = msg;
+  logContentEl.appendChild(line);
+  if (logLines.length > 80) {
+    logLines.shift();
+    logContentEl.firstElementChild.remove();
+  }
+  const pushDistance = line.getBoundingClientRect().height;
+  logContentEl.style.transition = 'none';
+  logContentEl.style.transform = `translateY(${pushDistance}px)`;
+  void logContentEl.offsetHeight;
+  logContentEl.style.transition = 'transform .6s cubic-bezier(.22,1,.36,1)';
+  logContentEl.style.transform = 'translateY(0)';
+};
+const setStatus = html => { statusEl.innerHTML = html; };
+
+const noteToMidi = note => {
+  const match = /^([A-G])(#?)(-?\d+)$/.exec(note);
+  if (!match) return 60;
+  const semitones = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  return (Number(match[3]) + 1) * 12 + semitones[match[1]] + (match[2] ? 1 : 0);
+};
+const svgNode = (name, attrs = {}) => {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+  Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+  return node;
+};
+const stateId = note => note.replace('#', 's').replace('-', 'm');
+const edgeId = (from, to) => 'edge-' + stateId(from) + '-' + stateId(to);
+const GRAPH_NODE_RADIUS = 17;
+
+let visualPhraseId = 0;
+let previousVisualNote = null;
+let previousVisualTime = null;   // 上一个发声时刻，用来算转移的行进时长
+let graphMotion = {
+  nodes: [],                       // 整场演出共用的持久图（见下方“视觉”一节）
+  edges: new Map(),
+  hiddenLayer: null,
+  nodeLayer: null,
+  ringPhase: 0,                    // 每次换句微扰的环形相位（不累积）
+  ringScale: 1,                    // 每次换句微扰的环半径倍率
+};
+let graphAnimationFrame = null;
+updateGraphViewBox();
+window.addEventListener('resize', () => updateGraphViewBox(true), { passive: true });
+
+const dynamicEdgePath = (a, b) => {
+  if (a.note === b.note) {
+    return `M ${a.x - 7} ${a.y - 15} C ${a.x - 38} ${a.y - 58}, ${a.x + 38} ${a.y - 58}, ${a.x + 7} ${a.y - 15}`;
+  }
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const bend = ((noteToMidi(a.note) + noteToMidi(b.note)) % 2 ? 1 : -1) * Math.min(38, length * 0.16);
+  const cx = (a.x + b.x) / 2 - dy / length * bend;
+  const cy = (a.y + b.y) / 2 + dx / length * bend;
+  const startX = a.x + dx / length * (GRAPH_NODE_RADIUS + 2);
+  const startY = a.y + dy / length * (GRAPH_NODE_RADIUS + 2);
+  const endX = b.x - dx / length * (GRAPH_NODE_RADIUS + 4);
+  const endY = b.y - dy / length * (GRAPH_NODE_RADIUS + 4);
+  return `M ${startX} ${startY} Q ${cx} ${cy} ${endX} ${endY}`;
+};
+
+const animateGraph = () => {
+  const { nodes, edges } = graphMotion;
+  if (nodes.length) {
+    const time = performance.now();
+    const centerX = graphViewport.centerX, centerY = graphViewport.centerY;
+
+    nodes.forEach(node => {
+      node.fx = 0;
+      node.fy = 0;
+      if (node.present) {
+        /* 在场：目标是环上的位置 */
+        node.targetX = node.home.x;
+        node.targetY = node.home.y;
+      } else {
+        /* 收起的点：目标是宿主的背后（宿主一定在场）。它是一路“钻”到别人下面被挡住，
+           而不是原地消失 —— 用户明确要求（原本激活点变非激活点时要移动过去被遮挡）。 */
+        const host = node.host;
+        node.targetX = (host ? host.x : centerX) + node.hideOffsetX;
+        node.targetY = (host ? host.y : centerY) + node.hideOffsetY;
+      }
+    });
+
+    for (let i = 0; i < nodes.length; i += 1) {
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const a = nodes[i], b = nodes[j];
+        if (!a.present || !b.present || a.flight || b.flight) continue;   // 收起或在飞的节点不参与推挤
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const distanceSq = Math.max(900, dx * dx + dy * dy);
+        const force = NODE_REPULSION / distanceSq;
+        const distance = Math.sqrt(distanceSq);
+        a.fx -= dx / distance * force; a.fy -= dy / distance * force;
+        b.fx += dx / distance * force; b.fy += dy / distance * force;
+      }
+    }
+    /* 转移边只不参与“布局”（不把环撑开），但参与“动力学”：它是铰链，
+       把每个点的位移传给它连接的邻居，弹才是活的而不是整体外扩。
+       静止长度取环上的原始距离，所以平衡位置依旧是那个环。 */
+    edges.forEach(edge => {
+      if (edge.from === edge.to) return;
+      if (edge.from.flight || edge.to.flight) return;
+      if (!edge.from.present || !edge.to.present) return;
+      const dx = edge.to.x - edge.from.x, dy = edge.to.y - edge.from.y;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const force = (distance - edge.rest) * EDGE_COUPLING;
+      edge.from.fx += dx / distance * force; edge.from.fy += dy / distance * force;
+      edge.to.fx -= dx / distance * force; edge.to.fy -= dy / distance * force;
+    });
+
+    nodes.forEach((node, index) => {
+      if (node.flight) {
+        /* 飞行期：位置完全由缓动曲线决定。
+           pop     = 刚变成乐句点：easeOutBack（起步极快、单次过冲）
+           glide   = 本来就是乐句点：easeInOutCubic（平滑滑到新环位、不过冲）
+           retreat = 变回收起点：easeInOutCubic 滑到宿主背后，配合下面的“越近越淡”，
+                     于是它是被宿主挡住的，而不是原地消失。 */
+        const progress = Math.min(1, (time - node.flight.startedAt) / node.flight.duration);
+        const eased = node.flight.mode === 'pop'
+          ? easeOutBack(progress)
+          : node.flight.mode === 'retreat' ? easeOutCubic(progress) : easeInOutCubic(progress);
+        node.x = node.flight.fromX + (node.targetX - node.flight.fromX) * eased;
+        node.y = node.flight.fromY + (node.targetY - node.flight.fromY) * eased;
+        node.vx = 0;
+        node.vy = 0;
+        if (progress >= 1) node.flight = null;
+      } else {
+        node.fx += (node.targetX - node.x) * NODE_HOME_SPRING;
+        node.fy += (node.targetY - node.y) * NODE_HOME_SPRING;
+        if (node.present) {
+          node.fx += Math.sin(time * 0.0007 + index * 2.3) * NODE_DRIFT;
+          node.fy += Math.cos(time * 0.0006 + index * 1.7) * NODE_DRIFT;
+        }
+        node.vx = (node.vx + node.fx) * NODE_DAMPING;
+        node.vy = (node.vy + node.fy) * NODE_DAMPING;
+        node.x += node.vx;
+        node.y += node.vy;
+        if (node.present) {
+          node.x = Math.max(36, Math.min(graphViewport.width - 36, node.x));
+          node.y = Math.max(36, Math.min(graphViewport.height - 36, node.y));
+        } else if (node.presence <= 0.02) {
+          /* 已看不见：硬贴宿主，免得弹簧拖尾把藏起来的点露出半个 */
+          node.x = node.targetX;
+          node.y = node.targetY;
+          node.vx = 0;
+          node.vy = 0;
+        }
+      }
+      if (node.flight && node.flight.mode === 'retreat') {
+        /* 收起中的点：越接近宿主越淡，最后正好被宿主挡住 —— 全过程是“移动过去被遮挡”，
+           不是原地消失（用户报的 bug：音符变少时有点突然不见了）。 */
+        const retreatProgress = Math.min(1, (time - node.flight.startedAt) / node.flight.duration);
+        node.presence = Math.max(0, 1 - easeInCubic(retreatProgress));
+      } else {
+        const presenceRate = node.targetPresence > node.presence ? PRESENCE_RISE : PRESENCE_FALL;
+        node.presence += (node.targetPresence - node.presence) * presenceRate;
+      }
+      /* 点亮 → 变暗：时长由发声那一刻的音程决定（见 showVisualNote），线性退回常态色 */
+      if (node.flash > 0) {
+        const flashElapsed = (time - node.flashStartedAt) / (node.flashDuration || 1);
+        node.flash = Math.max(0, 1 - flashElapsed);
+      }
+      paintNode(node);
+    });
+    edges.forEach(edge => edge.path.setAttribute('d', dynamicEdgePath(edge.from, edge.to)));
+    edges.forEach(edge => {
+      /* 只在“正在生长/收回”时才逐帧刷新，画满或完全收回后不再做无谓计算 */
+      if (edge.presence !== edge.presenceTarget || (edge.presence > 0 && edge.presence < 1)) {
+        updateEdgePresence(edge, time);
+      }
+    });
+    edges.forEach(edge => updateEdgePulse(edge, time));
+  }
+  graphAnimationFrame = requestAnimationFrame(animateGraph);
+};
+
+/* 转移边的生长规则（用户明确要求）：
+ *   · 触发条件是“**有新的音高点冒出来**”：一端刚变成乐句点的连线，朝那个新点生长过去；
+ *   · 两端本来就是在场的乐句点 → 连线只是**跟着点移动**，不做生长动画（直接画满）；
+ *   · 收回同理：端点在收起时快速跟着它一起收回；两端都还在场而只是不再属于本段落时，
+ *     用稍慢的速度收回。
+ * 方向：drawn 区间是 [0,r) 表示从起点长出去；[L-r,L) 表示从终点往回长
+ *   （新点在起点端时就要从终点端长过来）。 */
+/* 连线的明度 = 该转移在马尔可夫链里的概率。
+   `walkNote` 是从当前音的后继数组里等概率挑一个（重复项就是权重），
+   所以 from→to 的概率 = 该转移的出现次数 ÷ 该音所有后继的总数。
+   线性映射即可：素材里既有大量 p=1 的确定转移、也有 p≈0.07 的偶然转移，
+   实测明度因此铺开在 0.25~0.90（若改用开方，低概率会被抬到 0.39，对比反而变弱）。 */
+const EDGE_OPACITY_MIN = 0.2;       // 最不可能走的转移
+const EDGE_OPACITY_MAX = 0.9;       // 最常走的转移
+const edgeOpacityFor = probability => EDGE_OPACITY_MIN
+  + (EDGE_OPACITY_MAX - EDGE_OPACITY_MIN) * Math.max(0, Math.min(1, probability));
+
+const setEdgePresence = (edge, present, time, change, durationSeconds) => {
+  const target = present ? 1 : 0;
+  if (edge.presenceTarget === target) return;   // 幂等：重复应用同一段落不会再长一遍
+  /* 时长与音符间隔挂钩：本段落的结构变化整个发生在“上一个音 → 本句首音”这个间隔里，
+     所以每条线都会在首音（也就是第一次发声）之前走完，不会和后续的行进叠在一起。 */
+  const duration = durationSeconds || (target ? EDGE_GROW_S : EDGE_RETRACT_S);
+  edge.presenceFrom = edge.presence;
+  edge.presenceTarget = target;
+  edge.presenceStartedAt = time;
+  if (present) {
+    const waking = change.fromWoke || change.toWoke;
+    if (waking) {
+      edge.revealFromEnd = change.fromWoke && !change.toWoke;   // 新点在起点端 → 从终点端长过来
+      edge.presenceDuration = duration;
+    } else {
+      edge.presence = 1;                                        // 两端都是老点：连线本来就该在
+      edge.presenceDuration = 0;
+    }
+  } else {
+    /* 反向生长：揭示区间沿与生长相反的方向退回（朝留下来的那一端收），
+       透明度全程保持满值，所以看起来是“线缩回去了”，而不是淡出。 */
+    edge.revealFromEnd = change.fromSlept && !change.toSlept;
+    edge.presenceDuration = duration;
+  }
+  if (edge.presenceDuration === 0) updateEdgePresence(edge, time);   // 秒变的情形要立刻落到终态
+};
+
+const updateEdgePresence = (edge, time) => {
+  const path = edge.path;
+  if (edge.presence !== edge.presenceTarget) {
+    const progress = Math.min(1, (time - edge.presenceStartedAt) / (edge.presenceDuration * 1000));
+    edge.presence = edge.presenceFrom + (edge.presenceTarget - edge.presenceFrom) * progress;
+  }
+  if (edge.presence <= 0) {
+    if (edge.arrowOn) { edge.arrowOn = false; path.removeAttribute('marker-end'); }
+    path.style.opacity = '0';
+    return;
+  }
+  path.style.opacity = edge.opacity.toFixed(3);
+  if (edge.presence >= 1) {
+    /* 画满之后不留 dash：节点一直在呼吸漂移，留着就得每帧重算路径长度 */
+    path.removeAttribute('stroke-dasharray');
+    path.removeAttribute('stroke-dashoffset');
+    if (!edge.arrowOn) { edge.arrowOn = true; path.setAttribute('marker-end', 'url(#arrowhead)'); }
+    return;
+  }
+  if (edge.arrowOn) { edge.arrowOn = false; path.removeAttribute('marker-end'); }
+  const length = Math.max(1, path.getTotalLength());
+  const remaining = length * (1 - edge.presence);
+  path.setAttribute('stroke-dasharray', length + ' ' + length);
+  path.setAttribute('stroke-dashoffset', String(edge.revealFromEnd ? -remaining : remaining));
+};
+
+/* 一条转移的“行进”：彩色沿曲线从起点揭示到终点，颜色走完的那一刻箭头也变彩色。
+ * dasharray = 全长，所以 dashoffset 从全长降到 0 的过程就是“颜色走完全程”。
+ * 箭头不用行进层自己的 marker：那会让箭头尺寸跟着行进层的粗描边（2.4）一起放大。
+ * 做法是颜色到位时给**灰底边**加 .active —— 同一个 path、同一个 marker、同一条描边宽度，
+ * 所以彩色箭头与灰箭头的尺寸必然一致，位置也一样。行进层只负责“正在走”的那段彩色。 */
+const updateEdgePulse = (edge, time) => {
+  const pulse = edge.pulse;
+  if (!pulse.active) return;
+  const path = edge.pulsePath;
+  path.setAttribute('d', dynamicEdgePath(edge.from, edge.to));
+  const length = Math.max(1, path.getTotalLength());
+  const elapsed = (time - pulse.startedAt) / 1000;
+  let reveal = 1;
+  let opacity = 1;
+  if (pulse.fadeStartedAt === null) {
+    reveal = pulse.duration > 0 ? Math.min(1, elapsed / pulse.duration) : 1;
+  } else {
+    const fadeElapsed = (time - pulse.fadeStartedAt) / 1000;
+    if (fadeElapsed >= EDGE_SWEEP_FADE_S) {
+      pulse.active = false;
+      pulse.recolored = false;
+      edge.path.classList.remove('active');
+      path.style.opacity = '0';
+      return;
+    }
+    opacity = 1 - fadeElapsed / EDGE_SWEEP_FADE_S;
+  }
+  if (reveal >= 1 && !pulse.recolored) {
+    pulse.recolored = true;
+    edge.path.classList.add('active');   // 箭头此时亮起，尺寸与灰箭头完全相同
+  }
+  path.setAttribute('stroke-dasharray', length + ' ' + length);
+  path.setAttribute('stroke-dashoffset', length * (1 - reveal));
+  path.style.opacity = opacity.toFixed(3);   // 内联样式：CSS 覆盖不了
+};
+
+/* 新的转移开始行进时，之前那条还亮着的转移同时开始退色（底边与行进层一起） */
+const startEdgePulse = (edge, intervalSeconds, time) => {
+  graphMotion.edges.forEach(other => {
+    if (other !== edge && other.pulse.active && other.pulse.fadeStartedAt === null) {
+      other.pulse.fadeStartedAt = time;
+      other.pulse.recolored = false;
+      other.path.classList.remove('active');
+    }
+  });
+  edge.pulse.active = true;
+  edge.pulse.startedAt = time;
+  edge.pulse.fadeStartedAt = null;
+  edge.pulse.duration = Math.max(EDGE_SWEEP_MIN_S, Math.min(EDGE_SWEEP_MAX_S, intervalSeconds));
+  if (edge.pulse.recolored) {   // 同一条重新走一遍：先把底边退回灰色，等颜色再次到达终点
+    edge.pulse.recolored = false;
+    edge.path.classList.remove('active');
+  }
+};
+
+const ensureGraphAnimation = () => {
+  if (graphAnimationFrame === null) graphAnimationFrame = requestAnimationFrame(animateGraph);
+};
+
+/* ---------- 视觉：一张持续存在的图，乐句之间是“变成”而不是“切换” ----------
+ * 旧做法每个乐句都 replaceChildren() 重建整张 SVG：节点与边被删除再创建，
+ * CSS 过渡没有起始状态可补间，力导向布局也被重置，于是每 9.6 秒硬切一次。
+ * 现在节点与边只建一次，乐句更替改四件事：
+ *   · 存在度：属于当前段落的节点留在环上，其余节点收进“藏身层”，滑到某个在场节点背后被挡住；
+ *   · 当前状态：刚发声的节点与刚走过的转移染色（时长由音程决定）；
+ *   · 弹一下：换句时给在场节点一次切向冲量（方向交替），位移沿连线（弹簧）传给邻居 ——
+ *     不是整体径向外扩，也不再是“全场弹簧缩放”那一套；
+ *   · 跨度：每次换句微扰环的相位与半径，于是所有点（包括一直是乐句点的）都会移动一段距离。
+ * 位置用缓动飞行 + 弹簧-阻尼求解，不是 CSS 过渡（节点会在两层之间搬动）。 */
+
+/* 图的节点集合：所有段落用过的音高并集（14 个）。它与当前段落无关，
+   所以环上的基准位置是稳定的，每次换句再叠加一点相位 / 半径微扰（见 layoutGraph）。 */
+const GRAPH_NOTES = (() => {
+  const notes = new Set();
+  NOTE_CHAINS.forEach(chain => chain.transitions.forEach((targets, from) => {
+    notes.add(from);
+    targets.forEach(to => notes.add(to));
+  }));
+  return [...notes].sort((a, b) => noteToMidi(a) - noteToMidi(b));
+})();
+
+/* 运动学常数（数值由离散弹簧模拟试出，改前先算一遍，别凭感觉调）：
+ *   归位弹簧 0.009 / 阻尼 0.92：只负责静止时的呼吸、漂移与换句抖动之后的回位；
+ *   弹出/收起不用弹簧，而是一次性“飞行”：起步极快、临到落点单次过冲约 13% 再收回（easeOutBack）；
+ *     每个音高有自己的速度倍率（0.8~1.25），而且不要求在首音之前到位 —— 时长 = 间隔 × 1.5；
+ *   换句的“弹一下”是切向冲量 + 沿连线传导（见 kickNetwork）。
+ *
+ *   ★ 2026-09 调整：用户反馈“换句的弹速度够、范围不够，像很短的弹簧，把弹簧放长一点”。
+ *     离散模拟结论：本系统阻尼很重（0.92/帧），单把弹簧变软只换到 1.25× 行程；
+ *     放松阻尼虽能加行程，却会把方向反转从 3 次推到 9 次、变成乱抖（用户明确不要）。
+ *     所以采用“软一档 + 适度加冲量”：k 0.012→0.009、连线耦合 0.016→0.012
+ *     （推挤与漂移按同比例降到 900 / 0.038，静态平衡点不变，环不会因此变松），
+ *     换句冲量 6→8.5。合计行程约 1.5×，起步速度只涨约 40%。 */
+const NODE_HOME_SPRING = 0.009;
+const NODE_DAMPING = 0.92;          // 阻尼要留余量，扰动才能沿连线传出去（0.80 会把扰动立刻吃掉）
+/* 连线弹簧（“铰链”）：静止长度 = 环上的原始距离，所以环形与平衡点都不变；
+   它的唯一作用是把一个点的运动传给相邻的点 —— 弹因此是沿连线传开的，不是整体外扩。
+   与归位弹簧保持同比例的软硬（一起调，才能既加长行程又不改变环的形状）。 */
+const EDGE_COUPLING = 0.012;
+/* 弹的力度分两级（用户明确要求）：
+ *   · 换句级：换句 / 段落切换时整网抖一下，力度保持现状（PHRASE_KICK / SECTION_KICK）；
+ *   · 音符级：每个音发声只给一个很轻的推力（NOTE_KICK），像是被轻轻带了一下，
+ *     绝不能和换句级一个量级，否则整首曲子会一直在抖、听不出“换句”这个重音。 */
+const NOTE_KICK = 1.7;              // 音符级：约 5px 位移（与换句级保持 5:1）
+const PHRASE_KICK = 8.5;            // 换句级：在场节点一次切向冲量（方向交替），约 26px 行程
+const SECTION_KICK = 12.5;          // 段落切换更强，约 38px 行程
+/* 弹出/收起：每个点有自己的速度（按音高固定，可复现），并且**不要求**在首音之前到达 ——
+   用户指出那个限制会把速度逼得太快（“不要求切换乐句后点要在第一个音之前到达目的地”）。
+   所以飞行时长 = 音符间隔 × WAKE_FLIGHT_SCALE（2.0 倍，比间隔更慢），允许延伸到首音之后；
+   WAKE_FLIGHT_MAX_S 只是防止长留白里飘太久。
+   连线的生长/反向生长用**它自己那个点的时长**，所以线长完的那一刻点也正好到位。 */
+const WAKE_FLIGHT_SCALE = 2.0;      // 相对音符间隔的倍数（用户反馈“点到目的地的速度有点快”，从 1.5 提到 2.0）
+const WAKE_FLIGHT_MIN_S = 0.6;      // 再快就成了瞬移
+const WAKE_FLIGHT_MAX_S = 2.2;
+const WAKE_SPEED_MIN = 0.8;         // 每个音高自己的倍率，围绕 1.0 两侧展开
+const WAKE_SPEED_MAX = 1.25;
+/* 每次换句轻微改一下环的相位与半径：让**本来就是乐句点**的那些点也有一定跨度。
+   不然每次只有非激活点在动，画面会显得只有局部在变（用户反馈）。
+   相位在 ±RING_SHIFT_PHASE/2 弧度内重新取值（不累积，所以不会越转越偏），半径同理。 */
+const RING_SHIFT_PHASE = 0.2;       // ±0.1 弧度 ≈ 环上 ±30px
+const RING_SHIFT_SCALE_MIN = 0.95;
+const RING_SHIFT_SCALE_MAX = 1.05;
+const PRESENCE_RISE = 0.22;         // 弹出时的出现速度（约 0.15 秒到位）
+/* 收起必须“立刻消失”：0.16 那档太慢，节点会在飞向宿主的路上被看见（用户反馈“会露馅”）。
+   0.4 的速率下约 5 帧（80ms）就低于 5% 不透明度，肉眼等同于立刻消失。 */
+const PRESENCE_FALL = 0.4;
+/* 连线生长：只在“有新的音高点冒出来”时朝新点生长；离开时**反向生长退回去**。
+   时长不是常数，而是**这段结构变化所占据的音符间隔**（见 GRAPH_MORPH_*）：
+   用户指出固定时长会“一条还没长完，另一条已经开始了”——生长必须与音符间隔关联，
+   这样每一条线都会在下一次发声之前走完。反向生长同理（用户明确要求）。 */
+const MORPH_MIN_S = 0.32;               // 间隔至少这么长（否则比一次弹出还短）
+const MORPH_MAX_S = 1.6;                // 也不提前太多开始重组
+const EDGE_GROW_S = 0.7;                // 兜底值：只有在拿不到间隔时才用
+const EDGE_RETRACT_S = 0.6;             // 兜底值，同上
+/* 推挤与漂移：只用来避免节点叠在一起、并让环有呼吸。
+   数值要与 NODE_HOME_SPRING 成比例（静态偏移 = 力/弹簧），一起调才能既加长行程、
+   又不让平衡点远离环位（早期版本就因为只动一边而让整张图看起来变松）。 */
+const NODE_REPULSION = 900;
+const NODE_DRIFT = 0.038;
+/* 刚发声的染色衰减不再是固定值：时长由该音的音程决定（见 showVisualNote 的 flashDuration） */
+const HIDDEN_NODE_RADIUS = 9;       // 藏起来时的半径
+/* 收起的节点必须完全看不见：0.16 那种“隐约可见”会在别的节点弹出时露馅（用户实际反馈过）。
+   若想留一点暗示，把这个值调到 0.05 左右即可。 */
+const HIDDEN_NODE_OPACITY = 0;
+/* 转移边的“行进”时长由实际音程决定：上一个音到这个音隔了几秒，彩色就走几秒；
+   太短看不清、太长会拖到下一个音，所以两头都设了界限。
+   ★ 同一个音程还决定“音符点亮到暗”的时长（用户要求：不要每个音都一样），
+     以及行进到位后箭头亮起的时刻 —— 三者因此天然同步。 */
+const EDGE_SWEEP_MIN_S = 0.16;
+const EDGE_SWEEP_MAX_S = 1.5;
+const EDGE_SWEEP_FADE_S = 1.2;      // 下一条转移开始行进时，上一条开始退色
+const FIRST_NOTE_INTERVAL_S = 0.5;  // 第一个音没有“上一个音”可参照，用这个兜底
+const NODE_IDLE_FILL = [63, 63, 70];          // #3f3f46 收起
+const NODE_PRESENT_FILL = [82, 82, 91];       // #52525b 在场
+const NODE_PRESENT_STROKE = [113, 113, 122];  // #71717a 在场描边
+const SECTION_COLOR_MORPH_S = 2.4;  // 段落色渐变时长
+
+let graphBuilt = false;
+let colorMorphFrame = null;
+let visualTextTimer = null;
+let sectionColorRgb = [139, 92, 246];
+
+const mixRgb = (from, to, amount) => from.map((value, index) => Math.round(value + (to[index] - value) * amount));
+const rgbToHex = rgb => '#' + rgb.map(value => value.toString(16).padStart(2, '0')).join('');
+/* 弹出用的缓动：起步速度约为平均的 5.7 倍（很猛），临到落点单次过冲约 13% 再收回，
+   而且过冲只发生一次 —— 这是“弹一下”的手感。 */
+const WAKE_BACK = 2.0;
+const easeOutBack = progress => {
+  const u = progress - 1;
+  return 1 + (WAKE_BACK + 1) * u * u * u + WAKE_BACK * u * u;
+};
+/* 本来就是乐句点的那些点用这个：平滑滑到新的环位，没有过冲（它们不是“飞过来”，只是换个位置） */
+const easeInOutCubic = progress => (progress < 0.5
+  ? 4 * progress * progress * progress
+  : 1 - Math.pow(-2 * progress + 2, 3) / 2);
+/* 收起用的动效曲线：立刻起步、稳稳落进宿主背后。
+   不要用 easeInOutCubic —— 它前段很慢，实测换句后 0.15 秒只移动了 0.4px，观感像“愣在原地”。 */
+const easeOutCubic = progress => 1 - Math.pow(1 - progress, 3);
+/* 收起时用这个把不透明度压到 0：前段几乎不变（所以看得出是在“移动”），
+   末段迅速淡掉 —— 而末段正好是它钻进宿主背后的时刻，于是观感是“被挡住了”。 */
+const easeInCubic = progress => progress * progress * progress;
+
+/* 节点外观全部逐帧写入：存在度决定半径、透明度与音名可见性，flash 决定“刚发声”的染色。
+   透明度统一写内联样式：SVG 呈现属性会被 CSS 规则覆盖，写内联样式就不会出现
+   “属性看着对、画面却不可见”的情况（0.3 早期版本的行进层就踩过这个坑）。 */
+const paintNode = node => {
+  const presence = Math.max(0, Math.min(1, node.presence));
+  const idleFill = mixRgb(NODE_IDLE_FILL, NODE_PRESENT_FILL, presence);
+  const idleStroke = mixRgb(NODE_IDLE_FILL, NODE_PRESENT_STROKE, presence);
+  node.circle.setAttribute('cx', node.x);
+  node.circle.setAttribute('cy', node.y);
+  node.circle.setAttribute('r', HIDDEN_NODE_RADIUS + (GRAPH_NODE_RADIUS - HIDDEN_NODE_RADIUS) * presence);
+  node.circle.setAttribute('fill', rgbToHex(mixRgb(idleFill, sectionColorRgb, node.flash)));
+  node.circle.setAttribute('stroke', rgbToHex(mixRgb(idleStroke, sectionColorRgb, node.flash)));
+  node.circle.style.opacity = (HIDDEN_NODE_OPACITY + (1 - HIDDEN_NODE_OPACITY) * presence).toFixed(3);
+  node.label.setAttribute('x', node.x);
+  node.label.setAttribute('y', node.y + 1);
+  node.label.style.opacity = (presence * presence).toFixed(3);
+};
+
+/* 环上的“家”位置：由视口、音高索引、以及本次换句的相位/半径微扰决定。
+   相位与半径每次换句都重新取值，所以**所有**点在换句时都会移动一段距离，
+   不再只有非激活点在动。 */
+const layoutGraph = () => {
+  const radiusX = Math.min(380, graphViewport.width * 0.36) * graphMotion.ringScale;
+  const radiusY = Math.min(330, graphViewport.height * 0.32) * graphMotion.ringScale;
+  graphMotion.nodes.forEach((node, index) => {
+    const angle = index / Math.max(1, graphMotion.nodes.length) * Math.PI * 2 - Math.PI / 2 + graphMotion.ringPhase;
+    const rx = radiusX * (0.88 + Math.sin(index * 2.17) * 0.12);
+    const ry = radiusY * (0.88 + Math.cos(index * 1.71) * 0.12);
+    node.home.x = graphViewport.centerX + Math.cos(angle) * rx;
+    node.home.y = graphViewport.centerY + Math.sin(angle) * ry;
+  });
+  /* 连线弹簧的静止长度 = 环上的原始距离：这样环本身就是弹簧网的平衡位置，
+     连线只负责传递运动（铰链），不会把环拉变形 */
+  graphMotion.edges.forEach(edge => {
+    edge.rest = Math.hypot(edge.to.home.x - edge.from.home.x, edge.to.home.y - edge.from.home.y);
+  });
+};
+
+const ensurePhraseGraph = () => {
+  if (graphBuilt) return;
+  graphBuilt = true;
+
+  const defs = svgNode('defs');
+  const marker = svgNode('marker', {
+    id: 'arrowhead', markerWidth: 8, markerHeight: 8, refX: 7, refY: 4,
+    orient: 'auto', markerUnits: 'strokeWidth',
+  });
+  marker.appendChild(svgNode('path', { d: 'M0,0 L8,4 L0,8 Z', fill: 'context-stroke' }));
+  defs.appendChild(marker);
+  markovMapEl.appendChild(defs);
+
+  /* 四层：藏身节点在最下，灰色转移边其次，彩色行进层再次，在场节点在最上。
+     节点会在两层之间搬动，所以“藏起来的点”永远压在场节点之下。 */
+  const hiddenLayer = svgNode('g', { class: 'chain-hidden-layer' });
+  const edgeLayer = svgNode('g', { class: 'chain-edge-layer' });
+  const pulseLayer = svgNode('g', { class: 'chain-pulse-layer' });
+  const nodeLayer = svgNode('g', { class: 'chain-node-layer' });
+  markovMapEl.appendChild(hiddenLayer);
+  markovMapEl.appendChild(edgeLayer);
+  markovMapEl.appendChild(pulseLayer);
+  markovMapEl.appendChild(nodeLayer);
+  graphMotion.hiddenLayer = hiddenLayer;
+  graphMotion.nodeLayer = nodeLayer;
+
+  const byNote = new Map();
+  GRAPH_NOTES.forEach(note => {
+    const node = {
+      note,
+      home: { x: graphViewport.centerX, y: graphViewport.centerY },
+      present: false,
+      targetPresence: 0,
+      presence: 0,
+      flash: 0,
+      flashStartedAt: 0,
+      flashDuration: 0,
+      host: null,
+      flight: null,
+      /* 每个音高有自己的“起飞速度倍率”（0.72~1.0，按音高固定所以可复现）：
+         换句时各点因此不会像同一根弹簧那样齐步走。
+         用黄金比小数（低差异序列）打散，而不是取哈希低位 —— 音名相近时哈希低位会撞在一起，
+         实测 14 个音高只能出 9 个不同倍率，速度差被压扁到 0.75~0.81。 */
+      speedFactor: WAKE_SPEED_MIN + (WAKE_SPEED_MAX - WAKE_SPEED_MIN)
+        * (noteToMidi(note) * 0.61803398875 % 1),
+      morphDuration: 0,
+      vx: 0, vy: 0, fx: 0, fy: 0,
+      targetX: 0, targetY: 0,
+    };
+    const circle = svgNode('circle', {
+      id: 'state-' + stateId(note), cx: node.home.x, cy: node.home.y, r: HIDDEN_NODE_RADIUS,
+      class: 'chain-node',
+    });
+    const label = svgNode('text', { x: node.home.x, y: node.home.y + 1, class: 'node-label' });
+    circle.style.opacity = '0';
+    label.style.opacity = '0';
+    label.textContent = note;
+    hiddenLayer.appendChild(circle);
+    hiddenLayer.appendChild(label);
+    Object.assign(node, { circle, label });
+    graphMotion.nodes.push(node);
+    byNote.set(note, node);
+  });
+  layoutGraph();
+  graphMotion.nodes.forEach((node, index) => {
+    /* 起始就落在自己环位上，只是存在度为 0，随后淡入 */
+    node.x = node.home.x;
+    node.y = node.home.y;
+    /* 藏身时贴着宿主的小偏移，保证整个人躲在宿主圆点之内（3 + 9 < 宿主半径 17） */
+    const angle = index * 2.4;
+    node.hideOffsetX = Math.cos(angle) * 3;
+    node.hideOffsetY = Math.sin(angle) * 3;
+    paintNode(node);
+  });
+
+  const edgeTotal = new Map();
+  NOTE_CHAINS.forEach(chain => chain.transitions.forEach((targets, from) => targets.forEach(to => {
+    const key = from + '|' + to;
+    edgeTotal.set(key, (edgeTotal.get(key) || 0) + 1);
+  })));
+  edgeTotal.forEach((count, key) => {
+    const [from, to] = key.split('|');
+    const a = byNote.get(from), b = byNote.get(to);
+    if (!a || !b) return;
+    const path = svgNode('path', {
+      id: edgeId(from, to), d: dynamicEdgePath(a, b), class: 'chain-edge',
+    });
+    /* 初始不可见：透明度由 JS 写内联样式，箭头也在生长完成后才挂上 */
+    path.style.opacity = '0';
+    edgeLayer.appendChild(path);
+    /* 彩色行进层：与灰边同一条曲线，靠 dashoffset 从起点揭示到终点。
+       它自己不带 marker —— 箭头始终由灰底边承载，颜色到位时底边才换成段落色，
+       这样箭头尺寸与灰箭头完全一致（详见 updateEdgePulse 的注释）。 */
+    const pulsePath = svgNode('path', {
+      id: edgeId(from, to) + '-pulse', d: dynamicEdgePath(a, b), class: 'chain-edge-pulse',
+    });
+    pulsePath.style.opacity = '0';
+    pulseLayer.appendChild(pulsePath);
+    graphMotion.edges.set(key, {
+      from: a, to: b, path, pulsePath,
+      /* 连线弹簧的静止长度（铰链用）：初始化为环上的距离，视口变化时由 layoutGraph 重算 */
+      rest: Math.hypot(b.home.x - a.home.x, b.home.y - a.home.y),
+      presence: 0, presenceFrom: 0, presenceTarget: 0, presenceStartedAt: 0, presenceDuration: 0,
+      probability: 0, opacity: 0, arrowOn: false,
+      pulse: { active: false, startedAt: 0, duration: 0, fadeStartedAt: null, recolored: false },
+    });
+  });
+
+  ensureGraphAnimation();
+};
+
+/* 段落色不用 CSS 过渡：--section-color 与 JS 里的 sectionColorRgb 一起逐帧插值，
+   整张图的当前色连续流动，而不是在句界跳过去。 */
+const tweenSectionColor = target => {
+  if (colorMorphFrame !== null) cancelAnimationFrame(colorMorphFrame);
+  const current = visualEl.style.getPropertyValue('--section-color').trim() || SECTION_COLORS[0];
+  const to = [1, 3, 5].map(index => parseInt(target.slice(index, index + 2), 16));
+  const from = [1, 3, 5].map(index => parseInt(current.slice(index, index + 2), 16));
+  if (from.every((value, index) => value === to[index])) {
+    visualEl.style.setProperty('--section-color', target);
+    sectionColorRgb = to;
+    return;
+  }
+  const startedAt = performance.now();
+  const step = () => {
+    const progress = Math.min(1, (performance.now() - startedAt) / (SECTION_COLOR_MORPH_S * 1000));
+    const eased = progress * progress * (3 - 2 * progress);
+    sectionColorRgb = from.map((value, index) => Math.round(value + (to[index] - value) * eased));
+    visualEl.style.setProperty('--section-color', rgbToHex(sectionColorRgb));
+    colorMorphFrame = progress < 1 ? requestAnimationFrame(step) : null;
+  };
+  colorMorphFrame = requestAnimationFrame(step);
+};
+
+/* 每个收起的节点都要有一个在场的宿主，否则它会掉到画面中央游荡 */
+const assignHosts = () => {
+  const presentNodes = graphMotion.nodes.filter(node => node.present);
+  graphMotion.nodes.forEach(node => {
+    if (node.present) { node.host = null; return; }
+    if (node.host && node.host.present) return;
+    let best = presentNodes[0] || null;
+    let bestDistance = Infinity;
+    presentNodes.forEach(candidate => {
+      const distance = Math.hypot(candidate.home.x - node.home.x, candidate.home.y - node.home.y);
+      if (distance < bestDistance) { bestDistance = distance; best = candidate; }
+    });
+    node.host = best;
+  });
+};
+
+/* 换句 = 一次重组：不重建、不清空，只调存在度、藏身关系、环位微扰与颜色目标。
+   morphSeconds = 这次重组能占用的时长（“上一个音 → 本句首音”的间隔，已钳制）；
+   ringShift = 本次换句的环形相位 / 半径微扰，让所有点都有跨度。 */
+const applyPhraseVisual = (section, morphSeconds, ringShift) => {
+  ensurePhraseGraph();
+  const presentNotes = new Set();
+  const sectionEdgeCounts = new Map();
+  NOTE_CHAINS[section].transitions.forEach((targets, from) => {
+    presentNotes.add(from);
+    targets.forEach(to => {
+      presentNotes.add(to);
+      const key = from + '|' + to;
+      sectionEdgeCounts.set(key, (sectionEdgeCounts.get(key) || 0) + 1);
+    });
+  });
+  tweenSectionColor(SECTION_COLORS[section]);
+  /* 先微扰环的相位 / 半径并重算所有“家”位置：这样连“本来就是乐句点”的那些点也会移动，
+     整体都有跨度（用户反馈：否则只有非激活点在动，观感不好）。
+     layoutGraph 同时重算连线弹簧的静止长度，所以新环位仍是弹簧网的平衡位置。 */
+  if (ringShift) {
+    graphMotion.ringPhase = ringShift.phase;
+    graphMotion.ringScale = ringShift.scale;
+    layoutGraph();
+  }
+  const woke = new Set();
+  const slept = new Set();
+  graphMotion.nodes.forEach(node => {
+    const present = presentNotes.has(node.note);
+    const wasPresent = node.present;
+    if (present) {
+      /* 时长 = 本段结构变化时长 × WAKE_FLIGHT_SCALE × 这个音高自己的速度倍率：
+         各点速度不同，而且允许延伸到首音之后（不受“必须提前到位”的限制）。
+         刚变成乐句点 → 从宿主背后弹出（easeOutBack，带单次过冲）；
+         本来就是乐句点 → 平滑滑到新的环位（easeInOutCubic，无过冲）。 */
+      if (!wasPresent) woke.add(node.note);
+      node.morphDuration = Math.max(WAKE_FLIGHT_MIN_S,
+        Math.min(morphSeconds * WAKE_FLIGHT_SCALE * node.speedFactor, WAKE_FLIGHT_MAX_S));
+      node.flight = {
+        fromX: node.x,
+        fromY: node.y,
+        startedAt: performance.now(),
+        duration: node.morphDuration * 1000,
+        mode: wasPresent ? 'glide' : 'pop',
+      };
+      node.vx = 0;
+      node.vy = 0;
+    } else if (wasPresent) {
+      /* 变回收起点：滑到宿主背后被挡住（不是原地消失）。收起的点也用自己的速度倍率，
+         连线的反向生长要用同一个值才能和它同步退出。 */
+      slept.add(node.note);
+      node.morphDuration = Math.max(WAKE_FLIGHT_MIN_S,
+        Math.min(morphSeconds * WAKE_FLIGHT_SCALE * node.speedFactor, WAKE_FLIGHT_MAX_S));
+      node.flight = {
+        fromX: node.x,
+        fromY: node.y,
+        startedAt: performance.now(),
+        duration: node.morphDuration * 1000,
+        mode: 'retreat',
+      };
+      node.vx = 0;
+      node.vy = 0;
+    }
+    node.present = present;
+    node.targetPresence = present ? 1 : 0;
+    /* 变成乐句点：搬到在场层（压在所有藏身点之上）；变回非乐句点：搬到藏身层，之后一直贴着宿主 */
+    const layer = node.present ? graphMotion.nodeLayer : graphMotion.hiddenLayer;
+    if (node.circle.parentNode !== layer) {
+      layer.appendChild(node.circle);
+      layer.appendChild(node.label);
+    }
+  });
+  assignHosts();
+  graphMotion.edges.forEach((edge, key) => {
+    const count = sectionEdgeCounts.get(key) || 0;
+    /* 明度 = 这条转移在当前段落的马尔可夫链里的概率：
+       概率 = 该转移的出现次数 ÷ 该起点音的后继总数（walkNote 是等概率挑后继） */
+    const successors = NOTE_CHAINS[section].transitions.get(edge.from.note) || [];
+    edge.probability = count > 0 && successors.length ? count / successors.length : 0;
+    edge.opacity = count > 0 ? edgeOpacityFor(edge.probability) : 0;
+    const fromWoke = woke.has(edge.from.note), toWoke = woke.has(edge.to.note);
+    const fromSlept = slept.has(edge.from.note), toSlept = slept.has(edge.to.note);
+    /* 线与点同速：优先用“刚出现/刚收起”的那个点自己的时长；
+       两端都是新点时取两者平均。这样线长完的那一刻，点也正好到位。 */
+    let duration = morphSeconds;
+    if (fromWoke && toWoke) duration = (edge.from.morphDuration + edge.to.morphDuration) / 2;
+    else if (fromWoke) duration = edge.from.morphDuration;
+    else if (toWoke) duration = edge.to.morphDuration;
+    else if (fromSlept && toSlept) duration = (edge.from.morphDuration + edge.to.morphDuration) / 2;
+    else if (fromSlept) duration = edge.from.morphDuration;
+    else if (toSlept) duration = edge.to.morphDuration;
+    setEdgePresence(edge, count > 0, performance.now(), {
+      fromWoke, toWoke, fromSlept, toSlept,
+    }, duration);
+  });
+  /* 上一句末音若已不属于本段落，其节点正在退回藏身层，此时不再接力染色 */
+  if (previousVisualNote !== null && !presentNotes.has(previousVisualNote)) {
+    previousVisualNote = null;
+    previousVisualTime = null;
+  }
+};
+
+/* 换句时不再整体外扩，而是给在场节点一次**切向**冲量（方向按索引交替），
+   像有人从侧面抖了一下这个网络：位移沿连线传给邻居，落下去的过程就是“弹”。
+   与首音同刻发生。 */
+const kickNetwork = sectionChanged => {
+  const strength = sectionChanged ? SECTION_KICK : PHRASE_KICK;
+  graphMotion.nodes.forEach((node, index) => {
+    if (!node.present || node.flight) return;
+    const dx = node.x - graphViewport.centerX, dy = node.y - graphViewport.centerY;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    const direction = index % 2 === 0 ? 1 : -1;
+    node.vx += -dy / length * strength * direction;
+    node.vy += dx / length * strength * direction;
+  });
+};
+
+const swapVisualText = (title, meta) => {
+  clearTimeout(visualTextTimer);
+  visualTitleEl.style.opacity = '0';
+  visualMetaEl.style.opacity = '0';
+  visualTextTimer = setTimeout(() => {
+    visualTitleEl.textContent = title;
+    visualMetaEl.textContent = meta;
+    visualTitleEl.style.opacity = '';
+    visualMetaEl.style.opacity = '';
+  }, 180);
+};
+
+const showVisualNote = (phraseId, note, audioTime) => {
+  if (phraseId !== visualPhraseId) return;
+  const now = performance.now();
+  /* 音程（上一个音 → 这个音）同时决定三件事：彩色行进走多久、这个点从亮到暗用多久、
+     以及行进到位后箭头在什么时候亮。三者用同一个值，所以密度不同的乐句余韵也不同，
+     而它们之间永远同步（不是每个音固定 1.4 秒那种“都一样”的衰减）。 */
+  const rawInterval = (previousVisualTime === null || typeof audioTime !== 'number')
+    ? FIRST_NOTE_INTERVAL_S
+    : audioTime - previousVisualTime;
+  const interval = Number.isFinite(rawInterval)
+    ? Math.max(EDGE_SWEEP_MIN_S, Math.min(EDGE_SWEEP_MAX_S, rawInterval))
+    : FIRST_NOTE_INTERVAL_S;
+  const node = graphMotion.nodes.find(candidate => candidate.note === note);
+  if (node) {
+    node.flash = 1;
+    node.flashStartedAt = now;
+    node.flashDuration = interval * 1000;
+    /* 发声的节点被切向推一下：这个位移会沿连线传给邻居，网络因此一直在动 */
+    const dx = node.x - graphViewport.centerX, dy = node.y - graphViewport.centerY;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    node.vx += -dy / length * NOTE_KICK;
+    node.vy += dx / length * NOTE_KICK;
+  }
+  if (previousVisualNote !== null && previousVisualNote !== note) {
+    const edge = graphMotion.edges.get(previousVisualNote + '|' + note);
+    if (edge) startEdgePulse(edge, interval, now);
+  }
+  previousVisualNote = note;
+  previousVisualTime = typeof audioTime === 'number' ? audioTime : null;
+};
+
+/* ---------- ⑤ 引擎：activate(seed) → { deactivate, schedule, end } ----------
+ * 对照 aisatsana：activate 加载素材并训练链，schedule 沿 Transport 安排乐句 */
+let engine = null;
+let currentSeed = null;
+let lastScheduledNoteTime = null;   // 上一个乐句最后一个音的发声时刻，用来算这次重组能占用多长
+
+const activateEngine = async seed => {
+  const rng = makeRng(seed);
+  const textureRng = makeRng((seed ^ 0x9e3779b9) >>> 0);
+  /* 视觉专用的随机流：换句时的环形微扰用它，绝不动钢琴的 rng，
+     否则同一个种子的音符序列会因为视觉改动而变化（0.2 的 texture 就踩过这个坑）。 */
+  const visualRng = makeRng((seed ^ 0x85ebca6b) >>> 0);
+  const chain = buildSectionChain(rng);
+  const [piano, moodistTextures] = await Promise.all([
+    createPiano(Tone.Destination),
+    createMoodistTextures(Tone.Destination, textureRng),
+  ]);
+
+  let currentSection = 0;
+  let lastSection = 0;
+  let phraseCount = 0;
+  let densityMemory = 1;
+
+  const PLAYBACK_VARIANTS = [
+    { name: '完整', keep: 1, velocity: 1, late: 0, tail: 0.72, chordLimit: 2 },
+    { name: '骨架', keep: 0.52, velocity: 0.9, late: 0, tail: 0.5, chordLimit: 1 },
+    { name: '回声', keep: 0.38, velocity: 0.72, late: 0.6, tail: 0.38, chordLimit: 1 },
+    { name: '迟到回应', keep: 0.62, velocity: 0.82, late: 2.4, tail: 0.46, chordLimit: 1 },
+  ];
+
+  const chooseVariant = section => {
+    const weightsBySection = [
+      [0.18, 0.36, 0.34, 0.12],  // A 安静：更多骨架与回声
+      [0.42, 0.26, 0.14, 0.18],  // B 主题：主题可以完整，但不总是完整
+      [0.24, 0.32, 0.1, 0.34],   // C 发展：前冲后留呼吸
+      [0.12, 0.26, 0.52, 0.1],   // D 结尾：更像残影
+    ][section];
+    let roll = rng() * weightsBySection.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < weightsBySection.length; i += 1) {
+      roll -= weightsBySection[i];
+      if (roll <= 0) return PLAYBACK_VARIANTS[i];
+    }
+    return PLAYBACK_VARIANTS[0];
+  };
+
+  const shouldKeepStep = (step, noteCount, variant, section) => {
+    const beatRole = step % 8 === 0 ? 0.34 : step % 4 === 0 ? 0.2 : 0;
+    const tailStart = PHRASE_LENGTH * (section === 2 ? 0.56 : 0.68);
+    const tailFade = step >= tailStart
+      ? Math.max(0.12, 1 - (step - tailStart) / (PHRASE_LENGTH - tailStart) * variant.tail)
+      : 1;
+    const chordPenalty = noteCount > variant.chordLimit ? 0.62 : 1;
+    const probability = Math.min(0.98, (variant.keep * densityMemory + beatRole) * tailFade * chordPenalty);
+    return rng() < probability;
+  };
+
+  const schedule = () => {
+    const showMatrix = () => {
+      let html = '<b>段落转移矩阵</b>（行=当前段落，列=下一段落概率）：<br>';
+      SECTION_NAMES.forEach((name, i) => {
+        const row = chain.transitions[i];
+        const total = row.reduce((a, b) => a + b, 0);
+        html += name + ': ' + row.map((c, j) => (c / total).toFixed(2)).join('  ') + '<br>';
+      });
+      matrixEl.innerHTML = html;
+    };
+    showMatrix();
+    moodistTextures.start(Tone.Transport.seconds + 0.05);
+
+    /* 演出：每次取一个乐句（段落层 + 句层两步随机），把音符安排在对应步。
+     * 提前 1 秒触发 + ±25ms 人性化抖动（原样照搬 aisatsana 手法） */
+    const playPhrase = time => {
+      const phraseTime = typeof time === 'number' ? time : Tone.now();
+      const { phraseIndex, section } = chain.next();
+      const variant = chooseVariant(section);
+      const comingDownFromDevelopment = lastSection === 2 && section !== 2;
+      const sectionChanged = phraseCount > 0 && section !== lastSection;
+      currentSection = section;
+      const phrase = PHRASES[phraseIndex];
+      const playedNotes = [];
+      const playedEvents = [];
+      const rawNoteCount = phrase.flat().length;
+      let noteState = null;
+
+      phrase.forEach((notes, step) => {
+        if (!notes.length || !shouldKeepStep(step, notes.length, variant, section)) return;
+        const limitedNotes = notes.slice(0, variant.chordLimit);
+        notes.forEach(({ n, v }) => {
+          if (!limitedNotes.some(note => note.n === n)) return;
+          const playedNote = noteState === null ? n : walkNote(noteState, section, rng, n);
+          noteState = playedNote;
+          const waitTime = step * STEP_DURATION_S;
+          const tailStart = PHRASE_LENGTH * 0.68;
+          const tailScale = step >= tailStart
+            ? Math.max(0.45, 1 - (step - tailStart) / (PHRASE_LENGTH - tailStart) * 0.45)
+            : 1;
+          const transitionBreath = sectionChanged && step < 4 ? 0.68 : 1;
+          const velocity = (0.62 + v * 0.28) * variant.velocity * tailScale * transitionBreath;
+          const audioTime = phraseTime + waitTime + 1 + variant.late + rng() * 0.05 - 0.025;
+          /* ★ 力度上移补偿：原版 aisatsana 不传力度（满响度），
+           * 现在再叠加演奏版本、句尾衰减和转场呼吸：留白来自说话方式，而不是插入空段。 */
+          piano.triggerAttack(
+            playedNote,
+            audioTime,   // 对照源码：+1 秒预延迟 + 抖动
+            velocity
+          );
+          playedNotes.push(playedNote);
+          playedEvents.push({ step, note: playedNote, audioTime });
+        });
+      });
+      if (section === 2) {
+        densityMemory = Math.max(0.58, densityMemory - 0.12);
+      } else if (comingDownFromDevelopment) {
+        densityMemory = 0.5;
+      } else {
+        densityMemory = Math.min(1, densityMemory + 0.08);
+      }
+      lastSection = section;
+      phraseCount += 1;
+      const statusHtml =
+        '▶ 播放中 · 段落 <b>' + SECTION_NAMES[currentSection] +
+        '</b> · 乐句 <b>' + String.fromCharCode(65 + phraseIndex) +
+        '</b> · 演奏 <b>' + variant.name +
+        '</b> · 音符 ' + playedNotes.length + '/' + rawNoteCount +
+        ' · 种子 ' + currentSeed;
+      const logLine = playedNotes.length + '/' + rawNoteCount + ' ← ' + (playedNotes.join(' ') || '余响');
+      const visualStartTime = playedEvents.length
+        ? Math.min(...playedEvents.map(event => event.audioTime)) - 0.01
+        : phraseTime + 1 + variant.late;
+      /* 重组占用的时长 = “上一个乐句的最后一个音 → 本句首音”的实际间隔（已钳制）。
+         重组就在这段间隔里发生（连线的生长/反向生长都用它当时长），于是全部在首音之前完成，
+         不会出现“一条还在长、另一条已经开始”。首音之前没有上一个音时用兜底值。 */
+      const firstNoteTime = visualStartTime + 0.01;
+      const noteGap = lastScheduledNoteTime === null ? MORPH_MAX_S : firstNoteTime - lastScheduledNoteTime;
+      const morphSeconds = Math.max(MORPH_MIN_S, Math.min(MORPH_MAX_S, noteGap));
+      lastScheduledNoteTime = playedEvents.length
+        ? Math.max(...playedEvents.map(event => event.audioTime))
+        : lastScheduledNoteTime;
+      let phraseVisualId = null;
+      /* 重组从“首音前 morphSeconds”开始，正好在首音那一刻收尾。
+         环形相位/半径的微扰用**独立随机源**，不消耗钢琴与 texture 的那条随机流，
+         所以同一个种子产生的音符序列不会因为视觉而改变（见 AGENTS.md 的同类教训）。
+         用 Tone.now() 兜底，保证首句的目标时刻落在过去时也立刻发生。 */
+      const ringShift = {
+        phase: (visualRng() - 0.5) * RING_SHIFT_PHASE,
+        scale: RING_SHIFT_SCALE_MIN + visualRng() * (RING_SHIFT_SCALE_MAX - RING_SHIFT_SCALE_MIN),
+      };
+      Tone.Draw.schedule(() => {
+        applyPhraseVisual(section, morphSeconds, ringShift);
+      }, Math.max(Tone.now(), firstNoteTime - morphSeconds));
+      Tone.Draw.schedule(() => {
+        visualPhraseId += 1;
+        phraseVisualId = visualPhraseId;
+        setStatus(statusHtml);
+        log(logLine, SECTION_COLORS[section]);
+        swapVisualText(
+          SECTION_NAMES[section] + ' · 乐句 ' + String.fromCharCode(65 + phraseIndex),
+          variant.name + ' · ' + playedEvents.length + '/' + rawNoteCount
+        );
+        kickNetwork(sectionChanged);   // 与首音同刻：从侧面抖一下这个网络
+      }, visualStartTime);
+      playedEvents.forEach(event => {
+        Tone.Draw.schedule(() => showVisualNote(phraseVisualId, event.note, event.audioTime), event.audioTime);
+      });
+      console.info('[' + SECTION_NAMES[currentSection] + '] 乐句 ' + String.fromCharCode(65 + phraseIndex) +
+          ' · ' + variant.name + ' · ' + playedNotes.length + '/' + rawNoteCount +
+          ' ← ' + (playedNotes.join(' ') || '余响'));
+    };
+
+    Tone.Transport.scheduleRepeat(playPhrase, PHRASE_DURATION_S, 0);  // 对照源码 scheduleRepeat
+  };
+
+  const end = () => {
+    moodistTextures.stop(Tone.now());
+    Tone.Transport.cancel();
+    Tone.Transport.stop();
+    Tone.Draw.cancel(0);
+    /* 停止时只收回“当前状态”，图本身保留 —— 下次播放接着同一张图继续变形 */
+    graphMotion.nodes.forEach(node => { node.flash = 0; });
+    graphMotion.edges.forEach(edge => {
+      edge.pulse.active = false;
+      edge.pulse.recolored = false;
+      edge.path.classList.remove('active');
+      edge.pulsePath.style.opacity = '0';
+    });
+    previousVisualNote = null;
+    previousVisualTime = null;
+    piano.releaseAll(0);
+  };
+
+  const deactivate = () => {
+    end();
+    piano.dispose();
+    moodistTextures.dispose();
+  };
+
+  return { deactivate, schedule, end };
+};
+
+/* ---------- ⑥ 控制器 ---------- */
+const transportControls = $('transportControls');
+
+const playCurrent = async () => {
+  transportControls.setBusy(true);
+  await Tone.start();
+  try {
+    if (!engine) {
+      const text = transportControls.seedValue;
+      currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      setStatus('正在构建引擎（种子 ' + currentSeed + '）… 首次播放需下载钢琴与背景 texture 素材，请耐心');
+      engine = await activateEngine(currentSeed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    transportControls.setPlaying(true);
+    setStatus('▶ 播放中 · 种子 ' + currentSeed);
+  } catch (err) {
+    console.error(err);
+    transportControls.setPlaying(false);
+    setStatus('⚠ 播放失败：' + err.message);
+  } finally {
+    transportControls.setBusy(false);
+  }
+};
+
+transportControls.addEventListener('exercise-play', playCurrent);
+
+transportControls.addEventListener('exercise-stop', () => {
+  if (!engine) return;
+  engine.end();
+  transportControls.setPlaying(false);
+  setStatus('■ 已停止');
+});
+
+transportControls.addEventListener('exercise-regenerate', () => {
+  transportControls.setBusy(true);
+  if (engine) {
+    engine.deactivate();
+    engine = null;
+  }
+  transportControls.clearSeed();
+  transportControls.setPlaying(false);
+  transportControls.setBusy(false);
+  playCurrent();
+});
+
+/* 统一激活接口（AGENTS.md 约定） */
+window.exercise = {
+  activate: activateEngine,
+};
+</script>
+</body>
+</html>
