@@ -115,7 +115,7 @@
 
   <div class="hud controls-hud">
     <exercise-controls id="transportControls"></exercise-controls>
-    <div class="status" id="status">点击播放开始。日志会显示每次乐句转换（马尔可夫链的"行走"）。</div>
+    <div class="status" id="status">点击播放开始。日志会显示每次乐句转换（马尔可夫链的"行走"）。按 <b>f</b> 全屏。</div>
   </div>
 
   <details class="hud info-hud">
@@ -144,6 +144,7 @@
       换句时不是整体外扩，而是给在场节点一次<b>切向</b>抖动，位移<b>沿连线传给邻居</b>：
       连线是铰链，弹因此是传开的。力度分两级：<b>换句/段落切换</b>抖得明显，
       单个<b>音符发声</b>只是很轻地推一下。段落色逐帧插值，不在句界跳变。<br>
+      <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>f</code> 全屏、再按一次退出。<br>
       <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
       音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
       <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
@@ -573,24 +574,41 @@ visualEl.addEventListener('click', () => {
   const hidden = document.body.classList.toggle('hud-hidden');
   hudElements.forEach(element => element.setAttribute('aria-hidden', String(hidden)));
 });
-let graphViewport = {
-  width: Math.max(320, window.innerWidth),
-  height: Math.max(320, window.innerHeight),
-  centerX: Math.max(320, window.innerWidth) / 2,
-  centerY: Math.max(320, window.innerHeight) / 2,
+/* ---------- 视口：视觉内部用“设计单位”，不是 CSS 像素 ----------
+ * 用户反馈：窄屏很好看，但宽屏下“四周的空白太大”——原因是环的半径写了两条绝对上限
+ * （`min(380, …)` / `min(330, …)`）：窗口一旦超过约 1055×1031，环就再也不长了，
+ * 于是 2560 宽的窗口里只有 760×660 的一小圈，四周全是空的。
+ * 做法不是把常量一个个乘系数（那会让环变大、而点和字还是 17px / 12px，比例割裂），
+ * 而是把内部坐标整体定义成**设计单位**：viewBox 写设计尺寸、由浏览器把整张 SVG 等比放大，
+ * 于是环、节点、音名、箭头、连线的粗细、弹的幅度**全都按同一比例**缩放。
+ *   设计尺寸 = 窗口尺寸 ÷ scale，scale = sqrt(窗口面积 ÷ 参考面积)（下限 1、上限 GRAPH_SCALE_MAX）。
+ * 下限 1 意味着**参考尺寸以内的窗口完全按原样渲染**（所以窄屏与笔记本屏的观感一点没变），
+ * 只有更大的窗口才被整体放大；环占视口的比例因此恒定（见 layoutGraph 的 RING_FILL_*）。 */
+const GRAPH_REF_WIDTH = 1100;      // 参考窗口（scale = 1 的分界）：1100×700 及以下完全不变
+const GRAPH_REF_HEIGHT = 700;
+const GRAPH_SCALE_MAX = 2.5;       // 4K 仍按真实比例（≈2.2），更大的屏在这里止损
+const measureGraphViewport = () => {
+  const cssWidth = Math.max(320, window.innerWidth);
+  const cssHeight = Math.max(320, window.innerHeight);
+  const scale = Math.min(GRAPH_SCALE_MAX, Math.max(1,
+    Math.sqrt(cssWidth * cssHeight / (GRAPH_REF_WIDTH * GRAPH_REF_HEIGHT))));
+  const width = cssWidth / scale;
+  const height = cssHeight / scale;
+  return { width, height, centerX: width / 2, centerY: height / 2, scale };
 };
+let graphViewport = measureGraphViewport();
 const updateGraphViewBox = (rescaleNodes = false) => {
   const previous = graphViewport;
-  const width = Math.max(320, window.innerWidth);
-  const height = Math.max(320, window.innerHeight);
-  graphViewport = { width, height, centerX: width / 2, centerY: height / 2 };
-  markovMapEl.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  graphViewport = measureGraphViewport();
+  markovMapEl.setAttribute('viewBox', `0 0 ${graphViewport.width} ${graphViewport.height}`);
   if (rescaleNodes) {
+    /* 视口变了：先把每个点按设计尺寸的变化等比挪一下（视觉上是连续的），
+       再由 layoutGraph 重算环位，剩下的交给弹簧 */
     graphMotion.nodes.forEach(node => {
-      node.x = graphViewport.centerX + (node.x - previous.centerX) * width / previous.width;
-      node.y = graphViewport.centerY + (node.y - previous.centerY) * height / previous.height;
+      node.x = graphViewport.centerX + (node.x - previous.centerX) * graphViewport.width / previous.width;
+      node.y = graphViewport.centerY + (node.y - previous.centerY) * graphViewport.height / previous.height;
     });
-    layoutGraph();   // 环上的“家”按新视口重算，弹簧会把节点带过去
+    layoutGraph();
   }
 };
 const logLines = [];
@@ -643,6 +661,36 @@ let graphMotion = {
 let graphAnimationFrame = null;
 updateGraphViewBox();
 window.addEventListener('resize', () => updateGraphViewBox(true), { passive: true });
+
+/* ---------- 键盘：f 键全屏 / 退出全屏 ----------
+ * 浏览器只允许“用户手势”进入全屏，键盘事件算手势，所以不需要额外按钮。
+ * 全屏的是整个文档（HUD 与控制还在），想只看画面就再点一下画面隐藏界面。 */
+const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+const toggleFullscreen = () => {
+  if (fullscreenElement()) {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) exit.call(document);
+    return;
+  }
+  const root = document.documentElement;
+  const request = root.requestFullscreen || root.webkitRequestFullscreen;
+  if (!request) return;
+  const pending = request.call(root);       // 可能返回 Promise（被拒绝时别在控制台留未捕获错误）
+  if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+};
+window.addEventListener('keydown', event => {
+  if (event.key !== 'f' && event.key !== 'F') return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const target = event.target;
+  /* 在种子输入框里打字不要触发全屏 */
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+  event.preventDefault();
+  toggleFullscreen();
+});
+/* 进/出全屏会改变视口：浏览器不一定派发 resize，所以这里单独重算一次 */
+const onFullscreenChange = () => updateGraphViewBox(true);
+document.addEventListener('fullscreenchange', onFullscreenChange);
+document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
 const dynamicEdgePath = (a, b) => {
   if (a.note === b.note) {
@@ -1094,10 +1142,17 @@ const paintNode = node => {
 
 /* 环上的“家”位置：由视口、音高索引、以及本次换句的相位/半径微扰决定。
    相位与半径每次换句都重新取值，所以**所有**点在换句时都会移动一段距离，
-   不再只有非激活点在动。 */
+   不再只有非激活点在动。
+   ★ 半径只按视口的**比例**算，不再设绝对上限：旧版 `min(380, W*0.36)` / `min(330, H*0.32)`
+   在宽屏上会让环停在 760×660、四周全是空白（用户 2026-09 反馈）。比例沿用窄屏本来合适的
+   0.36 / 0.32（= 横向占 72%、纵向占 64%），于是任何窗口下留白都一样多。
+   视口是设计单位（见 measureGraphViewport），所以大屏上环、点、字、箭头一起放大。 */
+const RING_FILL_X = 0.36;      // 环的半宽 ÷ 视口半宽
+const RING_FILL_Y = 0.32;      // 环的半高 ÷ 视口半高
+const RING_MIN_RADIUS = 80;    // 极小窗口的止损（免得 14 个点挤成一团）
 const layoutGraph = () => {
-  const radiusX = Math.min(380, graphViewport.width * 0.36) * graphMotion.ringScale;
-  const radiusY = Math.min(330, graphViewport.height * 0.32) * graphMotion.ringScale;
+  const radiusX = Math.max(RING_MIN_RADIUS, graphViewport.width * RING_FILL_X) * graphMotion.ringScale;
+  const radiusY = Math.max(RING_MIN_RADIUS, graphViewport.height * RING_FILL_Y) * graphMotion.ringScale;
   graphMotion.nodes.forEach((node, index) => {
     const angle = index / Math.max(1, graphMotion.nodes.length) * Math.PI * 2 - Math.PI / 2 + graphMotion.ringPhase;
     const rx = radiusX * (0.88 + Math.sin(index * 2.17) * 0.12);
