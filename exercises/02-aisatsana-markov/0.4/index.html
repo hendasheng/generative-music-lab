@@ -119,11 +119,16 @@
   .key { display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; vertical-align:1px; }
   .key.source { background:var(--graph-node-base); }
   .key.played { background:var(--section-color); }
-  /* 环境层"涟漪"（只在 birds 出现时来一发）：压在场节点**之上**（用户要求"上"），
+  /* 环境层"涟漪"（birds 出现时的那一发）：压在场节点**之上**（用户要求"上"），
      所以它在 SVG 里是最后一层。颜色由 JS 逐帧写内联（跟随当前段落色），这里只写几何默认值：
      不填充、不响应指针。 */
   .burst-layer { pointer-events:none; }
-  .burst-ring, .burst-spoke { fill:none; }
+  /* 三样都不填充：涟漪圈（circle）、游走的线（polyline 拖尾）、飞散的短痕（line）。
+     ★ 线用 polyline 而不是 path：`points` 每帧整串重写，比拼 `d` 简单，也没有子路径闭合的坑；
+       折角用 round 连接 —— 采样点虽密，但 miter 在急转的那几帧会扎出尖刺（默认 miter 限值足够大，
+       不会自动切 bevel），round 最稳。 */
+  .burst-ring, .burst-orb, .burst-spark { fill:none; }
+  .burst-orb { stroke-linejoin:round; }
   .log { position:absolute; z-index:1; inset:110px 5vw 54px; display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; color:var(--log-fg); font:13px/1.775 Consolas,monospace; text-align:left; opacity:.8; pointer-events:none; }
   .log-content { flex:0 0 auto; width:100%; white-space:pre-wrap; will-change:transform; }
   .log-line { min-height:1.775em; animation:logLineIn .55s cubic-bezier(.22,1,.36,1) both; }
@@ -231,15 +236,16 @@
       换句时不是整体外扩，而是给在场节点一次<b>切向</b>抖动，位移<b>沿连线传给邻居</b>：
       连线是铰链，弹因此是传开的。力度分两级：<b>换句/段落切换</b>抖得明显，
       单个<b>音符发声</b>只是很轻地推一下。段落色逐帧插值，不在句界跳变。<br>
-      <b>环境层涟漪：</b><b>birds 环境声响着的期间</b>，画面上会<b>时不时炸开一发涟漪</b>
-      （3 圈同心环 + 6 根短放射线，减速外扩、描边细到 0 才消失）；
-      一段鸟叫里来好几发（开场一发，之后约每 4–6 秒一发，跟着这一层的淡入快慢走）。
-      它<b>只跟 birds 有关</b>：<b>三圈各取一个色相、跟随当前段落色</b>（换段/切主题整组一起变），
+      <b>环境层涟漪：</b><b>birds 环境声响着的期间</b>，画面上会<b>时不时炸开一发</b> ——
+      主体不是圆，而是一群<b>一边自转、一边往外游走的线</b>：每根线绕自己的中心转，中心同时在慢慢漂走，
+      画出来是<b>一小段扫过的弧</b>（只留最近约 0.13 秒的轨迹）；<b>每根线的半径、转速、方向、寿命、
+      颜色都不一样</b>。另有<b>两圈各自大小的涟漪</b>（减速外扩）和几道向外飞散并变细的短痕。
+      出现是半径/长度从 0 长出来、消失是描边细到 0，全程不用透明度。
+      它<b>只跟 birds 有关</b>，<b>颜色全部由当前段落色转出来</b>（换段/切主题整组一起变），
       <b>大小与击发节奏都和这一层的声音</b>挂钩。<br>
-      <b>调试图方便：</b>在画面上<b>任意位置点一下，就在点击处炸一发</b> ——
+      <b>调试图方便：</b>在画面上<b>任意位置点一下，就在点击处来一发</b> ——
       参数取的就是 birds 那一份（所以看到的就是真鸟叫时会看到的那一发），不用等鸟叫；
-      点出来的这一发<b>固定不动用随机流</b>（每次点都一样，方便改一个常量再点一次做对比），
-      所以点与不点都不影响真鸟叫那几发。见 <code>DEBUG_CLICK_BURST</code>。<br>
+      每点一下形态都不同（"第 N 下"可复现），而且不动用鸟叫那条随机流。见 <code>DEBUG_CLICK_BURST</code>。<br>
       形式借鉴自 okazz 的
       <code>240809a</code>（<a href="https://openprocessing.org/sketch/2326097" target="_blank" rel="noreferrer">openprocessing</a>，CC BY-NC-SA），
       只借思路、未使用其代码。<br>
@@ -1612,44 +1618,87 @@ const easeInCubic = progress => progress * progress * progress;
 
 /* ============ 环境层“涟漪”（只在 birds 出现时来一发） ============
  * 灵感来自 okazz 的 openprocessing sketch「240809a」（https://openprocessing.org/sketch/2326097，
- * CC BY-NC-SA）：从一个点炸开、细描边、向外**减速**扩散的几何形状（涟漪 + 几根放射线 + 会转的小几何）。
- * ★ **没有复制它的代码，也不是照抄它的形式**（用户 2026-09："不要复制，只借鉴形式，甚至只是拿来举例子，
- *   说明想要这种涟漪的感觉…每一发不需要那么多，主要还是涟漪的感觉，不要照抄"）。
- *   这里只取三件事：① 从一点向外扩散的**同心涟漪**；② **减速**外扩（快出、慢停）；③ 描边随生命**变细**。
- *   元素数量砍到 3 圈 + 6 根放射线（它的原版一发是 20+50+2+10 = 82 个对象），颜色不另开一套、
- *   而是**跟随当前段落色**，随机量改成种子派生的独立流。许可上也刻意保持距离：只借鉴思路、不搬代码，
- *   这样不必把整个仓库卷进 CC BY-NC-SA 的传染范围（署名与链接写在 §14.6 与练习 README 里）。
+ * CC BY-NC-SA）。**没有复制它的代码**（用户 2026-09："不要复制，只借鉴形式，甚至只是拿来举例子，
+ * 说明想要这种涟漪的感觉"）。
+ *
+ * ★★ **第一版把参考里最好的那部分当成噪声砍掉了**（用户 2026-09 第二轮："太大了，形态也不好，
+ *    完全没抓住参考中好的地方，需要那种旋转游走的线，现在的特别呆，每一个都一摸一样"）。复盘参考：
+ *    它一发 82 个对象 = **20 根公转中游走的线**（Orb）+ 50 颗飞散的星点（Sparkle）+ **只有 2 圈**涟漪
+ *    （Ripple）+ 10 个旋转小几何（Shapes）。也就是说**主体是那些线，涟漪圈只是个锚**；
+ *    而第一版留了 3 圈**同心**圆 + 6 根 60° 等分的放射线（后者还是我自己加的，参考里根本没有），
+ *    把主角当噪声删了 —— 于是既"呆"（同心圆没有旋转、没有游走，几何完全对称）又"一摸一样"
+ *    （每发只有色相微差，发内每个元素形状相同）。现在按参考的**动作**重来：
+ *      ① **旋转 + 游走的线**（主角）：每根线绕**自己的中心**转，中心同时在**慢慢游走**，
+ *         画成只保留最近几个采样点的**拖尾折线** —— 所以它是一小段扫过的弧，不是一个圆；
+ *      ② 向外扩散的**涟漪圈**（锚）：数量照参考只留 2 圈，而且两圈**各自随机大小**
+ *         （参考的 Ripple 是 `maxD = random(0.1, 0.5)`），不是同心等比缩放；
+ *      ③ 向外飞散并细掉的**短痕**（Sparkle）。
+ *    ★ **每一根线的参数都不同**（参考逐个 `random()`：自转半径、角速度大小与方向、游走方向与速度、
+ *      寿命、描边、颜色）—— 这是"不呆、不一模一样"的关键，所以每条都从种子流各取一份。
+ *    ★ 参考的 Sparkle 是"飞出去并闪烁的点"（p5 里逐帧 50% 概率重画）；这里改成**外飞的短痕**：
+ *      本项目的规则是出现/消失都走几何（长度从 0 长出来、末段细到 0），比闪烁更合规矩。
+ *    ★ 参考的 Shapes（旋转的小方块/圆/叉）**先不加**，免得一发里东西太杂（用户说的是"旋转游走的**线**"）。
  *
  * 与现有规则的接口（和 §5 连线的状态机同一套）：
- *   · **出现 = 几何**：半径从 0 长出来（r=0 的圆本来就不可见）；**消失 = 描边细到 0 + 移除元素**，
- *     全程不碰 opacity（"透明度只用来表达明度这类静态量"）；
- *   · **规模与时长的依据是这一层的声音**（用户要求"大小和 birds 的声音关联"）：半径由该层的
- *     `targetGain` 决定（相对目前最响的那层 = `BURST_GAIN_REFERENCE`），扩张时长由该层的 `fade` 推出；
- *   · **位置**横向由该层的 `pan` 推出（birds `pan 0.3` → 落在偏右处），纵向每次不同但由种子决定；
+ *   · **出现 = 几何**（半径 / 长度从 0 长出来）；**消失 = 描边细到 0 + 移除元素**，全程不碰 opacity；
+ *   · **规模与时长的依据是这一层的声音**：整体尺度由该层 `targetGain`（相对 `BURST_GAIN_REFERENCE`）
+ *     决定，寿命由该层 `fade` 推出；
+ *   · **位置**横向由该层的 `pan` 推出（birds `pan 0.3` → 偏右），纵向每次不同但由种子决定；
  *   · **只读、不改图**：涟漪不参与节点/连线的力学，否则"同一段音乐画出同一张图"就破了；
- *   · **颜色是一套配色、不是单色**（用户 2026-09："要配色，不要单色"）：三圈各取一个色相偏移，
- *     中间那圈就是本段落色本身，外/内圈各偏 ±`BURST_RING_HUE_SHIFT`，放射线用段落色 ——
- *     所以既有层次与配色，又整体**跟随本段落色**（换段/切主题时整组一起变，见 updateBursts）。
- *   · **一段鸟叫里会来好几发**（用户 2026-09："不要只在开始的时候，在 birds 发声的过程时不时出现"）：
- *     开场立刻一发，之后按该层的节奏续发（间隔 = `fade × BURST_CADENCE_FADE_RATIO`，两头钳制，
- *     带一点由种子决定的抖动），直到这段声音结束；见 scheduleBurstsForTexture。 */
-const BURST_RING_COUNT = 3;           // 一发里几圈涟漪（"主要还是涟漪"，不要多）
-const BURST_SPOKE_COUNT = 6;          // 起爆瞬间的几根短放射线（只负责"炸开"那一下，很快消失）
-const BURST_RING_STAGGER_S = 0.16;    // 圈与圈的启动间隔：一圈圈推出去，而不是三圈同时放大
-const BURST_GROW_MIN_S = 0.9;         // 扩张时长（= 该层 fade × 0.5，两头钳制）
-const BURST_GROW_MAX_S = 2.6;
-const BURST_SPOKE_LIFE_RATIO = 0.42;  // 放射线只活到涟漪前 42%，之后画面只剩涟漪
-const BURST_RADIUS_MIN = 90;          // 设计单位：最安静的环境层
-const BURST_RADIUS_MAX = 260;         // 最响的环境层（= BURST_GAIN_REFERENCE 那一层的增益）
+ *   · **颜色是一套配色、不是单色**：每根线 / 每圈 / 每道痕各取一个色相偏移（在 ±`BURST_HUE_SPREAD` 内），
+ *     整发是一族颜色，而且全部从本段落色**算出来** → 换段/切主题整组跟着变（见 updateBursts）；
+ *   · **一段鸟叫里会来好几发**（开场立刻一发，之后按该层的节奏续发，见 onTextureStart）。
+ *
+ * ⚠️ **尺寸一律以"短边"为单位**：`unit = min(视口宽, 视口高)`，逐帧现算，参数存的是**比例**。
+ *   参考整篇都建立在 `minSide` 上；这样换视口 / 全屏时整发按同一比例缩放，不会有"圈跟着变、线没跟着变"
+ *   的割裂（与 §12"用设计单位整体缩放"是同一条经验，只是这里的单位取自视口短边）。 */
 const BURST_GAIN_REFERENCE = 0.3;     // 目前最响的一层（brown noise / wind in trees 的 targetGain）
-const BURST_RING_STROKE = 3.2;        // 最外那圈涟漪的起始描边（设计单位）
-const BURST_SPOKE_STROKE = 1.6;
-const BURST_RING_SHRINK = 0.21;       // 每内一圈的半径比例（第 i 圈 = R × (1 − i × 该值)）
+/* 一发里各有几个：比例照参考（线最多、星痕次之、涟漪最少）—— 参考是 20 / 50 / 2 / 10。 */
+const BURST_RING_COUNT = 2;           // 涟漪圈（整发的"锚"，参考里也只有 2 个）
+const BURST_ORB_COUNT = 12;           // ★ 主角：旋转 + 游走的线
+const BURST_SPARKLE_COUNT = 12;       // 向外飞散并细掉的短痕
+/* ---- 整体尺度：外圈半径（× 短边）按该层增益在 MIN..MAX 之间取值 ----
+   ★ 第一版这里是 90–260 **设计单位**（birds 实测 147 ≈ 视口高的 21%），用户反馈"太大了"，
+     所以改成"短边的比例"并把上限压到约一半：birds → 0.077 × 短边 ≈ 54（视口高的 7.7%）。 */
+const BURST_RING_RATIO_MIN = 0.045;
+const BURST_RING_RATIO_MAX = 0.140;
+const BURST_RING_SPREAD = 0.38;       // 第 i 圈的尺度 =（1 − i × 该值），再叠 ±15% 随机 → 两圈不是同心等比
+const BURST_RING_STAGGER_S = 0.16;    // 圈与圈的启动间隔：一圈圈推出去，不是同时放大
+const BURST_RING_STROKE_RATIO = 0.0034; // 起始描边（× 短边）→ 短边 703 时约 2.4，和图的连线同一量级
+const BURST_GROW_MIN_S = 0.9;         // 涟漪的扩张时长（= 该层 fade × 0.5，两头钳制）
+const BURST_GROW_MAX_S = 2.6;
+/* ---- 线（Orb）：绕自己的中心转，中心同时在游走 ----
+   参考是逐帧累加（`ang += angStep`、`x += xStep`），也就是**线性运动**，所以这里直接写解析式
+   （下面 updateBursts 用它算任意时刻的位置）：
+     centre(τ) = 爆点 + 游走方向 × 游走速度 × τ
+     radius(τ) = 自转半径 × min(1, τ / 展开时长)
+     ang(τ)    = 初始角 + 角速度 × τ
+   ★ 好处：①**与帧率无关**（参考按帧累加，120Hz 屏上同一条拖尾会短一半）；
+     ②不用保存逐帧状态，仍从 `startedAt` 一次算出来 —— 和这一版其它部分一样"同一个输入必然同一帧画面"。 */
+const BURST_ORB_TRAIL = 9;            // 拖尾保留几个采样点（参考 10）
+const BURST_ORB_TRAIL_STEP_S = 1 / 60;// 采样间隔 → 拖尾固定覆盖最近 8 × 1/60 ≈ 0.13 秒的轨迹
+const BURST_ORB_RADIUS_RATIO = 0.40;  // 自转半径（× 外圈半径）
+const BURST_ORB_GROW_S = 0.45;        // 自转半径从 0 涨到满用多久（参考约 27 帧 ≈ 0.45 秒）
+const BURST_ORB_ANG_SPEED_MIN = 6;    // 角速度（弧度/秒。参考 0.10–0.30 弧度/帧 × 60fps），方向随机
+const BURST_ORB_ANG_SPEED_MAX = 18;
+const BURST_ORB_DRIFT_RATIO = 1.6;    // 游走速度上限（× 外圈半径 / 秒）—— "游走"就是这一项，要给足
+                                      //   ★ 参考实测的漂移约 0.15 × 短边/秒（xStep 的均值），
+                                      //     这里 ringR(0.077) × 1.6 × (0.15–1) → 均值约 0.07 × 短边/秒；
+                                      //     一根线的总行程实测均值约 105px、最长约 260px（视口高 703）——
+                                      //     一眼看得出"散开"，但不铺满屏幕（第一版用户说"太大了"）。
+const BURST_ORB_LIFE_RATIO = [0.5, 1.2]; // 寿命（× 该层的扩张时长），逐个取 → 有的先走、有的后走
+const BURST_ORB_STROKE_RATIO = 0.0022;   // 起始描边（× 短边）→ 短边 703 时约 1.5，比图的连线略粗一点
+/* ---- 短痕（Sparkle）：朝一个随机方向飞出去、把尾巴拉长，同时细到 0 ---- */
+const BURST_SPARKLE_DIST_RATIO = [0.6, 2.6];  // 飞多远（× 外圈半径）→ 比涟漪圈远，和参考的比例一致
+const BURST_SPARKLE_LEN_RATIO = 0.5;          // 短痕最长多少（× 外圈半径）
+const BURST_SPARKLE_LIFE_RATIO = [0.4, 1.3];  // 寿命（× 该层的扩张时长）
+const BURST_SPARKLE_GROW_RATIO = 0.25;        // 长度在生命的前 25% 内从 0 长到满
+const BURST_SPARKLE_STROKE_RATIO = 0.0016;
 const BURST_PAN_SPREAD = 0.35;        // 声像 → 横向位置：pan 0.3 → 视口宽的 10.5%
 const BURST_Y_JITTER = 0.18;          // 每次的纵向位置抖动（视口高比例，来自视觉随机流）
-/* 配色：三圈的色相偏移（度）。中间那圈 = 本段落色本身，所以整组永远"跟着段落走"；
-   外圈偏暖、内圈偏冷，三圈之间有层次但不散架。放射线不偏，起爆那一下仍然是本段落色。 */
-const BURST_RING_HUE_SHIFT = [34, 0, -34];
+/* 配色：每根线 / 每圈 / 每道痕各取一个色相偏移（在 ±该值内），所以"一发里有好几种颜色"，
+   而且全部从本段落色算出来（换段/切主题时整组跟着走，不是另配一组固定色值）。 */
+const BURST_HUE_SPREAD = 42;
 const BURST_HUE_JITTER = 18;          // 每一发整体再偏一点（种子流），让连着几发不重样（±18°）
 /* 续发的节奏：间隔取"这一层的淡入时长 × RATIO"（它呼吸一次，画面就来一发），两头钳制，
    再叠一点由种子决定的抖动（避免听起来/看起来像节拍器）。 */
@@ -1666,11 +1715,14 @@ const BURST_IN_WINDOW_RATIO = 0.5;
      否则调好的东西和真鸟叫看到的不一样，这个入口就没有意义了（调试必须与被调试对象同参）。
    ★ 它**不是**新的声音映射：`onTextureStart` 那条"只认 birds"的规则一个字没动，
      这只是调试注入口（页面说明里也写明）。
-   ★ 点击起爆**不消耗 `burstRng`**（色相偏移取 0、放射角取 0）：一来每次点都一样，
-     方便"改一个常量 → 点一次 → 对比"；二来点与不点都不影响真鸟叫那几发的随机序列 ——
-     调试行为不该改变被调试对象（和"视觉侧不消耗 textureRng"是同一条原则，只是输入换成了鼠标）。
+   ★ 每点一下都换一条**独立的随机流**（由点击序号派生，见下面那个 handler）：
+     ① 于是每一下的形态都不同（用户 2026-09："每一个都一摸一样" —— 第一版为了"方便对比"把调试发
+        做成完全固定，方向错了：**形态本身的丰富度就是被调的对象**，固定下来就没法调它了）；
+     ② 但"第 N 下"永远可复现 —— 要对比某一版改动时，点同样几下、看第同样的那一下；
+     ③ 不消耗 `burstRng`，所以点与不点都不影响真鸟叫那几发的随机序列（调试行为不改变被调试对象）。
    要关掉就把下面这个开关写成 false。 */
 const DEBUG_CLICK_BURST = true;
+let debugBurstIndex = 0;   // 调试点击的序号（用来派生"这一下"的随机流；见 DEBUG_CLICK_BURST）
 
 const bursts = [];
 let burstLayer = null;
@@ -1717,89 +1769,144 @@ const ensureBurstLayer = () => {
   return burstLayer;
 };
 
-/* 起爆。texture = 那一层环境音的配置（只需要 targetGain / fade / pan 三个数）。
-   at = 可选的 { fx, fy } 视口比例（0–1）：给了就用它当爆点，也就是**调试点击那一发**（见 DEBUG_CLICK_BURST）；
-   不给就按这一层的 `pan` 与种子抖动算位置（真鸟叫走的就是这条路）。
-   ⚠️ 位置与半径都按**视口比例**存（fx/fy + 设计单位半径），逐帧再乘当前视口 —— 这样它在全屏切换、
-      窗口缩放时仍然待在同一个相对位置、按同一比例缩放（和 §12 的"设计单位"是一回事）。 */
-const spawnBurst = (texture, at) => {
+/* 起爆。texture = 那一层环境音的配置（需要 targetGain / fade / pan 三个数）。
+   at  = 可选的 { fx, fy } 视口比例（0–1）：给了就用它当爆点（调试点击，见 DEBUG_CLICK_BURST）。
+   rng = 随机流；默认是演出种子派生的 `burstRng`，调试点击传一条**按点击序号派生**的流。
+   ⚠️ 这里存的全是**比例**（× 短边 / × 外圈半径 / × 该层扩张时长），逐帧再乘当前短边 ——
+      所以全屏切换、窗口缩放时整发按同一比例缩放，不会出现"圈跟着变、线没跟着变"。 */
+const spawnBurst = (texture, at, rng = burstRng) => {
   const layer = ensureBurstLayer();
   ensureGraphAnimation();     // 视觉主循环必须活着（图还没建起来时也要能画这一发）
+  const shortSide = Math.min(graphViewport.width, graphViewport.height);
   const gain = Math.max(0, Math.min(1, (texture.targetGain || 0) / BURST_GAIN_REFERENCE));
   const grow = burstGrowSeconds(texture);
-  /* 点击起爆的位置就是点击处，而且**不动用随机流**（见 DEBUG_CLICK_BURST：每次点都一模一样，
-     也不影响真鸟叫那几发）——所以下面四处 `at ? … : burstRng()` 里的三元是有意写成这样的：
-     随机数只在"真鸟叫"那条路上被消耗。 */
+  /* 外圈半径（× 短边）：这一层越响，整发越大（用户要求"大小和 birds 的声音关联"） */
+  const ringR = BURST_RING_RATIO_MIN + (BURST_RING_RATIO_MAX - BURST_RING_RATIO_MIN) * gain;
   const fx = at ? at.fx : 0.5 + (texture.pan || 0) * BURST_PAN_SPREAD;
-  const fy = at ? at.fy : 0.5 + (burstRng() * 2 - 1) * BURST_Y_JITTER;
-  const hueBase = at ? 0 : (burstRng() * 2 - 1) * BURST_HUE_JITTER;   // 这一发整体的色相偏移
+  const fy = at ? at.fy : 0.5 + (rng() * 2 - 1) * BURST_Y_JITTER;
+  const hueBase = (rng() * 2 - 1) * BURST_HUE_JITTER;   // 这一发整体的色相偏移
+  /* 每个元素的色相各取一份 —— "一发里有好几种颜色"靠这个，而且都是从本段落色转出来的 */
+  const nextHue = () => hueBase + (rng() * 2 - 1) * BURST_HUE_SPREAD;
   const parts = [];
+
+  /* ① 涟漪圈（整发的锚）：两圈**各自随机大小与寿命** —— 参考的 Ripple 就是 `maxD = random(0.1, 0.5)`，
+        不是同心等比缩放（第一版做成等比缩放的三圈，正是"一摸一样"的来源之一）。 */
   for (let i = 0; i < BURST_RING_COUNT; i += 1) {
-    const ring = svgNode('circle', { class: 'burst-ring', cx: 0, cy: 0, r: 0 });
+    const el = svgNode('circle', { class: 'burst-ring', cx: 0, cy: 0, r: 0 });
     /* 起始描边与颜色在这里就写好：即使还没轮到它启动（r=0，本来就画不出来），
-       元素也是"完全指定"的状态，不会出现"某个属性还是 none"的半成品。
-       颜色 = 本段落色按色相偏移（中间那圈偏移 0 = 段落色本身）→ 三圈是一套配色。 */
-    const hueShift = hueBase + (BURST_RING_HUE_SHIFT[i] || 0);
-    ring.style.strokeWidth = String(BURST_RING_STROKE * (1 - i * BURST_RING_SHRINK));
-    ring.style.stroke = rgbToHex(shiftHue(sectionColorRgb, hueShift));
-    layer.appendChild(ring);
+       元素也是"完全指定"的状态，不会出现"某个属性还是 none"的半成品。 */
+    const strokeRatio = BURST_RING_STROKE_RATIO * (i === 0 ? 1 : 0.78);
+    const hueShift = hueBase + (i === 0 ? 20 : -20);
+    el.style.strokeWidth = (strokeRatio * shortSide).toFixed(2);
+    el.style.stroke = rgbToHex(shiftHue(sectionColorRgb, hueShift));
+    layer.appendChild(el);
     parts.push({
-      el: ring, shape: 'ring', t0: i * BURST_RING_STAGGER_S, life: grow,
-      radius: BURST_RADIUS_MIN + (BURST_RADIUS_MAX - BURST_RADIUS_MIN) * gain,
-      scale: 1 - i * BURST_RING_SHRINK,
-      stroke0: BURST_RING_STROKE * (1 - i * BURST_RING_SHRINK),
-      hueShift,
+      shape: 'ring', el, strokeRatio, hueShift,
+      t0: i * BURST_RING_STAGGER_S,
+      life: grow * (0.85 + 0.3 * rng()),
+      rRatio: ringR * (1 - i * BURST_RING_SPREAD) * (0.85 + 0.3 * rng()),
     });
   }
-  const spokeLife = grow * BURST_SPOKE_LIFE_RATIO;
-  const baseAngle = at ? 0 : burstRng() * Math.PI * 2;
-  /* 放射线：起爆那一下的颜色取"本段落色与第一圈之间"的中间色相 —— 这样它和两圈都不是同一个色，
-     整发凑起来就是一套配色（三圈 3 色 + 放射线 1 色），而不是单色。 */
-  const spokeHue = hueBase * 0.5 + (BURST_RING_HUE_SHIFT[0] || 0) * 0.5;
-  for (let i = 0; i < BURST_SPOKE_COUNT; i += 1) {
-    const spoke = svgNode('line', { class: 'burst-spoke', x1: 0, y1: 0, x2: 0, y2: 0 });
-    spoke.style.strokeWidth = String(BURST_SPOKE_STROKE);
-    spoke.style.stroke = rgbToHex(shiftHue(sectionColorRgb, spokeHue));
-    layer.appendChild(spoke);
+
+  /* ② ★ 主角：旋转 + 游走的线。除了"绕自己的中心转"，中心还要**朝一个随机方向游走** ——
+        于是它不是停在原地打转，而是一群弧从爆点慢慢散开，这才是参考里那种活的感觉。 */
+  for (let j = 0; j < BURST_ORB_COUNT; j += 1) {
+    const el = svgNode('polyline', { class: 'burst-orb', points: '' });
+    const strokeRatio = BURST_ORB_STROKE_RATIO * (0.7 + 0.6 * rng());
+    const hueShift = nextHue();
+    el.style.strokeWidth = (strokeRatio * shortSide).toFixed(2);
+    el.style.stroke = rgbToHex(shiftHue(sectionColorRgb, hueShift));
+    layer.appendChild(el);
+    const driftAngle = rng() * Math.PI * 2;     // 每根线朝不同方向游走
     parts.push({
-      el: spoke, shape: 'spoke', t0: 0, life: spokeLife, stroke0: BURST_SPOKE_STROKE,
-      hueShift: spokeHue,
-      angle: baseAngle + i / BURST_SPOKE_COUNT * Math.PI * 2 + (at ? 0 : (burstRng() - 0.5) * 0.22),
-      length: (BURST_RADIUS_MIN + (BURST_RADIUS_MAX - BURST_RADIUS_MIN) * gain) * 1.22,
+      shape: 'orb', el, strokeRatio, hueShift,
+      t0: rng() * 0.3,                          // 起跑略有先后，不要全体同时出发
+      life: grow * (BURST_ORB_LIFE_RATIO[0]
+        + (BURST_ORB_LIFE_RATIO[1] - BURST_ORB_LIFE_RATIO[0]) * rng()),
+      orbitRatio: ringR * BURST_ORB_RADIUS_RATIO * (0.45 + 1.1 * rng()),     // 自转半径（× 短边）
+      growSeconds: BURST_ORB_GROW_S * (0.6 + 0.8 * rng()),                   // 展开快慢
+      ang0: rng() * Math.PI * 2,
+      angSpeed: (rng() < 0.5 ? -1 : 1)
+        * (BURST_ORB_ANG_SPEED_MIN + (BURST_ORB_ANG_SPEED_MAX - BURST_ORB_ANG_SPEED_MIN) * rng()),
+      driftX: Math.cos(driftAngle), driftY: Math.sin(driftAngle),
+      driftSpeed: ringR * BURST_ORB_DRIFT_RATIO * (0.15 + 0.85 * rng()),     // 游走速度（× 短边/秒）
     });
   }
+
+  /* ③ 短痕：朝随机方向飞出去、把尾巴拉长（于是它是一道短痕而不是一个点），同时细到 0。 */
+  for (let k = 0; k < BURST_SPARKLE_COUNT; k += 1) {
+    const el = svgNode('line', { class: 'burst-spark', x1: 0, y1: 0, x2: 0, y2: 0 });
+    const strokeRatio = BURST_SPARKLE_STROKE_RATIO * (0.7 + 0.6 * rng());
+    const hueShift = nextHue();
+    el.style.strokeWidth = (strokeRatio * shortSide).toFixed(2);
+    el.style.stroke = rgbToHex(shiftHue(sectionColorRgb, hueShift));
+    layer.appendChild(el);
+    const dir = rng() * Math.PI * 2;
+    parts.push({
+      shape: 'spark', el, strokeRatio, hueShift,
+      t0: rng() * 0.5,
+      life: grow * (BURST_SPARKLE_LIFE_RATIO[0]
+        + (BURST_SPARKLE_LIFE_RATIO[1] - BURST_SPARKLE_LIFE_RATIO[0]) * rng()),
+      dirX: Math.cos(dir), dirY: Math.sin(dir),
+      distRatio: ringR * (BURST_SPARKLE_DIST_RATIO[0]
+        + (BURST_SPARKLE_DIST_RATIO[1] - BURST_SPARKLE_DIST_RATIO[0]) * rng()),
+      lenRatio: ringR * BURST_SPARKLE_LEN_RATIO * (0.5 + rng()),
+    });
+  }
+
   bursts.push({ parts, startedAt: performance.now(), fx, fy });
 };
 
-/* 逐帧推进。参数 time 与图上的其它逐帧更新同源（性能时钟），所以涟漪与点、线共用一套节拍。 */
+/* 逐帧推进。参数 time 与图上的其它逐帧更新同源（性能时钟），所以涟漪与点、线共用一套节拍。
+   ★ 这里**不保存逐帧状态**：线（Orb）的运动是解析式（匀速游走 + 自转 + 半径线性展开），
+     任意时刻的位置都直接算出来 —— 同一个输入必然同一帧画面，而且与帧率无关。 */
 const updateBursts = time => {
   if (!bursts.length) return;
   const width = graphViewport.width, height = graphViewport.height;
+  const shortSide = Math.min(width, height);
   for (let b = bursts.length - 1; b >= 0; b -= 1) {
     const burst = bursts[b];
-    const x = burst.fx * width, y = burst.fy * height;
+    const ox = burst.fx * width, oy = burst.fy * height;
+    const age = (time - burst.startedAt) / 1000;
     for (let p = burst.parts.length - 1; p >= 0; p -= 1) {
       const part = burst.parts[p];
-      const progress = ((time - burst.startedAt) / 1000 - part.t0) / part.life;
-      if (progress >= 1) { part.el.remove(); burst.parts.splice(p, 1); continue; }
-      if (progress <= 0) continue;   // 还没轮到它（错峰启动时元素停在 r=0 / 零长，本来就看不见）
-      /* 减速外扩：起步快、末段几乎停住（这是参考里最值得留的那点手感） */
-      const eased = easeOutCubic(progress);
-      /* 描边同时**细到 0** —— 消失是几何（墨变细），不是透明度 */
-      const stroke = part.stroke0 * (1 - progress);
-      /* 颜色逐帧算：本段落色按这一发/这一圈的色相偏移 → 换段或切主题时整组配色一起跟着走 */
+      const t = age - part.t0;
+      if (t <= 0) continue;     // 还没轮到它（错峰启动时元素停在 r=0 / 零长，本来就看不见）
+      if (t >= part.life) { part.el.remove(); burst.parts.splice(p, 1); continue; }
+      const norm = t / part.life;
+      /* 颜色逐帧算：本段落色按这个元素自己的色相偏移 → 换段或切主题时整组配色一起跟着走 */
       part.el.style.stroke = rgbToHex(shiftHue(sectionColorRgb, part.hueShift));
-      part.el.style.strokeWidth = stroke.toFixed(2);
+      /* 描边随生命**细到 0** —— 消失是几何（墨变细），不是透明度 */
+      part.el.style.strokeWidth = (part.strokeRatio * shortSide * (1 - norm)).toFixed(2);
       if (part.shape === 'ring') {
-        part.el.setAttribute('cx', x.toFixed(1));
-        part.el.setAttribute('cy', y.toFixed(1));
-        part.el.setAttribute('r', (part.scale * part.radius * eased).toFixed(2));
+        /* 减速外扩：起步快、末段几乎停住（这是参考里最值得留的手感） */
+        part.el.setAttribute('cx', ox.toFixed(1));
+        part.el.setAttribute('cy', oy.toFixed(1));
+        part.el.setAttribute('r', (part.rRatio * shortSide * easeOutCubic(norm)).toFixed(2));
+      } else if (part.shape === 'orb') {
+        /* 拖尾 = 从最老到最新取 BURST_ORB_TRAIL 个采样点；还没出生的点直接跳过 ——
+           于是线是**从一个点长成一段弧**的（出现走几何，不是淡入）。 */
+        let points = '';
+        for (let k = BURST_ORB_TRAIL - 1; k >= 0; k -= 1) {
+          const tau = t - k * BURST_ORB_TRAIL_STEP_S;
+          if (tau < 0) continue;
+          const radius = part.orbitRatio * Math.min(1, tau / part.growSeconds);
+          const ang = part.ang0 + part.angSpeed * tau;
+          const lx = part.driftX * part.driftSpeed * tau + radius * Math.cos(ang);
+          const ly = part.driftY * part.driftSpeed * tau + radius * Math.sin(ang);
+          points += (ox + lx * shortSide).toFixed(1) + ',' + (oy + ly * shortSide).toFixed(1) + ' ';
+        }
+        part.el.setAttribute('points', points);
       } else {
-        const outerR = part.length * eased;
-        part.el.setAttribute('x1', (x + Math.cos(part.angle) * outerR * 0.45).toFixed(2));
-        part.el.setAttribute('y1', (y + Math.sin(part.angle) * outerR * 0.45).toFixed(2));
-        part.el.setAttribute('x2', (x + Math.cos(part.angle) * outerR).toFixed(2));
-        part.el.setAttribute('y2', (y + Math.sin(part.angle) * outerR).toFixed(2));
+        /* 短痕：头端向外减速率飞出去，尾端跟在后面 —— 差值就是这道痕的长度（前 25% 从 0 长到满） */
+        const reach = part.distRatio * shortSide * easeOutCubic(norm);
+        const len = part.lenRatio * shortSide
+          * easeOutCubic(Math.min(1, norm / BURST_SPARKLE_GROW_RATIO));
+        const tail = Math.max(0, reach - len);
+        part.el.setAttribute('x1', (ox + part.dirX * tail).toFixed(1));
+        part.el.setAttribute('y1', (oy + part.dirY * tail).toFixed(1));
+        part.el.setAttribute('x2', (ox + part.dirX * reach).toFixed(1));
+        part.el.setAttribute('y2', (oy + part.dirY * reach).toFixed(1));
       }
     }
     if (!burst.parts.length) bursts.splice(b, 1);
@@ -1862,8 +1969,14 @@ if (DEBUG_CLICK_BURST) {
     const texture = MOODIST_TEXTURES.find(item => item.name === 'birds');
     const at = texture && burstRatioAtEvent(event);
     if (!at) return;
-    spawnBurst(texture, at);
-    console.info('[debug] 点击起爆', `fx=${at.fx.toFixed(3)} fy=${at.fy.toFixed(3)}`);
+    debugBurstIndex += 1;
+    /* 每点一下换一条**独立的**随机流（由点击序号派生）：
+       ① 每一下的形态都不同（用户 2026-09："每一个都一摸一样"）；
+       ② 但"第 N 下"永远可复现 —— 要对比某一版改动，就点同样几下、看第同样的那一下；
+       ③ 不消耗 `burstRng`，所以点与不点都不影响真鸟叫那几发的随机序列（调试不改变被调试对象）。 */
+    const rng = makeRng((Math.imul(0x9e3779b1, debugBurstIndex) + 0x85ebca6b) >>> 0);
+    spawnBurst(texture, at, rng);
+    console.info(`[debug] 点击起爆 #${debugBurstIndex}`, `fx=${at.fx.toFixed(3)} fy=${at.fy.toFixed(3)}`);
   });
 }
 
