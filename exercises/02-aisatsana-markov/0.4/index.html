@@ -238,11 +238,15 @@
       单个<b>音符发声</b>只是很轻地推一下。段落色逐帧插值，不在句界跳变。<br>
       <b>环境层涟漪：</b><b>birds 环境声响着的期间</b>，画面上会<b>时不时炸开一发</b> ——
       主体不是圆，而是一群<b>一边自转、一边往外游走的线</b>：每根线绕自己的中心转，中心同时在慢慢漂走，
-      画出来是<b>一小段扫过的弧</b>（只留最近约 0.13 秒的轨迹）；<b>每根线的半径、转速、方向、寿命、
-      颜色都不一样</b>。另有<b>两圈各自大小的涟漪</b>（减速外扩）和几道向外飞散并变细的短痕。
+      画出来是<b>一小段扫过的弧</b>（只留最近约 0.13 秒的轨迹）。另有<b>偶尔才有的涟漪圈</b>
+      （三成的一发完全没有圈；有圈时圆心也是偏出去的，不是同心）和几道向外飞散并变细的短痕。
+      <b>每一发、每一个元素都不一样</b>：线的数量、自转半径、转速、走多远、寿命、描边、颜色逐项各取一份 ——
+      有的小步慢转、有的飞快甩出去，<b>短的不到 1 秒就没了、长的能飘 4 秒多</b>，
+      这样才对得上鸟叫本身"忽大忽小、忽快忽慢"的样子。
       出现是半径/长度从 0 长出来、消失是描边细到 0，全程不用透明度。
-      它<b>只跟 birds 有关</b>，<b>颜色全部由当前段落色转出来</b>（换段/切主题整组一起变），
-      <b>大小与击发节奏都和这一层的声音</b>挂钩。<br>
+      它<b>只跟 birds 有关</b>，<b>颜色全部由当前段落色转出来</b>（换段/切主题整组一起变）；
+      <b>整体尺度仍由这一层的声音</b>决定（`targetGain` → 大小范围、`fade` → 时间范围），
+      随机只在**这个范围之内**分配，不替代音乐决定的关系（见视觉规则 §14.7）。<br>
       <b>调试图方便：</b>在画面上<b>任意位置点一下，就在点击处来一发</b> ——
       参数取的就是 birds 那一份（所以看到的就是真鸟叫时会看到的那一发），不用等鸟叫；
       每点一下形态都不同（"第 N 下"可复现），而且不动用鸟叫那条随机流。见 <code>DEBUG_CLICK_BURST</code>。<br>
@@ -1653,19 +1657,20 @@ const easeInCubic = progress => progress * progress * progress;
  *   参考整篇都建立在 `minSide` 上；这样换视口 / 全屏时整发按同一比例缩放，不会有"圈跟着变、线没跟着变"
  *   的割裂（与 §12"用设计单位整体缩放"是同一条经验，只是这里的单位取自视口短边）。 */
 const BURST_GAIN_REFERENCE = 0.3;     // 目前最响的一层（brown noise / wind in trees 的 targetGain）
-/* 一发里各有几个：比例照参考（线最多、星痕次之、涟漪最少）—— 参考是 20 / 50 / 2 / 10。 */
-const BURST_RING_COUNT = 2;           // 涟漪圈（整发的"锚"，参考里也只有 2 个）
-const BURST_ORB_COUNT = 12;           // ★ 主角：旋转 + 游走的线
-const BURST_SPARKLE_COUNT = 12;       // 向外飞散并细掉的短痕
-/* ---- 整体尺度：外圈半径（× 短边）按该层增益在 MIN..MAX 之间取值 ----
-   ★ 第一版这里是 90–260 **设计单位**（birds 实测 147 ≈ 视口高的 21%），用户反馈"太大了"，
-     所以改成"短边的比例"并把上限压到约一半：birds → 0.077 × 短边 ≈ 54（视口高的 7.7%）。 */
-const BURST_RING_RATIO_MIN = 0.045;
-const BURST_RING_RATIO_MAX = 0.140;
-const BURST_RING_SPREAD = 0.38;       // 第 i 圈的尺度 =（1 − i × 该值），再叠 ±15% 随机 → 两圈不是同心等比
-const BURST_RING_STAGGER_S = 0.16;    // 圈与圈的启动间隔：一圈圈推出去，不是同时放大
+/* 一发里的**数量也是每发不同**（下面各处用 RANGE 抽）—— 固定的数量会让每一发长得像"同一发的复制"。
+   比例照参考：线最多、星痕次之、涟漪圈最少（参考是 20 / 50 / 2 / 10，但参考那 2 圈是"锚"，
+   这里连锚都不一定有，见下面涟漪圈那一段）。 */
+/* ---- 整体尺度：外圈半径的基准（× 短边）按该层增益在 MIN..MAX 之间取值 ----
+   ★ 三轮"太大了"之后的下调（每次都只动这一个基准，其余全是它的倍数，所以"游走"的观感比例没变）：
+     90–260 设计单位（birds 147 ≈ 视口高的 21%）→ 0.045–0.140 短边（49 ≈ 7%）
+     → 0.030–0.095（36 ≈ 5%）→ **现在 0.023–0.072（birds 约 28px ≈ 4%）**。
+     实测整发墨迹的峰值：最小 43px、中位 58px、最大 78px（视口高的 6%–11%，上一版是恒定的 85px = 12%）。
+   ★ 另外整发的伸展**不再由"速度上限"决定**（那会让长寿命的线跑到 400px 以外），
+     而是由"每根线一生走多远"决定，所以总伸展有上限（见 BURST_ORB_TRAVEL_*）。 */
+const BURST_RING_RATIO_MIN = 0.023;
+const BURST_RING_RATIO_MAX = 0.072;
 const BURST_RING_STROKE_RATIO = 0.0034; // 起始描边（× 短边）→ 短边 703 时约 2.4，和图的连线同一量级
-const BURST_GROW_MIN_S = 0.9;         // 涟漪的扩张时长（= 该层 fade × 0.5，两头钳制）
+const BURST_GROW_MIN_S = 0.9;         // 涟漪的扩张时长基准（= 该层 fade × 0.5，两头钳制）
 const BURST_GROW_MAX_S = 2.6;
 /* ---- 线（Orb）：绕自己的中心转，中心同时在游走 ----
    参考是逐帧累加（`ang += angStep`、`x += xStep`），也就是**线性运动**，所以这里直接写解析式
@@ -1677,23 +1682,36 @@ const BURST_GROW_MAX_S = 2.6;
      ②不用保存逐帧状态，仍从 `startedAt` 一次算出来 —— 和这一版其它部分一样"同一个输入必然同一帧画面"。 */
 const BURST_ORB_TRAIL = 9;            // 拖尾保留几个采样点（参考 10）
 const BURST_ORB_TRAIL_STEP_S = 1 / 60;// 采样间隔 → 拖尾固定覆盖最近 8 × 1/60 ≈ 0.13 秒的轨迹
-const BURST_ORB_RADIUS_RATIO = 0.40;  // 自转半径（× 外圈半径）
+const BURST_ORB_RADIUS_RATIO = 0.50;  // 自转半径的基准（× 外圈半径）；再乘 spread(0.3, 1.5) → 有大有小
 const BURST_ORB_GROW_S = 0.45;        // 自转半径从 0 涨到满用多久（参考约 27 帧 ≈ 0.45 秒）
-const BURST_ORB_ANG_SPEED_MIN = 6;    // 角速度（弧度/秒。参考 0.10–0.30 弧度/帧 × 60fps），方向随机
-const BURST_ORB_ANG_SPEED_MAX = 18;
-const BURST_ORB_DRIFT_RATIO = 1.6;    // 游走速度上限（× 外圈半径 / 秒）—— "游走"就是这一项，要给足
-                                      //   ★ 参考实测的漂移约 0.15 × 短边/秒（xStep 的均值），
-                                      //     这里 ringR(0.077) × 1.6 × (0.15–1) → 均值约 0.07 × 短边/秒；
-                                      //     一根线的总行程实测均值约 105px、最长约 260px（视口高 703）——
-                                      //     一眼看得出"散开"，但不铺满屏幕（第一版用户说"太大了"）。
-const BURST_ORB_LIFE_RATIO = [0.5, 1.2]; // 寿命（× 该层的扩张时长），逐个取 → 有的先走、有的后走
+const BURST_ORB_ANG_SPEED_MIN = 4;    // 角速度（弧度/秒。参考 0.10–0.30 弧度/帧 × 60fps），方向随机
+const BURST_ORB_ANG_SPEED_MAX = 26;
+/* ★ 游走的强弱用"**这一根线一生总共走多远**"来表达（× 外圈半径），速度由 `行程 ÷ 寿命` 反推 ——
+   这样"有快有慢"是自然结果（同样远的行程、不同的寿命 → 不同速度），而且**总伸展有上限**：
+   第一版直接给"速度上限"时，长寿命 × 高速度会让一根线跑到 400px 以外（整发失控地大）。 */
+const BURST_ORB_TRAVEL_MIN = 0.25;
+const BURST_ORB_TRAVEL_MAX = 2.8;
+const BURST_ORB_LIFE_RATIO = [0.35, 1.8]; // 寿命（× 该层的扩张时长）—— 有的 0.9 秒就没了、有的活 4.5 秒
 const BURST_ORB_STROKE_RATIO = 0.0022;   // 起始描边（× 短边）→ 短边 703 时约 1.5，比图的连线略粗一点
+const BURST_ORB_COUNT_RANGE = [8, 15];   // 一发里几根线（每一发都不同）
 /* ---- 短痕（Sparkle）：朝一个随机方向飞出去、把尾巴拉长，同时细到 0 ---- */
-const BURST_SPARKLE_DIST_RATIO = [0.6, 2.6];  // 飞多远（× 外圈半径）→ 比涟漪圈远，和参考的比例一致
+const BURST_SPARKLE_DIST_RATIO = [0.5, 2.0];  // 飞多远（× 外圈半径）→ 比涟漪圈远，和参考的比例一致
 const BURST_SPARKLE_LEN_RATIO = 0.5;          // 短痕最长多少（× 外圈半径）
-const BURST_SPARKLE_LIFE_RATIO = [0.4, 1.3];  // 寿命（× 该层的扩张时长）
+const BURST_SPARKLE_LIFE_RATIO = [0.3, 1.6];  // 寿命（× 该层的扩张时长）
 const BURST_SPARKLE_GROW_RATIO = 0.25;        // 长度在生命的前 25% 内从 0 长到满
 const BURST_SPARKLE_STROKE_RATIO = 0.0016;
+const BURST_SPARKLE_COUNT_RANGE = [5, 14];
+/* ---- 涟漪圈：**不一定有**，而且每一圈自己一套参数 ----
+   用户 2026-09："中间两个固定的同心圆还是很呆，不一定永远有" —— 症结是"同心"和"永远有"：
+   旧版的两圈半径比写死（1 : 0.62）、圆心都是爆点、扩张步调还共用同一个 `grow`，
+   所以每一发看上去都是同一对圆。现在：**0 / 1 / 2 圈按权重抽**，每圈**自己的圆心（偏移出去）、
+   自己的大小、自己的扩张时长与寿命、自己的起始时刻、自己的描边**。 */
+const BURST_RING_NONE_CHANCE = 0.30;  // 三成的一发**完全没有圈**（只剩一群线在游走）
+const BURST_RING_ONE_CHANCE = 0.40;   // 四成一圈，三成两圈
+const BURST_RING_OFFSET_MAX = 0.55;   // 圆心最多从爆点偏出多远（× 外圈半径）→ 两圈因此不同心
+const BURST_RING_STAGGER_MAX_S = 0.7; // 每圈的起始时刻在 0–0.7 秒里各取一个（不再是固定 0.16 秒错峰）
+const BURST_RING_LIFE_RATIO = [0.45, 1.7];  // 寿命 = 扩张时长（× 该层的扩张时长）→ 有快有慢
+const BURST_RING_RADIUS_SPREAD = [0.7, 1.6];// 半径（× 外圈半径）→ 有大有小，不再是固定比例的一对
 const BURST_PAN_SPREAD = 0.35;        // 声像 → 横向位置：pan 0.3 → 视口宽的 10.5%
 const BURST_Y_JITTER = 0.18;          // 每次的纵向位置抖动（视口高比例，来自视觉随机流）
 /* 配色：每根线 / 每圈 / 每道痕各取一个色相偏移（在 ±该值内），所以"一发里有好几种颜色"，
@@ -1788,55 +1806,77 @@ const spawnBurst = (texture, at, rng = burstRng) => {
   /* 每个元素的色相各取一份 —— "一发里有好几种颜色"靠这个，而且都是从本段落色转出来的 */
   const nextHue = () => hueBase + (rng() * 2 - 1) * BURST_HUE_SPREAD;
   const parts = [];
+  /* ★ "有大有小 / 有快有慢"就靠这个：`rng() × rng()` 的均值约 0.25，于是分布**压向小端** —— 小的多、大的少。
+     直接用 `rng()`（均匀分布）时每个元素的大小还是"差不多"，看起来仍然是"一摸一样"
+     （用户 2026-09："还是太大了，包括生命值也一摸一样，这个就是想从观感上和鸟叫适配，有大有小，有快有慢"）。
+     ⚠️ 它只负责在**已经由声音定好的范围之内**分配：整体尺度仍由该层 `targetGain` 决定、
+     时间尺度仍由 `fade` 决定 —— 随机不替代"由音乐决定的关系"（见 §14.7）。 */
+  const spread = (min, max) => min + (max - min) * rng() * rng();
+  /* 数量也不是固定的：固定的数量会让每一发长得像"同一发的复制" */
+  const pickCount = ([min, max]) => min + Math.floor(rng() * (max - min + 1));
 
-  /* ① 涟漪圈（整发的锚）：两圈**各自随机大小与寿命** —— 参考的 Ripple 就是 `maxD = random(0.1, 0.5)`，
-        不是同心等比缩放（第一版做成等比缩放的三圈，正是"一摸一样"的来源之一）。 */
-  for (let i = 0; i < BURST_RING_COUNT; i += 1) {
+  /* ① 涟漪圈：**不一定有**（三成的一发完全没有圈，只剩一群线在游走），
+        而且每一圈**自己一套参数** —— 圆心从爆点偏出去（所以两圈不同心）、大小与寿命各自抽、起始时刻各自抽。
+        旧版把两圈的半径比写死成 1 : 0.62、圆心都是爆点、扩张还共用同一个 `grow`，
+        于是每一发都是"同一对同心圆一起放大"，用户直接说"很呆"（2026-09）。 */
+  const ringRoll = rng();
+  const ringCount = ringRoll < BURST_RING_NONE_CHANCE ? 0
+    : (ringRoll < BURST_RING_NONE_CHANCE + BURST_RING_ONE_CHANCE ? 1 : 2);
+  for (let i = 0; i < ringCount; i += 1) {
     const el = svgNode('circle', { class: 'burst-ring', cx: 0, cy: 0, r: 0 });
     /* 起始描边与颜色在这里就写好：即使还没轮到它启动（r=0，本来就画不出来），
        元素也是"完全指定"的状态，不会出现"某个属性还是 none"的半成品。 */
-    const strokeRatio = BURST_RING_STROKE_RATIO * (i === 0 ? 1 : 0.78);
-    const hueShift = hueBase + (i === 0 ? 20 : -20);
+    const strokeRatio = BURST_RING_STROKE_RATIO * spread(0.7, 1.15);
+    const hueShift = nextHue();
     el.style.strokeWidth = (strokeRatio * shortSide).toFixed(2);
     el.style.stroke = rgbToHex(shiftHue(sectionColorRgb, hueShift));
     layer.appendChild(el);
+    const awayAngle = rng() * Math.PI * 2;
+    const away = ringR * spread(0, BURST_RING_OFFSET_MAX);
     parts.push({
       shape: 'ring', el, strokeRatio, hueShift,
-      t0: i * BURST_RING_STAGGER_S,
-      life: grow * (0.85 + 0.3 * rng()),
-      rRatio: ringR * (1 - i * BURST_RING_SPREAD) * (0.85 + 0.3 * rng()),
+      offsetX: Math.cos(awayAngle) * away,     // 圆心相对爆点的偏移（× 短边）→ 两圈因此不同心
+      offsetY: Math.sin(awayAngle) * away,
+      t0: rng() * BURST_RING_STAGGER_MAX_S,
+      life: grow * spread(BURST_RING_LIFE_RATIO[0], BURST_RING_LIFE_RATIO[1]),
+      rRatio: ringR * spread(BURST_RING_RADIUS_SPREAD[0], BURST_RING_RADIUS_SPREAD[1]),
     });
   }
 
   /* ② ★ 主角：旋转 + 游走的线。除了"绕自己的中心转"，中心还要**朝一个随机方向游走** ——
-        于是它不是停在原地打转，而是一群弧从爆点慢慢散开，这才是参考里那种活的感觉。 */
-  for (let j = 0; j < BURST_ORB_COUNT; j += 1) {
+        于是它不是停在原地打转，而是一群弧从爆点慢慢散开，这才是参考里那种活的感觉。
+        ★ 游走的快慢由"一生走多远 ÷ 寿命"反推：同样远的行程、寿命短的就走得快（"有快有慢"），
+          而且**总伸展因此有上限**（若直接给"速度上限"，长寿命 × 高速度会让一根线跑到 400px 外）。 */
+  const orbCount = pickCount(BURST_ORB_COUNT_RANGE);
+  for (let j = 0; j < orbCount; j += 1) {
     const el = svgNode('polyline', { class: 'burst-orb', points: '' });
-    const strokeRatio = BURST_ORB_STROKE_RATIO * (0.7 + 0.6 * rng());
+    const strokeRatio = BURST_ORB_STROKE_RATIO * spread(0.6, 1.3);
     const hueShift = nextHue();
     el.style.strokeWidth = (strokeRatio * shortSide).toFixed(2);
     el.style.stroke = rgbToHex(shiftHue(sectionColorRgb, hueShift));
     layer.appendChild(el);
     const driftAngle = rng() * Math.PI * 2;     // 每根线朝不同方向游走
+    const life = grow * spread(BURST_ORB_LIFE_RATIO[0], BURST_ORB_LIFE_RATIO[1]);
+    const travel = ringR * spread(BURST_ORB_TRAVEL_MIN, BURST_ORB_TRAVEL_MAX);
     parts.push({
       shape: 'orb', el, strokeRatio, hueShift,
-      t0: rng() * 0.3,                          // 起跑略有先后，不要全体同时出发
-      life: grow * (BURST_ORB_LIFE_RATIO[0]
-        + (BURST_ORB_LIFE_RATIO[1] - BURST_ORB_LIFE_RATIO[0]) * rng()),
-      orbitRatio: ringR * BURST_ORB_RADIUS_RATIO * (0.45 + 1.1 * rng()),     // 自转半径（× 短边）
-      growSeconds: BURST_ORB_GROW_S * (0.6 + 0.8 * rng()),                   // 展开快慢
+      t0: rng() * 0.5,                          // 起跑略有先后，不要全体同时出发
+      life,
+      orbitRatio: ringR * BURST_ORB_RADIUS_RATIO * spread(0.3, 1.5),   // 自转半径（× 短边）
+      growSeconds: BURST_ORB_GROW_S * spread(0.5, 1.6),                // 展开快慢
       ang0: rng() * Math.PI * 2,
       angSpeed: (rng() < 0.5 ? -1 : 1)
         * (BURST_ORB_ANG_SPEED_MIN + (BURST_ORB_ANG_SPEED_MAX - BURST_ORB_ANG_SPEED_MIN) * rng()),
       driftX: Math.cos(driftAngle), driftY: Math.sin(driftAngle),
-      driftSpeed: ringR * BURST_ORB_DRIFT_RATIO * (0.15 + 0.85 * rng()),     // 游走速度（× 短边/秒）
+      driftSpeed: travel / life,                // 由"行程 ÷ 寿命"反推（× 短边/秒）→ 有快有慢
     });
   }
 
   /* ③ 短痕：朝随机方向飞出去、把尾巴拉长（于是它是一道短痕而不是一个点），同时细到 0。 */
-  for (let k = 0; k < BURST_SPARKLE_COUNT; k += 1) {
+  const sparkCount = pickCount(BURST_SPARKLE_COUNT_RANGE);
+  for (let k = 0; k < sparkCount; k += 1) {
     const el = svgNode('line', { class: 'burst-spark', x1: 0, y1: 0, x2: 0, y2: 0 });
-    const strokeRatio = BURST_SPARKLE_STROKE_RATIO * (0.7 + 0.6 * rng());
+    const strokeRatio = BURST_SPARKLE_STROKE_RATIO * spread(0.6, 1.3);
     const hueShift = nextHue();
     el.style.strokeWidth = (strokeRatio * shortSide).toFixed(2);
     el.style.stroke = rgbToHex(shiftHue(sectionColorRgb, hueShift));
@@ -1844,13 +1884,11 @@ const spawnBurst = (texture, at, rng = burstRng) => {
     const dir = rng() * Math.PI * 2;
     parts.push({
       shape: 'spark', el, strokeRatio, hueShift,
-      t0: rng() * 0.5,
-      life: grow * (BURST_SPARKLE_LIFE_RATIO[0]
-        + (BURST_SPARKLE_LIFE_RATIO[1] - BURST_SPARKLE_LIFE_RATIO[0]) * rng()),
+      t0: rng() * 0.8,
+      life: grow * spread(BURST_SPARKLE_LIFE_RATIO[0], BURST_SPARKLE_LIFE_RATIO[1]),
       dirX: Math.cos(dir), dirY: Math.sin(dir),
-      distRatio: ringR * (BURST_SPARKLE_DIST_RATIO[0]
-        + (BURST_SPARKLE_DIST_RATIO[1] - BURST_SPARKLE_DIST_RATIO[0]) * rng()),
-      lenRatio: ringR * BURST_SPARKLE_LEN_RATIO * (0.5 + rng()),
+      distRatio: ringR * spread(BURST_SPARKLE_DIST_RATIO[0], BURST_SPARKLE_DIST_RATIO[1]),
+      lenRatio: ringR * BURST_SPARKLE_LEN_RATIO * spread(0.4, 1.1),
     });
   }
 
@@ -1879,9 +1917,11 @@ const updateBursts = time => {
       /* 描边随生命**细到 0** —— 消失是几何（墨变细），不是透明度 */
       part.el.style.strokeWidth = (part.strokeRatio * shortSide * (1 - norm)).toFixed(2);
       if (part.shape === 'ring') {
-        /* 减速外扩：起步快、末段几乎停住（这是参考里最值得留的手感） */
-        part.el.setAttribute('cx', ox.toFixed(1));
-        part.el.setAttribute('cy', oy.toFixed(1));
+        /* 减速外扩：起步快、末段几乎停住（这是参考里最值得留的手感）。
+           ★ 圆心要带上**这一圈自己的偏移** —— 两圈因此不同心；旧版圆心都是爆点，
+             那正是"同一对同心圆"里的一半问题（另一半是半径比写死）。 */
+        part.el.setAttribute('cx', (ox + part.offsetX * shortSide).toFixed(1));
+        part.el.setAttribute('cy', (oy + part.offsetY * shortSide).toFixed(1));
         part.el.setAttribute('r', (part.rRatio * shortSide * easeOutCubic(norm)).toFixed(2));
       } else if (part.shape === 'orb') {
         /* 拖尾 = 从最老到最新取 BURST_ORB_TRAIL 个采样点；还没出生的点直接跳过 ——
