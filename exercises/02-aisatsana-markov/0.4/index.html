@@ -119,6 +119,11 @@
   .key { display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; vertical-align:1px; }
   .key.source { background:var(--graph-node-base); }
   .key.played { background:var(--section-color); }
+  /* 环境层"涟漪"（只在 birds 出现时来一发）：压在场节点**之上**（用户要求"上"），
+     所以它在 SVG 里是最后一层。颜色由 JS 逐帧写内联（跟随当前段落色），这里只写几何默认值：
+     不填充、不响应指针。 */
+  .burst-layer { pointer-events:none; }
+  .burst-ring, .burst-spoke { fill:none; }
   .log { position:absolute; z-index:1; inset:110px 5vw 54px; display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; color:var(--log-fg); font:13px/1.775 Consolas,monospace; text-align:left; opacity:.8; pointer-events:none; }
   .log-content { flex:0 0 auto; width:100%; white-space:pre-wrap; will-change:transform; }
   .log-line { min-height:1.775em; animation:logLineIn .55s cubic-bezier(.22,1,.36,1) both; }
@@ -226,6 +231,11 @@
       换句时不是整体外扩，而是给在场节点一次<b>切向</b>抖动，位移<b>沿连线传给邻居</b>：
       连线是铰链，弹因此是传开的。力度分两级：<b>换句/段落切换</b>抖得明显，
       单个<b>音符发声</b>只是很轻地推一下。段落色逐帧插值，不在句界跳变。<br>
+      <b>环境层涟漪：</b><b>每当 birds 环境声出现</b>，画面上会从一点炸开一发涟漪
+      （3 圈同心环 + 6 根短放射线，减速外扩、描边细到 0 才消失）——它<b>只跟 birds 有关</b>，
+      颜色跟随当前段落色，<b>大小与该层的音量</b>挂钩。形式借鉴自 okazz 的
+      <code>240809a</code>（<a href="https://openprocessing.org/sketch/2326097" target="_blank" rel="noreferrer">openprocessing</a>，CC BY-NC-SA），
+      只借思路、未使用其代码。<br>
       <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>f</code> 全屏、再按一次退出。<br>
       <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
       音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
@@ -607,7 +617,9 @@ const MOODIST_TEXTURES = [
   },
 ];
 
-const createMoodistTextures = async (destination, rng) => {
+/* options.onStart(texture, time)：某一层**真的开始发声**时向外报告一次（视觉侧用它挂 birds 的涟漪）。
+   ★ 这是个纯通知，不参与任何增益/调度计算 —— 传不传都不影响声音（"音乐不动"）。 */
+const createMoodistTextures = async (destination, rng, options = {}) => {
   const loaded = [];
   const eventIds = new Set();
   const randomBetween = ([min, max]) => min + rng() * (max - min);
@@ -669,6 +681,11 @@ const createMoodistTextures = async (destination, rng) => {
         try {
           texture.player.start(time);
           texture.player.stop(time + duration + fade);
+          /* 通知视觉侧"这一层开始发声了"。
+             ★ 必须走 Tone.Draw：这个回调本身是**预排**的（lookAhead 会提前跑），
+               只有 Draw 到达 time 那一刻才是真正听到声音的时刻（见"与音频的接口"一节）。
+             ★ 视觉要在这一刻做 DOM 操作，所以 handler 里不要做重活（涟漪只有 9 个元素）。 */
+          if (options.onStart) Tone.Draw.schedule(() => options.onStart(texture, time), time);
           console.info('[Moodist] texture in:', texture.name, duration.toFixed(0) + 's');
         } catch (err) {
           console.warn('[Moodist] 播放失败:', texture.name, err);
@@ -1021,6 +1038,9 @@ const animateGraph = () => {
     });
     edges.forEach(edge => updateEdgePulse(edge, time));
   }
+  /* 涟漪放在 `if (nodes.length)` 之外：它不依赖图是否建好（环境层可能比第一句还早出现），
+     虽然实际上 birds 最早也要 5 秒后才来，但那属于调度细节，不该变成这里的前置条件。 */
+  updateBursts(performance.now());
   graphAnimationFrame = requestAnimationFrame(animateGraph);
 };
 
@@ -1582,6 +1602,143 @@ const easeOutCubic = progress => 1 - Math.pow(1 - progress, 3);
    末段迅速淡掉 —— 而末段正好是它钻进宿主背后的时刻，于是观感是“被挡住了”。 */
 const easeInCubic = progress => progress * progress * progress;
 
+/* ============ 环境层“涟漪”（只在 birds 出现时来一发） ============
+ * 灵感来自 okazz 的 openprocessing sketch「240809a」（https://openprocessing.org/sketch/2326097，
+ * CC BY-NC-SA）：从一个点炸开、细描边、向外**减速**扩散的几何形状（涟漪 + 几根放射线 + 会转的小几何）。
+ * ★ **没有复制它的代码，也不是照抄它的形式**（用户 2026-09："不要复制，只借鉴形式，甚至只是拿来举例子，
+ *   说明想要这种涟漪的感觉…每一发不需要那么多，主要还是涟漪的感觉，不要照抄"）。
+ *   这里只取三件事：① 从一点向外扩散的**同心涟漪**；② **减速**外扩（快出、慢停）；③ 描边随生命**变细**。
+ *   元素数量砍到 3 圈 + 6 根放射线（它的原版一发是 20+50+2+10 = 82 个对象），颜色不另开一套、
+ *   而是**跟随当前段落色**，随机量改成种子派生的独立流。许可上也刻意保持距离：只借鉴思路、不搬代码，
+ *   这样不必把整个仓库卷进 CC BY-NC-SA 的传染范围（署名与链接写在 §14.6 与练习 README 里）。
+ *
+ * 与现有规则的接口（和 §5 连线的状态机同一套）：
+ *   · **出现 = 几何**：半径从 0 长出来（r=0 的圆本来就不可见）；**消失 = 描边细到 0 + 移除元素**，
+ *     全程不碰 opacity（"透明度只用来表达明度这类静态量"）；
+ *   · **规模与时长的依据是这一层的声音**（用户要求"大小和 birds 的声音关联"）：半径由该层的
+ *     `targetGain` 决定（相对目前最响的那层 = `BURST_GAIN_REFERENCE`），扩张时长由该层的 `fade` 推出；
+ *   · **位置**横向由该层的 `pan` 推出（birds `pan 0.3` → 落在偏右处），纵向每次不同但由种子决定；
+ *   · **只读、不改图**：涟漪不参与节点/连线的力学，否则"同一段音乐画出同一张图"就破了；
+ *   · 颜色逐帧从 `sectionColorRgb` 取，所以**换段或切主题时涟漪会跟着变**，不需要另配颜色。 */
+const BURST_RING_COUNT = 3;           // 一发里几圈涟漪（"主要还是涟漪"，不要多）
+const BURST_SPOKE_COUNT = 6;          // 起爆瞬间的几根短放射线（只负责"炸开"那一下，很快消失）
+const BURST_RING_STAGGER_S = 0.16;    // 圈与圈的启动间隔：一圈圈推出去，而不是三圈同时放大
+const BURST_GROW_MIN_S = 0.9;         // 扩张时长（= 该层 fade × 0.5，两头钳制）
+const BURST_GROW_MAX_S = 2.6;
+const BURST_SPOKE_LIFE_RATIO = 0.42;  // 放射线只活到涟漪前 42%，之后画面只剩涟漪
+const BURST_RADIUS_MIN = 90;          // 设计单位：最安静的环境层
+const BURST_RADIUS_MAX = 260;         // 最响的环境层（= BURST_GAIN_REFERENCE 那一层的增益）
+const BURST_GAIN_REFERENCE = 0.3;     // 目前最响的一层（brown noise / wind in trees 的 targetGain）
+const BURST_RING_STROKE = 3.2;        // 最外那圈涟漪的起始描边（设计单位）
+const BURST_SPOKE_STROKE = 1.6;
+const BURST_RING_SHRINK = 0.21;       // 每内一圈的半径比例（第 i 圈 = R × (1 − i × 该值)）
+const BURST_PAN_SPREAD = 0.35;        // 声像 → 横向位置：pan 0.3 → 视口宽的 10.5%
+const BURST_Y_JITTER = 0.18;          // 每次的纵向位置抖动（视口高比例，来自视觉随机流）
+const BURST_RING_FADE_MIX = 0.25;     // 内圈往 nodeBase 混合的比例（让三圈有层次，但仍是同一族色）
+
+const bursts = [];
+let burstLayer = null;
+/* 视觉侧自己的随机流（只给涟漪的位置抖动用）。
+   ★ 与 textureRng 分开：那条流决定"环境层什么时候出现、出现多久"，视觉要是去消耗它，
+     加一个视觉功能就等于改了音频调度 —— 那就违反"音乐不动"了（0.2 踩过同类坑）。 */
+let burstRng = makeRng(0);
+
+const ensureBurstLayer = () => {
+  if (burstLayer) return burstLayer;
+  burstLayer = svgNode('g', { class: 'burst-layer' });
+  markovMapEl.appendChild(burstLayer);   // 追加在最后 → 压在场节点之上（用户要求"上"）
+  return burstLayer;
+};
+
+/* 起爆。texture = 那一层环境音的配置（只需要 targetGain / fade / pan 三个数）。
+   ⚠️ 位置与半径都按**视口比例**存（fx/fy/rRatio），逐帧再乘当前视口 —— 这样它在全屏切换、
+      窗口缩放时仍然待在同一个相对位置、按同一比例缩放（和 §12 的"设计单位"是一回事）。 */
+const spawnBurst = texture => {
+  const layer = ensureBurstLayer();
+  ensureGraphAnimation();     // 视觉主循环必须活着（图还没建起来时也要能画这一发）
+  const gain = Math.max(0, Math.min(1, (texture.targetGain || 0) / BURST_GAIN_REFERENCE));
+  const grow = Math.max(BURST_GROW_MIN_S, Math.min(BURST_GROW_MAX_S, (texture.fade || 0) * 0.5));
+  const fx = 0.5 + (texture.pan || 0) * BURST_PAN_SPREAD;
+  const fy = 0.5 + (burstRng() * 2 - 1) * BURST_Y_JITTER;
+  const parts = [];
+  for (let i = 0; i < BURST_RING_COUNT; i += 1) {
+    const ring = svgNode('circle', { class: 'burst-ring', cx: 0, cy: 0, r: 0 });
+    /* 起始描边与颜色在这里就写好：即使还没轮到它启动（r=0，本来就画不出来），
+       元素也是"完全指定"的状态，不会出现"某个属性还是 none"的半成品。 */
+    ring.style.strokeWidth = String(BURST_RING_STROKE * (1 - i * BURST_RING_SHRINK));
+    ring.style.stroke = rgbToHex(mixRgb(sectionColorRgb, NODE_BASE, i * BURST_RING_FADE_MIX));
+    layer.appendChild(ring);
+    parts.push({
+      el: ring, shape: 'ring', t0: i * BURST_RING_STAGGER_S, life: grow,
+      radius: BURST_RADIUS_MIN + (BURST_RADIUS_MAX - BURST_RADIUS_MIN) * gain,
+      scale: 1 - i * BURST_RING_SHRINK,
+      stroke0: BURST_RING_STROKE * (1 - i * BURST_RING_SHRINK),
+      mix: i * BURST_RING_FADE_MIX,
+    });
+  }
+  const spokeLife = grow * BURST_SPOKE_LIFE_RATIO;
+  const baseAngle = burstRng() * Math.PI * 2;
+  for (let i = 0; i < BURST_SPOKE_COUNT; i += 1) {
+    const spoke = svgNode('line', { class: 'burst-spoke', x1: 0, y1: 0, x2: 0, y2: 0 });
+    spoke.style.strokeWidth = String(BURST_SPOKE_STROKE);
+    spoke.style.stroke = rgbToHex(sectionColorRgb);
+    layer.appendChild(spoke);
+    parts.push({
+      el: spoke, shape: 'spoke', t0: 0, life: spokeLife, mix: 0, stroke0: BURST_SPOKE_STROKE,
+      angle: baseAngle + i / BURST_SPOKE_COUNT * Math.PI * 2 + (burstRng() - 0.5) * 0.22,
+      length: (BURST_RADIUS_MIN + (BURST_RADIUS_MAX - BURST_RADIUS_MIN) * gain) * 1.22,
+    });
+  }
+  bursts.push({ parts, startedAt: performance.now(), fx, fy });
+};
+
+/* 逐帧推进。参数 time 与图上的其它逐帧更新同源（性能时钟），所以涟漪与点、线共用一套节拍。 */
+const updateBursts = time => {
+  if (!bursts.length) return;
+  const width = graphViewport.width, height = graphViewport.height;
+  for (let b = bursts.length - 1; b >= 0; b -= 1) {
+    const burst = bursts[b];
+    const x = burst.fx * width, y = burst.fy * height;
+    for (let p = burst.parts.length - 1; p >= 0; p -= 1) {
+      const part = burst.parts[p];
+      const progress = ((time - burst.startedAt) / 1000 - part.t0) / part.life;
+      if (progress >= 1) { part.el.remove(); burst.parts.splice(p, 1); continue; }
+      if (progress <= 0) continue;   // 还没轮到它（错峰启动时元素停在 r=0 / 零长，本来就看不见）
+      /* 减速外扩：起步快、末段几乎停住（这是参考里最值得留的那点手感） */
+      const eased = easeOutCubic(progress);
+      /* 描边同时**细到 0** —— 消失是几何（墨变细），不是透明度 */
+      const stroke = part.stroke0 * (1 - progress);
+      const ink = part.mix > 0 ? mixRgb(sectionColorRgb, NODE_BASE, part.mix) : sectionColorRgb;
+      part.el.style.stroke = rgbToHex(ink);
+      part.el.style.strokeWidth = stroke.toFixed(2);
+      if (part.shape === 'ring') {
+        part.el.setAttribute('cx', x.toFixed(1));
+        part.el.setAttribute('cy', y.toFixed(1));
+        part.el.setAttribute('r', (part.scale * part.radius * eased).toFixed(2));
+      } else {
+        const outerR = part.length * eased;
+        part.el.setAttribute('x1', (x + Math.cos(part.angle) * outerR * 0.45).toFixed(2));
+        part.el.setAttribute('y1', (y + Math.sin(part.angle) * outerR * 0.45).toFixed(2));
+        part.el.setAttribute('x2', (x + Math.cos(part.angle) * outerR).toFixed(2));
+        part.el.setAttribute('y2', (y + Math.sin(part.angle) * outerR).toFixed(2));
+      }
+    }
+    if (!burst.parts.length) bursts.splice(b, 1);
+  }
+};
+
+/* 停止播放时把在飞的涟漪一次清掉（和连线的高亮一样：全局状态切换，允许直接清） */
+const clearBursts = () => {
+  bursts.length = 0;
+  if (burstLayer) burstLayer.replaceChildren();
+};
+
+/* 环境层"真的开始发声"时的入口。音频那边只负责报告事实（哪一层、什么时刻开始），
+   "只有 birds 画涟漪"这条判断留在视觉侧（用户 2026-09："只在出现 birds 来一发，它只跟 birds 相关"）。 */
+const onTextureStart = texture => {
+  if (texture && texture.name === 'birds') spawnBurst(texture);
+};
+
 /* ---------- 连线与箭头的几何（参考点决定“路径末端落在箭头的哪个位置”） ----------
  * 用户先后报过两个同源的毛病：①“线看起来超出了箭头”、②“线都长完了，箭头的三角还有点透明，
  * 明明是一条完整的连接，却成了线 + 半透明的箭头”。
@@ -2044,9 +2201,13 @@ const activateEngine = async seed => {
      ⚠️ 若将来又要给视觉加随机，仍然必须像 textureRng 这样**从种子派生一条独立流**，
      绝不能消耗钢琴的 rng（否则同一个种子的音符序列会因视觉改动而变化，0.2 踩过这个坑）。 */
   const chain = buildSectionChain(rng);
+  /* 视觉侧的独立随机流：只给"涟漪"的位置抖动用（见 spawnBurst）。
+     ⚠️ 必须与 textureRng 分开 —— 那条流决定"环境层什么时候出现、出现多久"，
+     视觉去消耗它的话，加一个视觉功能就会改变音频调度（等于改了音乐，0.2 踩过这个坑）。 */
+  burstRng = makeRng((seed ^ 0x85ebca6b) >>> 0);
   const [piano, moodistTextures] = await Promise.all([
     createPiano(Tone.Destination),
-    createMoodistTextures(Tone.Destination, textureRng),
+    createMoodistTextures(Tone.Destination, textureRng, { onStart: onTextureStart }),
   ]);
 
   let currentSection = 0;
@@ -2222,6 +2383,7 @@ const activateEngine = async seed => {
     });
     previousVisualNote = null;
     previousVisualTime = null;
+    clearBursts();          // 环境层涟漪是"当前状态"，停止播放就清掉（不保留残留）
     piano.releaseAll(0);
   };
 
