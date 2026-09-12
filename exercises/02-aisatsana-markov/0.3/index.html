@@ -5,8 +5,63 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" href="data:,">
 <title>02 · Aisatsana Markov 0.3（Markov 乐句重组）</title>
+<script>
+  /* 主题必须在**首帧之前**定下来，否则选了浅色的人每次打开都会先闪一帧深色。
+     这里只做两件事：读存储、写 data-theme。存储可能不可用（file:// 或隐私模式会抛错），
+     失败就保持默认深色。★ 默认深色、不跟随系统 prefers-color-scheme —— 这块深底就是这个练习的身份。 */
+  try {
+    const saved = localStorage.getItem('gml-theme');
+    if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
+  } catch (error) {}
+</script>
 <style>
-  :root { --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32; --section-color:#8b5cf6; --accent2:#fafafa; }
+  /* ---------- 主题：深色（默认）/ 浅色 ----------
+     用户 2026-09：“准备调整配色，先在 HUD 里加 light/dark 按钮”。
+     配色**只有这一处定义**：页面元素直接用这些变量，JS 也从同一批变量里读（见 applyTheme）——
+     因为 SVG 的节点颜色是逐帧用 RGB 三元组插值算出来的，没法直接吃 CSS 变量。
+     绝不能把颜色在 CSS 和 JS 里各写一份：一处改了另一处没改，切主题时就会出现
+     “面板变白了、环上的点还是黑的”这种半截状态。
+     两套值是**镜像**的（深色用的是 zinc 色阶，浅色把深浅对调），所以浅色不是另一种风格，
+     而是同一张图的底片：面板始终比底色亮一点、节点始终比底色灰一点、墨色始终反过来。 */
+  :root {
+    color-scheme:dark;
+    --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32; --section-color:#8b5cf6; --accent2:#fafafa;
+    --hairline:#2a2a2e;              /* 面板内的细分隔线（.status / .matrix） */
+    --stage-bg:#0d0d0f;              /* 画面底色 */
+    --graph-edge:#71717a;            /* 灰色转移线的墨色；明度另外由 JS 写元素 opacity（EDGE_OPACITY_MIN/MAX） */
+    --graph-node-idle:#3f3f46;       /* 收起的节点 */
+    --graph-node-present:#52525b;    /* 在场的节点 */
+    --graph-node-stroke:#71717a;     /* 在场节点的描边 */
+    --graph-label:#ffffff;           /* 音名 */
+    --log-fg:#f4f4f5;
+    --code-bg:#27272a; --code-fg:#e4e4e7;
+    --control-primary:#fafafa; --control-primary-fg:#18181b;
+    --control-secondary:#27272a; --control-secondary-fg:#fafafa;
+    --control-input-bg:#0d0d0f; --control-input-fg:#fafafa; --control-input-border:#3f3f46;
+    --control-focus:#a1a1aa;
+  }
+  html[data-theme="light"] {
+    color-scheme:light;
+    --bg:#fafafa; --panel:#ffffff; --fg:#18181b; --dim:#52525b; --line:#d4d4d8;
+    --hairline:#e4e4e7;
+    --stage-bg:#f4f4f5;
+    /* 反差由“纸”提供，不由“墨”提供：浅色的墨色**沿用深色的同一个灰**（#71717a），
+       于是连线的对比度与深色主题一致（实测 4.03:1 vs 4.02:1），最淡的概率线也一样
+       （0.16 不透明度混合后 1.13:1 vs 1.15:1）。
+       节点的灰度也按“对比度对齐”取值，而不是简单把色阶对调 ——
+       只对调色阶时节点几乎融进底色（实测 1.34:1，深色是 2.51:1），整张图会发虚。 */
+    --graph-edge:#71717a;
+    --graph-node-idle:#b3b3b8;       /* 对齐深色收起节点的 1.86:1 */
+    --graph-node-present:#9a9a9e;    /* 对齐深色在场节点的 2.51:1 */
+    --graph-node-stroke:#71717a;
+    --graph-label:#18181b;           /* 节点本身在浅色主题里偏暗，所以音名用深墨而不是白字 */
+    --log-fg:#18181b;
+    --code-bg:#e4e4e7; --code-fg:#3f3f46;
+    --control-primary:#18181b; --control-primary-fg:#fafafa;
+    --control-secondary:#e4e4e7; --control-secondary-fg:#18181b;
+    --control-input-bg:#ffffff; --control-input-fg:#18181b; --control-input-border:#d4d4d8;
+    --control-focus:#71717a;
+  }
   * { box-sizing:border-box; }
   html, body { width:100%; height:100%; }
   body { margin:0; overflow:hidden; background:var(--bg); color:var(--fg); font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
@@ -17,12 +72,12 @@
   .hud { position:fixed; z-index:10; background:var(--panel); border:1px solid var(--line); border-radius:7px; transition:opacity .2s ease; }
   .intro-hud { top:20px; left:20px; padding:14px 16px; }
   .controls-hud { top:20px; right:20px; width:310px; padding:14px; }
-  .status { margin-top:12px; padding-top:10px; border-top:1px solid #2a2a2e; color:var(--dim); font-size:11px; line-height:1.5; }
+  .status { margin-top:12px; padding-top:10px; border-top:1px solid var(--hairline); color:var(--dim); font-size:11px; line-height:1.5; }
   .status b { color:var(--fg); }
   .visual-head { position:absolute; z-index:3; right:20px; bottom:16px; display:flex; align-items:baseline; gap:8px; color:var(--dim); opacity:.55; transition:opacity .2s ease; }
   .visual-title { color:inherit; font-size:11px; font-weight:500; transition:opacity .18s ease; }
   .visual-meta { color:inherit; font:10px Consolas,monospace; transition:opacity .18s ease; }
-  .markov-stage { position:fixed; z-index:1; inset:0; overflow:hidden; width:100vw; height:100vh; background:#0d0d0f; isolation:isolate; }
+  .markov-stage { position:fixed; z-index:1; inset:0; overflow:hidden; width:100vw; height:100vh; background:var(--stage-bg); isolation:isolate; }
   .markov-map { position:absolute; z-index:2; inset:0; display:block; width:100%; height:100%; background:transparent; }
   /* 乐句之间是“变形”，不是“切换”：节点与边一次建好、永不增删。
      存在度（opacity）表达“这个音高/转移是否属于当前段落”，用慢过渡；
@@ -37,7 +92,7 @@
        于是线和箭头各按一套规则变暗、永远对不齐（用户看到的就是“线是实心的、箭头还半透明”）。
        透明度只能有一个来源 —— 元素的 opacity —— 所以概率明度直接写进 EDGE_OPACITY_MIN/MAX
        （已把旧的 0.8 折算进去，屏幕上线的明度不变）。 */
-  .chain-edge { fill:none; stroke:#71717a; transition:stroke 1.2s ease-out; }
+  .chain-edge { fill:none; stroke:var(--graph-edge); transition:stroke 1.2s ease-out; }
   /* 行进到位后底边只换颜色：★ 绝不能同时改 stroke-width —— 箭头是 markerUnits="strokeWidth"，
      描边一变粗箭头就会跟着放大（0.3 早期版本就是这样让彩色箭头比灰箭头大了一倍多）。
      颜色用 0.12 秒快速切换（箭头要“到点亮起”），退色仍走基础规则的 1.2 秒。 */
@@ -61,36 +116,51 @@
   /* 节点的存在度、半径、颜色由 JS 逐帧写入（见 paintNode）：节点会在“藏身层”和
      “在场层”之间搬动，而 DOM 搬动会重启动 CSS 过渡，所以节点不用 CSS 过渡。 */
   .chain-node { stroke-width:1; }
-  .node-label { fill:#fff; font:600 12px Consolas,monospace; text-anchor:middle; dominant-baseline:middle; pointer-events:none; }
+  .node-label { fill:var(--graph-label); font:600 12px Consolas,monospace; text-anchor:middle; dominant-baseline:middle; pointer-events:none; }
   .legend { position:absolute; z-index:3; left:50%; bottom:18px; display:flex; gap:18px; color:var(--dim); font-size:11px; transform:translateX(-50%); transition:opacity .2s ease; }
   body.hud-hidden .hud,
   body.hud-hidden .visual-head,
   body.hud-hidden .legend { opacity:0; pointer-events:none; }
   .key { display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; vertical-align:1px; }
-  .key.source { background:#52525b; border:1px solid #71717a; }
+  .key.source { background:var(--graph-node-present); border:1px solid var(--graph-node-stroke); }
   .key.played { background:var(--section-color); }
-  .log { position:absolute; z-index:1; inset:110px 5vw 54px; display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; color:#f4f4f5; font:13px/1.775 Consolas,monospace; text-align:left; opacity:.8; pointer-events:none; }
+  .log { position:absolute; z-index:1; inset:110px 5vw 54px; display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; color:var(--log-fg); font:13px/1.775 Consolas,monospace; text-align:left; opacity:.8; pointer-events:none; }
   .log-content { flex:0 0 auto; width:100%; white-space:pre-wrap; will-change:transform; }
   .log-line { min-height:1.775em; animation:logLineIn .55s cubic-bezier(.22,1,.36,1) both; }
   @keyframes logLineIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
   .info-hud { left:20px; bottom:20px; width:min(620px,calc(100vw - 40px)); max-height:65vh; padding:10px 13px; overflow:auto; color:var(--dim); }
   .info-hud:not([open]) { width:auto; }
   .info-hud summary { color:var(--fg); font-size:12px; cursor:pointer; user-select:none; }
-  .matrix { margin-top:12px; padding-top:12px; border-top:1px solid #2a2a2e; font-family:Consolas,monospace; font-size:11px; color:var(--dim); line-height:1.6; }
+  .matrix { margin-top:12px; padding-top:12px; border-top:1px solid var(--hairline); font-family:Consolas,monospace; font-size:11px; color:var(--dim); line-height:1.6; }
   .matrix b { color:var(--fg); }
   .hint { font-size:12.5px; color:var(--dim); line-height:1.9; }
   .hint b { color:var(--fg); }
-  code { background:#27272a; padding:2px 5px; border-radius:3px; font-size:12px; color:#e4e4e7; }
+  code { background:var(--code-bg); padding:2px 5px; border-radius:3px; font-size:12px; color:var(--code-fg); }
+  /* 主题按钮放在控制面板里（和播放/种子/换一版同属"页面控件"）。
+     图标风格与 shared/exercise-controls.js 里那套完全一致（24×24 viewBox、fill:none、
+     stroke 继承 currentColor、stroke-width 2.4），所以看起来是同一套图标，不是新引入的一套。 */
+  .controls-row { display:flex; align-items:center; gap:10px; }
+  .theme-toggle {
+    margin-left:auto;
+    display:inline-flex; align-items:center; justify-content:center;
+    width:28px; height:28px; padding:0;
+    border:1px solid var(--line); border-radius:4px;
+    background:transparent; color:var(--dim); cursor:pointer;
+    transition:color .15s ease, border-color .15s ease;
+  }
+  .theme-toggle:hover { color:var(--fg); border-color:var(--dim); }
+  .theme-toggle:focus-visible { outline:1px solid var(--control-focus); outline-offset:1px; }
+  .theme-toggle svg { width:15px; height:15px; stroke-width:2.4; }
   exercise-controls {
     --exercise-control-radius:4px;
-    --exercise-control-primary:#fafafa;
-    --exercise-control-primary-fg:#18181b;
-    --exercise-control-secondary:#27272a;
-    --exercise-control-secondary-fg:#fafafa;
-    --exercise-control-input-border:#3f3f46;
-    --exercise-control-input-bg:#0d0d0f;
-    --exercise-control-input-fg:#fafafa;
-    --exercise-control-focus:#a1a1aa;
+    --exercise-control-primary:var(--control-primary);
+    --exercise-control-primary-fg:var(--control-primary-fg);
+    --exercise-control-secondary:var(--control-secondary);
+    --exercise-control-secondary-fg:var(--control-secondary-fg);
+    --exercise-control-input-border:var(--control-input-border);
+    --exercise-control-input-bg:var(--control-input-bg);
+    --exercise-control-input-fg:var(--control-input-fg);
+    --exercise-control-focus:var(--control-focus);
   }
   @media (max-width:640px) {
     .intro-hud { top:10px; left:10px; padding:10px 12px; }
@@ -124,7 +194,11 @@
   </header>
 
   <div class="hud controls-hud">
-    <exercise-controls id="transportControls"></exercise-controls>
+    <div class="controls-row">
+      <exercise-controls id="transportControls"></exercise-controls>
+      <!-- 图标由 JS 按当前主题写入（深色时显示太阳 = 点了变浅色）。见 applyTheme。 -->
+      <button type="button" class="theme-toggle" id="themeToggle" title="切换到浅色" aria-label="切换到浅色" aria-pressed="false"></button>
+    </div>
     <div class="status" id="status">点击播放开始。日志会显示每次乐句转换（马尔可夫链的"行走"）。按 <b>f</b> 全屏。</div>
   </div>
 
@@ -1220,15 +1294,70 @@ const HEAD_ARROW_BACK = 12;
 /* 高亮退场用同一个时长（反向生长回去），所以这里不再需要单独的退色时长：
    旧版有个 EDGE_SWEEP_FADE_S = 1.2，用于"被下一条取代后按透明度退色"，已随几何化改造删除。 */
 const FIRST_NOTE_INTERVAL_S = 0.5;  // 第一个音没有“上一个音”可参照，用这个兜底
-const NODE_IDLE_FILL = [63, 63, 70];          // #3f3f46 收起
-const NODE_PRESENT_FILL = [82, 82, 91];       // #52525b 在场
-const NODE_PRESENT_STROKE = [113, 113, 122];  // #71717a 在场描边
+/* 节点颜色是**逐帧用 RGB 三元组插值**算出来的（见 paintNode 的 mixRgb），没法直接吃 CSS 变量，
+   所以这三个值由 applyTheme() 从 CSS 变量里读进来（用 let 就是为了切主题时能重赋值）。
+   下面的数字只是深色主题的初始值，真正的来源是 :root / html[data-theme="light"]。 */
+let NODE_IDLE_FILL = [63, 63, 70];          // #3f3f46 收起
+let NODE_PRESENT_FILL = [82, 82, 91];       // #52525b 在场
+let NODE_PRESENT_STROKE = [113, 113, 122];  // #71717a 在场描边
 const SECTION_COLOR_MORPH_S = 2.4;  // 段落色渐变时长
-
 let graphBuilt = false;
 let colorMorphFrame = null;
 let visualTextTimer = null;
 let sectionColorRgb = [139, 92, 246];
+
+/* ---------- 主题：深色 / 浅色（HUD 右上角的按钮） ----------
+ * 用户 2026-09：“准备调整配色，先在 HUD 里加 light/dark 按钮”。
+ * 分工是**颜色值只写在 CSS 里**：页面元素直接用变量，SVG 那部分由这里读成 RGB 数组交给 paintNode。
+ * 为什么不能各写一份：一处改了另一处没改，切主题就会出现“面板变白了、环上的点还是黑的”这种半截状态
+ * （这正是 02 反复踩过的“同一个量有两个来源”那类坑，见箭头明度那条）。
+ * 默认深色 —— 这块深底就是这个练习的身份，所以**不跟随系统 prefers-color-scheme**；
+ * 用户的选择存在 localStorage（键 lab 级共用，将来别的练习支持浅色时可以直接沿用），
+ * 并且在 <head> 的第一段脚本里、首帧之前就应用，避免浅色用户先看到一帧深色。 */
+const THEME_STORAGE_KEY = 'gml-theme';
+const THEME_DARK = 'dark';
+const THEME_LIGHT = 'light';
+const themeToggleEl = $('themeToggle');
+/* 图标表达的是“点了会变成什么”，不是“现在是什么”：深色时显示太阳（点了变浅色）。
+   几何照抄 shared/exercise-controls.js 那套图标（24×24 viewBox、fill:none、stroke 继承 currentColor）。 */
+const THEME_ICONS = {
+  [THEME_LIGHT]: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path>'
+    + '<path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path>'
+    + '<path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path>',
+  [THEME_DARK]: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>',
+};
+const readCssColor = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+const hexToRgb = hex => {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!match) return null;
+  const value = parseInt(match[1], 16);
+  return [value >> 16 & 255, value >> 8 & 255, value & 255];
+};
+let themeName = THEME_DARK;
+const applyTheme = theme => {
+  themeName = theme === THEME_LIGHT ? THEME_LIGHT : THEME_DARK;
+  document.documentElement.dataset.theme = themeName;
+  /* 画布上的颜色跟着同一批变量走。节点每一帧都会重画（paintNode），所以这里改完立刻生效；
+     连线、音名、图例走的是 CSS 变量，不用管。 */
+  NODE_IDLE_FILL = hexToRgb(readCssColor('--graph-node-idle', '#3f3f46'));
+  NODE_PRESENT_FILL = hexToRgb(readCssColor('--graph-node-present', '#52525b'));
+  NODE_PRESENT_STROKE = hexToRgb(readCssColor('--graph-node-stroke', '#71717a'));
+  if (!themeToggleEl) return;
+  const next = themeName === THEME_LIGHT ? THEME_DARK : THEME_LIGHT;
+  themeToggleEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">${THEME_ICONS[next]}</svg>`;
+  const label = next === THEME_LIGHT ? '切换到浅色' : '切换到深色';
+  themeToggleEl.title = label;
+  themeToggleEl.setAttribute('aria-label', label);
+  themeToggleEl.setAttribute('aria-pressed', String(themeName === THEME_LIGHT));
+};
+if (themeToggleEl) {
+  themeToggleEl.addEventListener('click', () => {
+    applyTheme(themeName === THEME_DARK ? THEME_LIGHT : THEME_DARK);
+    try { localStorage.setItem(THEME_STORAGE_KEY, themeName); } catch (error) {}
+  });
+}
+applyTheme(document.documentElement.dataset.theme);
+
 
 const mixRgb = (from, to, amount) => from.map((value, index) => Math.round(value + (to[index] - value) * amount));
 const rgbToHex = rgb => '#' + rgb.map(value => value.toString(16).padStart(2, '0')).join('');

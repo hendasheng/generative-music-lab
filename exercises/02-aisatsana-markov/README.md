@@ -66,6 +66,7 @@
   3. 于是两者天然同步：音密处一闪即暗、留白处余韵长，而不会出现“行进还在走、点已经暗了”。
   时长由 `showVisualNote(phraseId, note, audioTime)` 传入的发声时刻与 `previousVisualTime` 相减得到；第一个音没有“上一个音”可参照，用 `FIRST_NOTE_INTERVAL_S = 0.5` 兜底（行进与点亮都用它，避免开场第一个音闪成 0.16 秒）；
 - 停止播放只收回“当前状态”，图保留；下次播放接着同一张图继续。
+- **HUD 增加 light / dark 主题按钮（2026-09，用户："准备调整配色，先在 HUD 里加 light/dark 按钮，用当前 icon 库的 icon"）**：按钮在控制面板右上角（控制面板改成 `flex` 行），图标沿用 `shared/exercise-controls.js` 那套（24×24、`fill:none`、`stroke` 继承 `currentColor`、`stroke-width: 2.4`），**图标表示"点了会变成什么"**（深色时显示太阳）；`title` / `aria-label` 用动词，`aria-pressed` 表示当前是不是浅色。配色**只有一处定义**（CSS 变量 `:root` 与 `html[data-theme="light"]`）：页面元素直接用变量，SVG 节点因为要逐帧做 RGB 插值，由 `applyTheme()` 从同一批变量读成数组（`NODE_IDLE_FILL` / `NODE_PRESENT_FILL` / `NODE_PRESENT_STROKE` 因此改成 `let`）—— 不能在 CSS 和 JS 里各写一份，否则会出现"面板变白了、环上的点还是黑的"。主题在 `<head>` 第一段脚本里、**首帧之前**应用（否则浅色用户每次打开先闪一帧深色），选择存 `localStorage['gml-theme']`（读写都包 `try`，`file://` 下会抛错），**默认深色、不跟随系统**。★ 浅色不是"把 zinc 色阶对调"：第一版按色阶镜像取值后整张图发虚，实测节点与底色只剩 **1.34:1**（深色 2.51:1）、连线墨色 2.33:1（深色 4.02:1）；现在改成**对齐对比度** —— 墨色（连线与节点描边 `#71717a`）两套主题共用，节点灰度按对比度反解（浅色收起/在场 = `#b3b3b8` / `#9a9a9e`），实测在场节点 **2.55:1**（深色 2.51）、收起节点 **1.90:1**（深色 1.86）、连线 100% **4.40:1**（深色 4.02）、最淡的概率线 **1.21:1**（深色 1.15）。音名颜色跟着节点走（深色白字、浅色 `#18181b`）。⚠️ 待办：日志正文用段落色当墨，浅色下绿色只剩 **1.97:1**（深色 8.97:1）、橙色 2.15:1（深色 8.22:1），需要另配一套压暗的段落色或改用 `--fg`，等配色定夺；
 
 **位置不用 CSS 过渡，也不用欠阻尼弹簧**：节点要在“藏身层 / 在场层”之间搬动，而 DOM 搬动会重启动 CSS 过渡，所以半径、透明度、颜色、音名可见性全部由 `paintNode()` 逐帧写入。
 
@@ -111,7 +112,8 @@
   - 连线灰度：`EDGE_OPACITY_MIN = 0.16` / `EDGE_OPACITY_MAX = 0.72`（元素 `opacity`，也是箭头跟着走的那个值）；
   - 每句的朝向与形状：`RING_ORIENT_STEP = 2π/14 × 0.5`（每句最多转半个槽位，朝"首音在上方"）、`RING_ACTIVITY_PULL = 0.22`（活跃度对半径的拉伸）、`RING_SLOT_JITTER = 0.04`（槽点固定抖动）；
   - 换句的两级力度：`PHRASE_KICK = 8.5` / `SECTION_KICK = 12.5` / `NOTE_KICK = 1.7`；
-  - 收起的透明度：`HIDDEN_NODE_OPACITY = 0`（想留一点暗示就调 0.05，但宿主遮挡会因此失效）。
+  - 收起的透明度：`HIDDEN_NODE_OPACITY = 0`（想留一点暗示就调 0.05，但宿主遮挡会因此失效）；
+  - 主题配色：`--bg / --panel / --fg / --dim / --line`（HUD）、`--stage-bg`（画面底）、`--graph-edge`（连线与节点描边，两套主题共用 `#71717a`）、`--graph-node-idle / --graph-node-present`（节点灰度，按对比度对齐）、`--graph-label`（音名）、`--control-*`（播放控件）—— 全部写在 `:root` 与 `html[data-theme="light"]` 两处，改配色只动这里；
 
 ## 0.2 背景 texture
 
