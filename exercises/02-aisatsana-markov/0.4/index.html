@@ -70,6 +70,10 @@
   .controls-hud { top:20px; right:20px; width:310px; padding:14px; }
   .status { margin-top:12px; padding-top:10px; border-top:1px solid var(--hairline); color:var(--dim); font-size:11px; line-height:1.5; }
   .status b { color:var(--fg); }
+  /* HUD 里的环境层状态行（用户 2026-09："环境层的信息不要出现在页面的文本中，可以放在 hud 中"）：
+     **系统状态**（加载结果 / 现在有没有在响）放这里；画面上的日志只留马尔可夫链的"行走"。 */
+  .ambient { margin-top:8px; padding-top:8px; border-top:1px solid var(--hairline); color:var(--dim); font-size:11px; line-height:1.5; }
+  .ambient b { color:var(--fg); }
   .visual-head { position:absolute; z-index:3; right:20px; bottom:16px; display:flex; align-items:baseline; gap:8px; color:var(--dim); opacity:.55; transition:opacity .2s ease; }
   .visual-title { color:inherit; font-size:11px; font-weight:500; transition:opacity .18s ease; }
   .visual-meta { color:inherit; font:10px Consolas,monospace; transition:opacity .18s ease; }
@@ -174,6 +178,7 @@
     .sub { display:none; }
     .controls-hud { top:76px; left:10px; right:10px; width:auto; padding:10px; }
     .status { margin-top:8px; padding-top:8px; }
+    .ambient { margin-top:8px; padding-top:8px; }
     .log { inset:140px 16px 50vh; font-size:11px; line-height:1.55; }
     .visual-head { right:10px; bottom:40px; }
     .legend { left:auto; right:10px; bottom:12px; gap:8px 12px; transform:none; }
@@ -205,6 +210,7 @@
       <button type="button" class="theme-toggle" id="themeToggle" title="切换到浅色" aria-label="切换到浅色" aria-pressed="false"></button>
     </div>
     <div class="status" id="status">点击播放开始。日志会显示每次乐句转换（马尔可夫链的"行走"）。按 <b>f</b> 全屏。</div>
+    <div class="ambient" id="ambientStatus">环境层：未播放</div>
   </div>
 
   <details class="hud info-hud">
@@ -263,13 +269,8 @@
       <b>调试图方便：</b>按 <code>s</code> 键就手动来一发 —— 参数和落点都走真鸟叫那一套算法
       （所以看到的就是真鸟叫时会看到的那一发），不用等；每按一下形态都不同（"第 N 下"可复现），
       而且不动用鸟叫那条随机流。见 <code>DEBUG_BURST_KEY</code>。
-      按 <code>b</code> 键则是让 <b>birds 这一层立刻真的响一声</b>（音频 + 涟漪一起走真实路径），
-      用来当场确认"到底听不听得到鸟叫、看不看得见涟漪"—— 因为按正常排程，birds 平均要 1.6 分钟才第一次出现、
-      之后约每 3 分钟一次（它要过"层数 &lt; 2""没有别的环境事件在响"两道门，再过 50% 的概率骰）。见 <code>DEBUG_TEXTURE_KEY</code>。<br>
-      <b>环境层的日志：</b>画面日志里会写<b>环境层就绪 6/6</b>、<b>环境层入：birds …</b>、
-      <b>环境层加载失败：…</b> —— 素材来自远程 CDN，以前某层加载失败在画面上完全没有痕迹
-      （那一层会整场缺席），现在一眼就能看见；失败还会自动重试 3 次（超时 25 秒）。<br>
-      <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>s</code> 手动来一发调试涟漪；按 <code>b</code> 手动让 birds 响一声；按 <code>f</code> 全屏、再按一次退出。<br>
+      按 <code>b</code> 键则让环境层立刻走一遍真实发声路径（环境层的状态看 HUD）。见 <code>DEBUG_TEXTURE_KEY</code>。<br>
+      <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>s</code> 手动来一发调试涟漪；按 <code>b</code> 手动让环境层响一声；按 <code>f</code> 全屏、再按一次退出。<br>
       <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
       音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
       <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
@@ -899,7 +900,7 @@ const hashSeed = str => {
   return h;
 };
 const $ = id => document.getElementById(id);
-const statusEl = $('status'), logContentEl = $('logContent'), matrixEl = $('matrix');
+const statusEl = $('status'), logContentEl = $('logContent'), ambientStatusEl = $('ambientStatus'), matrixEl = $('matrix');
 const visualEl = document.querySelector('.markov-stage');
 const markovMapEl = $('markovMap'), visualTitleEl = $('visualTitle'), visualMetaEl = $('visualMeta');
 const hudElements = [...document.querySelectorAll('.hud, .visual-head, .legend')];
@@ -1216,6 +1217,7 @@ const animateGraph = () => {
   /* 涟漪放在 `if (nodes.length)` 之外：它不依赖图是否建好（环境层可能比第一句还早出现），
      虽然实际上 birds 最早也要 5 秒后才来，但那属于调度细节，不该变成这里的前置条件。 */
   updateBursts(performance.now());
+  renderAmbientStatus();   // HUD 那行环境层状态（内部先比字符串，稳态下几乎零开销）
   graphAnimationFrame = requestAnimationFrame(animateGraph);
 };
 
@@ -2823,6 +2825,10 @@ let engine = null;
 /* 当前这一场的环境层模块（createMoodistTextures 的返回值）—— 只给调试入口（`b` 键）用：
    playNow() 会走与真鸟叫完全相同的那条发声路径。停止/换一版时置回 null。 */
 let activeMoodist = null;
+/* HUD 里那行"环境层状态"的重绘函数 —— 由 activateEngine 装入（它要看得到这一场的层）。
+   放在顶层是因为逐帧的主循环（animateGraph）要调它；函数内部先比字符串再写 DOM，
+   所以稳态下每帧只做一次字符串拼接，不会一直改 DOM。 */
+let renderAmbientStatus = () => {};
 let currentSeed = null;
 
 const activateEngine = async seed => {
@@ -2847,27 +2853,46 @@ const activateEngine = async seed => {
   const masterGain = new Tone.Gain(Math.pow(10, MASTER_VOLUME_DB / 20));   // db → 线性（+6dB ≈ ×2.0）
   const masterLimiter = new Tone.Limiter(-1).connect(Tone.Destination);
   masterGain.connect(masterLimiter);
-  /* ★ 环境层的"事实"也要写进**画面上的日志**：加载失败、开始发声这两件事以前只在控制台里，
-     画面上完全看不出来 —— 用户 2026-09 报"听了好久都没有鸟叫，也没有相应的触发了"，
-     而这两种原因（那一层根本没加载上 / 加载上了但被钢琴盖住）在画面上长得一模一样。
-     ⚠️ `currentSection` 必须**声明在这之前**：下面这个 await 期间就会触发通知，
-        而日志行要按当前段落色着色 —— 声明在后面会踩 TDZ（见"声明顺序"那条教训）。 */
-  let currentSection = 0;
-  const onAmbientNotice = (texture, kind, detail) => {
-    if (kind === 'ready') { log('环境层就绪 ' + detail, currentSection); return; }
-    if (kind === 'loadFailed') {
-      log('环境层加载失败：' + texture.name + '（' + detail + '）', currentSection);
-      return;
+  /* ---- HUD 里的环境层状态（用户 2026-09："环境层的信息不要出现在页面的文本中，可以放在 hud 中"）----
+     "哪几层加载上了 / 现在有没有在响 / 上一次是多久前"属于**系统状态**，不是乐句内容 ——
+     所以它**不进画面上的日志**（那里只留马尔可夫链的"行走"），而是写在控件面板里的一行小字里。
+     状态全部由音频侧报来的**事实**驱动（`onNotice` / `onStart`），这里只负责显示。 */
+  const ambientLayers = [];                                  // [{ name, until }]（until = performance 毫秒）
+  const ambientState = { ready: null, failures: [], last: null };
+  renderAmbientStatus = () => {
+    const now = performance.now();
+    for (let i = ambientLayers.length - 1; i >= 0; i -= 1) {
+      if (ambientLayers[i].until <= now) ambientLayers.splice(i, 1);
     }
-    /* 'loaded' 不逐条刷屏：就绪那一行已经报了总数 */
+    let text = ambientState.ready ? '环境层 ' + ambientState.ready : '环境层：加载中…';
+    if (ambientState.failures.length) text += '（失败：' + ambientState.failures.join('、') + '）';
+    text += ambientLayers.length
+      ? ' · 正在响 ' + ambientLayers.map(l => l.name + ' ' + Math.max(1, Math.ceil((l.until - now) / 1000)) + 's').join('、')
+      : ' · 静默';
+    if (ambientState.last) {
+      const seconds = Math.max(0, (now - ambientState.last.at) / 1000);
+      text += ' · 上次 ' + ambientState.last.name + ' '
+        + (seconds < 60 ? Math.round(seconds) + ' 秒前' : Math.round(seconds / 60) + ' 分前');
+    }
+    if (ambientStatusEl && text !== ambientStatusEl.textContent) ambientStatusEl.textContent = text;
   };
-  /* 环境层每次**真的开始发声**都留一行：这就是"鸟叫到底来没来"的可视答案。
-     包一层而不是直接传 onTextureStart —— 后者是顶层函数，看不到 currentSection。 */
+  const onAmbientNotice = (texture, kind, detail) => {
+    if (kind === 'ready') ambientState.ready = detail;
+    else if (kind === 'loadFailed' && texture) ambientState.failures.push(texture.name);
+    /* 'loaded' 不逐条记：就绪那一项已经报了总数 */
+    renderAmbientStatus();
+  };
+  /* 每次**真的开始发声**都记一笔：这就是"鸟叫到底来没来"的答案（显示在 HUD 那行里）。
+     ★ 仍然把四个事实原样交给 onTextureStart —— 涟漪只在它内部判断"是不是 birds"。 */
   const onAmbientStart = (texture, time, duration, startOffset) => {
-    log('环境层入：' + texture.name + ' ' + duration.toFixed(0) + 's（素材 '
-      + startOffset.toFixed(0) + 's 起）', currentSection);
+    const now = performance.now();
+    const fade = Math.min(texture.fade, duration * 0.42);
+    ambientLayers.push({ name: texture.name, until: now + (duration + fade) * 1000 });
+    ambientState.last = { name: texture.name, at: now };
+    renderAmbientStatus();
     onTextureStart(texture, time, duration, startOffset);
   };
+  renderAmbientStatus();
   const [piano, moodistTextures] = await Promise.all([
     createPiano(masterGain),
     createMoodistTextures(masterGain, textureRng, {
@@ -2878,7 +2903,7 @@ const activateEngine = async seed => {
   ]);
   activeMoodist = moodistTextures;
 
-  /* currentSection 已经声明在上面（环境层通知要按当前段落色写日志）；这里只留其余状态 */
+  let currentSection = 0;
   let lastSection = 0;
   let phraseCount = 0;
   let densityMemory = 1;
@@ -3058,6 +3083,8 @@ const activateEngine = async seed => {
   const deactivate = () => {
     end();
     activeMoodist = null;      // 调试入口（`b`）不能再去操作已经 dispose 的层
+    renderAmbientStatus = () => {};
+    if (ambientStatusEl) ambientStatusEl.textContent = '环境层：未播放';
     piano.dispose();
     moodistTextures.dispose();
     masterGain.dispose();
