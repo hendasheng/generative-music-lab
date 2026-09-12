@@ -179,7 +179,7 @@
     .controls-hud { top:76px; left:10px; right:10px; width:auto; padding:10px; }
     .status { margin-top:8px; padding-top:8px; }
     .ambient { margin-top:8px; padding-top:8px; }
-    .log { inset:140px 16px 50vh; font-size:11px; line-height:1.55; }
+    .log { inset:140px 16px 50vh; font-size:10px; line-height:1.55; }
     .visual-head { right:10px; bottom:40px; }
     .legend { left:auto; right:10px; bottom:12px; gap:8px 12px; transform:none; }
     .info-hud { left:10px; bottom:10px; width:auto; max-width:calc(100vw - 170px); padding:8px 10px; }
@@ -950,11 +950,6 @@ const updateGraphViewBox = (rescaleNodes = false) => {
    旧版存的是 `{ msg, color }`，于是切主题后老行永远留在旧主题的配色里
    （用户 2026-09："打印的乐句颜色没跟上吧"）。 */
 const logLines = [];
-/* 上一次写日志的**音频时刻**（用来把行距做成"这一次演奏与上一次之间的间隔"，见下面 log 的注释） */
-let lastLogAt = null;
-/* 日志行距的尺度：名义间隔（= 一句的长度）对应 `LOG_GAP_SCALE` 个行高，最长不超过 `LOG_GAP_MAX_SCALE` 个 */
-const LOG_GAP_SCALE = 1.5;
-const LOG_GAP_MAX_SCALE = 3;
 /* ---- 行内音符按**时间**铺开（用户 2026-09："真正的需求指的是音符间的距离，而不是乐句的行距"）----
    一句里的音名不再等距排列，而是**字距 ∝ 这个音与上一个音的时间差**，于是这一行读起来像一小段
 "文字钢琴卷"：疏的地方拉开、密的地方挤在一起，rall/留白一眼就能看出来。
@@ -965,12 +960,17 @@ const LOG_GAP_MAX_SCALE = 3;
      只有比基本步长更疏的地方才拉开（0.6 秒 → 4 个空格、0.9 秒 → 7 个空格）。
    ★ 同一拍上的和弦（时间差 0）至少留 `LOG_NOTE_MIN_GAP` 个空格，否则会糊成一团。
    ★ 一行放不下时（窄屏 / 长句）按可用宽度**整体压缩**：相对疏密不变，只是整行变紧。 */
-const LOG_NOTE_CHARS_PER_SECOND = 10;
-const LOG_NOTE_MIN_GAP = 1;
+const LOG_NOTE_CHARS_PER_SECOND = 10;   // 基本步长（0.3 秒）= 3 个字符 = 音名之间一个空格
+const LOG_NOTE_MIN_GAP = 1;             // 间隔下限（空格数）：同拍和弦也不能粘在一起
+const LOG_NOTE_MAX_GAP = 5;             // 间隔上限（空格数）：再疏也不再多给，整行因此有确定的宽度上限
 let logCharWidth = 0;
+let logCharWidthFont = '';
 /* 量一次"一个等宽字符有多宽"（同一个视口里字体不会变，量一次就够） */
 const measureLogCharWidth = () => {
-  if (logCharWidth) return logCharWidth;
+  /* ★ 缓存要连着**字号**一起记：移动端断点会把日志字号改成 10px，
+     只缓存宽度的话换断点后会用旧值算可用字符数（于是又断行）。 */
+  const fontSize = getComputedStyle(logContentEl).fontSize;
+  if (logCharWidth && logCharWidthFont === fontSize) return logCharWidth;
   const probe = document.createElement('span');
   probe.style.position = 'absolute';
   probe.style.visibility = 'hidden';
@@ -979,27 +979,43 @@ const measureLogCharWidth = () => {
   logContentEl.appendChild(probe);
   logCharWidth = (probe.getBoundingClientRect().width / 50) || 7.8;
   probe.remove();
+  logCharWidthFont = fontSize;
   return logCharWidth;
 };
 const noteTrackText = (events, availableChars) => {
   if (!events.length) return '余响';
   const first = events[0].audioTime;
-  const span = Math.max(0, events[events.length - 1].audioTime - first);
-  const noteChars = events.reduce((sum, event) => sum + event.note.length, 0);
-  const rawChars = span * LOG_NOTE_CHARS_PER_SECOND + noteChars;
-  const charsPerSecond = LOG_NOTE_CHARS_PER_SECOND
-    * ((availableChars > 0 && rawChars > availableChars) ? availableChars / rawChars : 1);
-  let out = '';
-  let cursor = 0;          // 下一个音该落在这一行的第几个字符（相对行首）
-  events.forEach((event, index) => {
-    const target = Math.round((event.audioTime - first) * charsPerSecond);
-    const gap = index === 0 ? 0 : Math.max(LOG_NOTE_MIN_GAP, target - cursor);
-    out += ' '.repeat(gap) + event.note;
-    cursor += gap + event.note.length;
-  });
-  return out;
+  /* 按给定的"每秒多少字符"排一遍。★ 间隔夹在 [LOG_NOTE_MIN_GAP, LOG_NOTE_MAX_GAP] 之间：
+     下限避免和弦糊在一起，上限避免一次长留白吃掉半行（用户 2026-09："音符间的间隔要限制一下间隔的范围，
+     现在有点太多了"）。 */
+  const build = charsPerSecond => {
+    let out = '';
+    let cursor = 0;          // 下一个音该落在这一行的第几个字符（相对行首）
+    events.forEach((event, index) => {
+      const target = Math.round((event.audioTime - first) * charsPerSecond);
+      const gap = index === 0 ? 0
+        : Math.max(LOG_NOTE_MIN_GAP, Math.min(LOG_NOTE_MAX_GAP, target - cursor));
+      out += ' '.repeat(gap) + event.note;
+      cursor += gap + event.note.length;
+    });
+    return out;
+  };
+  const nominal = build(LOG_NOTE_CHARS_PER_SECOND);
+  if (availableChars <= 0 || nominal.length <= availableChars) return nominal;
+  /* 一行放不下（移动端 / 长句）：二分找**刚好放得下**的每秒字符数 —— 相对疏密保持，只是整体变紧。
+     下界取 build(0)（= 所有间隔都取最小值，是能排出的最短形式），所以再窄也只是退化成"紧密排列"，
+     不会换行（除非连最短形式都放不下，那种屏幕宽度下已无可再压）。 */
+  let best = build(0);
+  let lo = 0;
+  let hi = LOG_NOTE_CHARS_PER_SECOND;
+  for (let i = 0; i < 18; i += 1) {
+    const mid = (lo + hi) / 2;
+    const candidate = build(mid);
+    if (candidate.length <= availableChars) { best = candidate; lo = mid; } else { hi = mid; }
+  }
+  return best;
 };
-const log = (msg, section, atSeconds) => {
+const log = (msg, section) => {
   const rgb = hexToRgb(sectionColors()[section]) || [255, 255, 255];
   const line = document.createElement('div');
   line.className = 'log-line';
@@ -1011,24 +1027,11 @@ const log = (msg, section, atSeconds) => {
     logLines.shift();
     logContentEl.firstElementChild.remove();
   }
-  /* ---- 行距 = 这两次演奏之间的**真实间隔**（用户 2026-09："页面中的乐句文本，文本间的间隔就是演奏的
-     间隔，而不是现在这样完全均匀的"）。以前每行固定占一个行高，所以哪怕两句之间隔了很久也长得等距 ——
-     而每一句**真正开始发声的时刻**本来就是动的：句内第一个音落在第几步会变，演奏版本还会整体延后
-     （`late` 0 / 0 / 0.6 / 2.4 秒）。现在把"上一行 → 这一行"的时间差换算成上间距。
-     ★ 用**音频时刻**算，不用帧到达时刻：`Tone.Draw` 的回调会被帧率/后台节流影响，
-       用帧时间会让间隔忽长忽短（假信号）；音频时刻是这段演奏自己的时间轴。
-     ★ 尺度：把"名义间隔"（= 一句的长度 `PHRASE_DURATION_S`）映射成 `LOG_GAP_SCALE` 个行高，
-       于是**平均行距和改动前差不多**，只有快/慢的地方才拉开或收紧；再夹在
-       [一个行高, `LOG_GAP_MAX_SCALE` 个行高] —— 下限保证文字不重叠，上限避免长静默吃掉整屏。 */
-  const textHeight = line.getBoundingClientRect().height;   // 此刻还没加上间距，量到的就是"文字本身"的高度
-  const gapSeconds = (typeof atSeconds === 'number' && lastLogAt !== null)
-    ? Math.max(0, atSeconds - lastLogAt)
-    : PHRASE_DURATION_S;                                    // 第一行 / 拿不到时刻：按名义间隔排
-  if (typeof atSeconds === 'number') lastLogAt = atSeconds;
-  const wantedHeight = gapSeconds * (LOG_GAP_SCALE * textHeight / PHRASE_DURATION_S);
-  const lineHeight = Math.max(textHeight, Math.min(LOG_GAP_MAX_SCALE * textHeight, wantedHeight));
-  const pushDistance = lineHeight;
-  line.style.paddingTop = Math.max(0, lineHeight - textHeight).toFixed(1) + 'px';
+  /* 行距 = 一个行高（固定，等距）。
+     ★ 2026-09 用户："去掉乐句间不同的行距，恢复到之前" —— 曾经试过"行距 ∝ 两次演奏的时间差"，
+       按要求撤销；真正的需求是**行内音符**的间距（见 noteTrackText）。 */
+  const pushDistance = line.getBoundingClientRect().height;
+  line.style.paddingTop = '0px';
   logContentEl.style.transition = 'none';
   logContentEl.style.transform = `translateY(${pushDistance}px)`;
   void logContentEl.offsetHeight;
@@ -3113,7 +3116,7 @@ const activateEngine = async seed => {
         visualPhraseId += 1;
         phraseVisualId = visualPhraseId;
         setStatus(statusHtml);
-        log(logLine, section, visualStartTime);
+        log(logLine, section);
         swapVisualText(
           SECTION_NAMES[section] + ' · 乐句 ' + String.fromCharCode(65 + phraseIndex),
           variant.name + ' · ' + playedEvents.length + '/' + rawNoteCount
