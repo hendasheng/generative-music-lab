@@ -74,17 +74,14 @@
   /* 灰色转移边：是否属于当前段落由 JS 用 dash 生长表达（从起点画到终点），不是淡入，
      所以这里不写 opacity 过渡，避免和逐帧写入的内联样式打架。
      ★ 明度（= 该转移的马尔可夫概率）也由 JS 写内联样式。
-     ★ stroke-width 由 JS 按 EDGE_STROKE_WIDTH 写进 path 属性（箭头尺寸依赖它），单一来源。
-     ★ 这里不写 stroke-opacity：实测描边的不透明度**不会**传到箭头上（箭头是 marker 的 fill，
-       只受元素 opacity 影响：描边 0.8 / 元素 1 时线是 0.80、箭头是 1.00），
-       于是线和箭头各按一套规则变暗、永远对不齐（用户看到的就是“线是实心的、箭头还半透明”）。
-       透明度只能有一个来源 —— 元素的 opacity —— 所以概率明度直接写进 EDGE_OPACITY_MIN/MAX
-       （已把旧的 0.8 折算进去，屏幕上线的明度不变）。 */
-  .chain-edge { fill:none; stroke:var(--graph-edge); transition:stroke 1.2s ease-out; }
-  /* 行进到位后底边只换颜色：★ 绝不能同时改 stroke-width —— 箭头是 markerUnits="strokeWidth"，
-     描边一变粗箭头就会跟着放大（0.3 早期版本就是这样让彩色箭头比灰箭头大了一倍多）。
-     颜色用 0.12 秒快速切换（箭头要“到点亮起”），退色仍走基础规则的 1.2 秒。 */
-  .chain-edge.active { stroke:var(--section-color); transition:stroke .12s ease-out; }
+     ★ stroke-width 由 JS 按 EDGE_STROKE_WIDTH 写进 path 属性，单一来源。
+     ★ **stroke 由 JS 写成"每条边自己的线性渐变"**（`url(#edge-grad-…)`），
+       方向靠"起点端亮、终点端淡"的灰度读出 —— 用户 2026-09："去掉常规连线的箭头，显得很乱，
+       能否用渐灰度代替箭头的方向"。所以这里既不写 stroke，也没有 `.active` 变色规则：
+       底边**永远不变色**（它没有箭头了，而且激活时会被 2.4 宽的彩色层完整盖住）。
+     ★ 这里不写 stroke-opacity：元素 opacity 是概率明度的唯一来源（EDGE_OPACITY_MIN/MAX），
+       渐变的两端再用 stop-opacity 乘上去，方向与概率因此是两个互不干扰的通道。 */
+  .chain-edge { fill:none; }
   /* “骑行箭头”的载体：它的描边**不可见**（stroke-opacity: 0），只用来承载 marker ——
      实测 marker 的 fill（context-stroke）不受 stroke-opacity 影响，所以描边不显示、箭头照常显示。
      描边宽度必须与灰线一致（1.1），否则 markerUnits="strokeWidth" 会让箭头尺寸对不上。
@@ -364,7 +361,7 @@ const SECTION_NAMES = ['A 安静', 'B 主题', 'C 发展', 'D 结尾'];
  *   · **段落色本来就必须在 JS** —— 节点的点亮染色是逐帧用 RGB 三元组插值算出来的（见 paintNode 的 mixRgb），
  *     吃不了 CSS 变量；既然要"一块看、一块调"，画面其它颜色就一并搬过来；
  *   · applyTheme() 会把这里的值**推成 <html> 上的 CSS 变量**，CSS 规则照旧用 `var(--stage-bg)`、
- *     `var(--graph-edge)` 取值。★ CSS 那边**不再声明这几个变量**：内联样式优先级高于样式表，
+ *     `var(--stage-bg)` 取值。★ CSS 那边**不再声明这几个变量**：内联样式优先级高于样式表，
  *     留在那边改根本不生效，只会让人以为"改了没反应"。
  * 页面 HUD 的配色（面板、正文、分割线、播放控件、行内 code）不是画面的一部分，仍在 <style> 的两个变量块里。
  *
@@ -380,6 +377,8 @@ const PALETTE = {
     stageBg: '#0d0d0f',                                     // 背景色（画面底，.markov-stage）
     edge: '#71717a',                                        // 未激活的连线（灰色转移线）
     nodeBase: '#52525b',                                    // 乐句点**本来的颜色**（平时就长这样）
+    edgeFadeFrom: 1,                                        // 连线渐变：**起点端**的墨浓度
+    edgeFadeTo: 0.3,                                        // 连线渐变：**终点端**的墨浓度（谁亮谁暗 = 方向）
     labelInkLight: '#ffffff',                               // 音名的字色 · 浅墨（候选一，见下面的说明）
     labelInkDark: '#18181b',                                // 音名的字色 · 深墨（候选二）
     sections: ['#D332FF', '#8DFE03', '#FFCD04', '#FA2251'], // A 紫 / B 绿 / C 橙 / D 粉 = 被激活时的颜色
@@ -388,9 +387,11 @@ const PALETTE = {
     stageBg: '#f4f4f5',
     edge: '#71717a',                                        // 与深色共用同一个墨色：反差由纸提供（§14.3）
     nodeBase: '#C2C2C2',
+    edgeFadeFrom: 1,
+    edgeFadeTo: 0.3,
     labelInkLight: '#ffffff',
-    labelInkDark: '#18181b',
-    sections: ['#FFC228', '#2558FF', '#FF741E', '#161616'], // A / B / C / D
+    labelInkDark: '#A0A0A7',
+    sections: ['#FFC228', '#2558FF', '#FF741E', '#45C674'], // A / B / C / D
   },
 };
 /* 点的颜色只有**两个状态、两种来源**（用户 2026-09 的原话："乐句点有本来的颜色和被激活的颜色
@@ -406,7 +407,12 @@ const PALETTE = {
  *   不要再往这个方向改：平时的点必须是它自己的颜色。
  * ★ 音名的字色是 `labelInkLight` / `labelInkDark` **两个候选**，代码按 `nodeBase` 的明暗
  *   自动挑对比度更高的那个（`labelInkFor`）—— 所以把 `nodeBase` 换成亮色时字不会糊。
- *   想强制只用一种，把两个候选写成同一个色值即可（那样自动挑选就等于没挑）。 */
+ *   想强制只用一种，把两个候选写成同一个色值即可（那样自动挑选就等于没挑）。
+ * ★ **常规连线不画箭头**，方向由 `edgeFadeFrom` / `edgeFadeTo` 这对浓度值表达：
+ *   每条线是一个以自己弦为轴的线性渐变，从起点端（`edgeFadeFrom`）过渡到终点端（`edgeFadeTo`）。
+ *   默认"起点亮、终点淡"，于是终点端那截"箭头位"正好被渐隐吃掉、不会显得线被截断；
+ *   **想反过来就把两个数对调**（比如 0.3 / 1）。两个值再乘上元素 opacity（= 转移概率），
+ *   所以"方向"和"概率"是两个互不干扰的通道。 */
 /* 换一整组色时的做法（2026-09 用户的要求）：**按色相最近一一对应**，不要凭感觉指派 ——
    "当前如果有蓝色，就用这组色值中的蓝色，其它也是一个意思"。
    当时把浅色的紫/绿/橙/粉换到深色那组，实测色相距离 29°/23°/3°/9°，各自"次近候选"都远得多
@@ -825,9 +831,18 @@ const onFullscreenChange = () => updateGraphViewBox(true);
 document.addEventListener('fullscreenchange', onFullscreenChange);
 document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
-const dynamicEdgePath = (a, b) => {
+/* 一条边的几何：路径 d **以及**它的渐变轴（起点端 → 终点端）。
+   两者必须出自同一份计算 —— 分开算就会出现"渐变和线错开一点"的观感。
+   渐变轴用弦（不是曲线），因为 SVG 的 linearGradient 只能沿直线插值；
+   线是弯的，但"起点端亮、终点端淡"这个方向感照样成立（两端差得足够明显）。
+   ★ 自环要特别处理：起终点同一个点会让 x1,y1 == x2,y2，**整条渐变按规范不渲染**（线会消失），
+     所以自环改用它那圈"上抛"的两端当轴。 */
+const edgeGeometry = (a, b) => {
   if (a.note === b.note) {
-    return `M ${a.x - 7} ${a.y - 15} C ${a.x - 38} ${a.y - 58}, ${a.x + 38} ${a.y - 58}, ${a.x + 7} ${a.y - 15}`;
+    return {
+      d: `M ${a.x - 7} ${a.y - 15} C ${a.x - 38} ${a.y - 58}, ${a.x + 38} ${a.y - 58}, ${a.x + 7} ${a.y - 15}`,
+      x1: a.x - 7, y1: a.y - 15, x2: a.x + 7, y2: a.y - 15,
+    };
   }
   const dx = b.x - a.x, dy = b.y - a.y;
   const length = Math.max(1, Math.hypot(dx, dy));
@@ -838,7 +853,19 @@ const dynamicEdgePath = (a, b) => {
   const startY = a.y + dy / length * (GRAPH_NODE_RADIUS + 2);
   const endX = b.x - dx / length * (GRAPH_NODE_RADIUS + ARROW_TAIL_OFFSET);
   const endY = b.y - dy / length * (GRAPH_NODE_RADIUS + ARROW_TAIL_OFFSET);
-  return `M ${startX} ${startY} Q ${cx} ${cy} ${endX} ${endY}`;
+  return {
+    d: `M ${startX} ${startY} Q ${cx} ${cy} ${endX} ${endY}`,
+    x1: startX, y1: startY, x2: endX, y2: endY,
+  };
+};
+const dynamicEdgePath = (a, b) => edgeGeometry(a, b).d;
+const updateEdgeGradient = (edge, geometry) => {
+  const gradient = edge.gradient;
+  if (!gradient) return;
+  gradient.setAttribute('x1', geometry.x1.toFixed(2));
+  gradient.setAttribute('y1', geometry.y1.toFixed(2));
+  gradient.setAttribute('x2', geometry.x2.toFixed(2));
+  gradient.setAttribute('y2', geometry.y2.toFixed(2));
 };
 
 const animateGraph = () => {
@@ -943,7 +970,11 @@ const animateGraph = () => {
       }
       paintNode(node);
     });
-    edges.forEach(edge => edge.path.setAttribute('d', dynamicEdgePath(edge.from, edge.to)));
+    edges.forEach(edge => {
+      const geometry = edgeGeometry(edge.from, edge.to);
+      edge.path.setAttribute('d', geometry.d);
+      updateEdgeGradient(edge, geometry);   // 点一动，渐变轴就得跟着（否则方向会指着错的地方）
+    });
     edges.forEach(edge => {
       /* 只在“正在生长/收回”时才逐帧刷新，画满或完全收回后不再做无谓计算 */
       if (edge.presence !== edge.presenceTarget || (edge.presence > 0 && edge.presence < 1)) {
@@ -1010,7 +1041,6 @@ const updateEdgePresence = (edge, time) => {
     edge.presence = edge.presenceFrom + (edge.presenceTarget - edge.presenceFrom) * progress;
   }
   if (edge.presence <= 0) {
-    syncEdgeArrow(edge);
     setPulseArrow(edge, false);
     path.style.opacity = '0';
     return;
@@ -1020,12 +1050,10 @@ const updateEdgePresence = (edge, time) => {
     /* 画满之后不留 dash：节点一直在呼吸漂移，留着就得每帧重算路径长度 */
     path.removeAttribute('stroke-dasharray');
     path.removeAttribute('stroke-dashoffset');
-    syncEdgeArrow(edge);          // 高亮在场时它会把这个箭头让给高亮层
     return;
   }
-  syncEdgeArrow(edge);            // 生长/收回中的线不挂箭头（由骑行箭头负责移动中的头部）
-  /* 生长/收回中的线不该有箭头 —— 但行进中“已经走过的那一段”末端是箭头的位置，
-     所以这里只摘底边自己的箭头，行进层的箭头由 updateEdgePulse 管（它也在生长中不挂）。 */
+  /* 生长/收回中的线由 dash 表达（底边没有箭头了，所以这里没有箭头要摘）。
+     行进中“已经走过的那一段”末端由骑行箭头负责，见 updateEdgePulse。 */
   const length = Math.max(1, path.getTotalLength());
   const remaining = length * (1 - edge.presence);
   path.setAttribute('stroke-dasharray', length + ' ' + length);
@@ -1045,15 +1073,12 @@ const setPulseArrow = (edge, on) => {
   else edge.pulsePath.removeAttribute('marker-end');
 };
 
-/* 一条边同时只显示一支箭头：高亮在场时由高亮负责（骑行箭头或停在终点的那支），
-   底边自己的箭头先摘掉；高亮结束、线仍然在场时再挂回来。 */
-const syncEdgeArrow = edge => {
-  const wantBase = edge.presence >= 1 && !edge.pulse.active;
-  if (wantBase === edge.arrowOn) return;
-  edge.arrowOn = wantBase;
-  if (wantBase) edge.path.setAttribute('marker-end', ARROW_MARKER);
-  else edge.path.removeAttribute('marker-end');
-};
+/* ★ **常规（灰）连线不挂箭头**（用户 2026-09："去掉常规连线的箭头，显得很乱"）——
+   方向改由沿线灰度渐变表达（见 edgeGeometry / updateEdgeGradient 的说明）。
+   所以这里不再有"底边箭头"这套逻辑：底边从建好到退役都不写 marker-end，
+   激活时的箭头由高亮层负责（生长中是骑行箭头，颜色到位后是停在终点的那支，见 setPulseArrow）。
+   旧版这里有个 syncEdgeArrow()，负责"高亮在场时把底边箭头让出去、高亮结束再挂回来"，
+   连同 edge.arrowOn 状态一起删掉了 —— 底边不再有箭头，那个状态也就没有读者。 */
 
 /* 骑行箭头：把"一小段曲线"的终点放在正在移动的头部，让 marker 跟着头部走。
    ★ **路径末端就放在头部上**：参考点是箭头底边中点（refX = 0），所以箭头**底边正好压在线的端点上**，
@@ -1119,15 +1144,13 @@ const updateEdgePulse = (edge, time) => {
       pulse.retreatStartedAt = null;
       setPulseArrow(edge, false);
       hideHeadArrow(edge);
-      syncEdgeArrow(edge);
       path.style.opacity = '0';
       return;
     }
     reveal = 1 - retreatElapsed / retreatDuration;
   }
   if (reveal >= 1 && !pulse.recolored) {
-    pulse.recolored = true;
-    edge.path.classList.add('active');   // 底边换成段落色（箭头由高亮层/底边交接，见函数末尾）
+    pulse.recolored = true;   // 颜色到位 → 箭头由"骑行"交给"停在终点的那支"（见函数末尾）
   }
   /* ★ 彩色层永远不能比灰线长：可见区间 = 扫过区间 [0, reveal·L) ∩ 灰线的可见区间。
      灰线在**收回**时（presence → 0）彩色层跟着它一起反向生长，同样全程满透明度。 */
@@ -1137,10 +1160,8 @@ const updateEdgePulse = (edge, time) => {
     pulse.active = false;
     pulse.recolored = false;
     pulse.retreatStartedAt = null;
-    edge.path.classList.remove('active');
     setPulseArrow(edge, false);
     hideHeadArrow(edge);
-    syncEdgeArrow(edge);
     path.style.opacity = '0';
     return;
   }
@@ -1192,16 +1213,14 @@ const updateEdgePulse = (edge, time) => {
     hideHeadArrow(edge);
     setPulseArrow(edge, edge.presence >= 1 && pulse.recolored);
   }
-  syncEdgeArrow(edge);
 };
 
-/* 新的转移开始行进时，之前那条还亮着的转移**沿原路退回去**（底边的颜色同时淡回灰） */
+/* 新的转移开始行进时，之前那条还亮着的转移**沿原路退回去** */
 const startEdgePulse = (edge, intervalSeconds, time) => {
   graphMotion.edges.forEach(other => {
     if (other !== edge && other.pulse.active && other.pulse.retreatStartedAt === null) {
       other.pulse.retreatStartedAt = time;   // 开始反向生长（不是退色）
       other.pulse.recolored = false;
-      other.path.classList.remove('active');
       setPulseArrow(other, false);           // 颜色要退回去，箭头先摘掉
     }
   });
@@ -1211,9 +1230,8 @@ const startEdgePulse = (edge, intervalSeconds, time) => {
   edge.pulse.headAngle = 0;    // 新一轮高亮从“沿曲线正向”开始，不继承上一轮的掉头状态
   edge.pulse.lastHeadAt = time;
   edge.pulse.duration = Math.max(EDGE_SWEEP_MIN_S, Math.min(EDGE_SWEEP_MAX_S, intervalSeconds));
-  if (edge.pulse.recolored) {   // 同一条重新走一遍：先把底边退回灰色，等颜色再次到达终点
+  if (edge.pulse.recolored) {   // 同一条重新走一遍：等颜色再次走到终点
     edge.pulse.recolored = false;
-    edge.path.classList.remove('active');
     setPulseArrow(edge, false);   // 颜色要重新走一遍，行进层的箭头先摘掉
   }
 };
@@ -1409,11 +1427,35 @@ const hexToRgb = hex => {
   return [value >> 16 & 255, value >> 8 & 255, value & 255];
 };
 let themeName = THEME_DARK;
+/* 连线的墨色与两端浓度（= **方向**）。渐变是逐边建的 DOM，所以这里留一份"当前生效"的值：
+   非法值不会覆盖它（手改调色板时不该把线弄没），建新边时也直接用它。
+   ★ 必须声明在 applyTheme() **之前** —— 它在脚本中段就会被调用一次（踩过 TDZ，见 §14 与 AGENTS）。 */
+let edgeInkState = { ink: PALETTE.dark.edge, from: PALETTE.dark.edgeFadeFrom, to: PALETTE.dark.edgeFadeTo };
+const clampAlpha = value => (Number.isFinite(Number(value)) ? Math.max(0, Math.min(1, Number(value))) : null);
+const applyEdgeInk = palette => {
+  const next = { ...edgeInkState };
+  if (hexToRgb(palette.edge)) next.ink = palette.edge;
+  else console.warn('[调色板] edge 不是合法色值：' + JSON.stringify(palette.edge) + '（应为 #RRGGBB），已沿用上一个合法颜色');
+  const from = clampAlpha(palette.edgeFadeFrom);
+  const to = clampAlpha(palette.edgeFadeTo);
+  if (from !== null) next.from = from;
+  if (to !== null) next.to = to;
+  edgeInkState = next;
+  graphMotion.edges.forEach(edge => {
+    const [stopFrom, stopTo] = edge.gradientStops || [];
+    if (!stopFrom || !stopTo) return;
+    stopFrom.setAttribute('stop-color', next.ink);
+    stopTo.setAttribute('stop-color', next.ink);
+    stopFrom.setAttribute('stop-opacity', String(next.from));
+    stopTo.setAttribute('stop-opacity', String(next.to));
+  });
+};
 const applyTheme = theme => {
   themeName = theme === THEME_LIGHT ? THEME_LIGHT : THEME_DARK;
   document.documentElement.dataset.theme = themeName;
-  /* 把调色板里的画面色推成 <html> 上的 CSS 变量：CSS 规则（.chain-edge 的 stroke、.markov-stage 的
-     background、.node-label 的 fill……）继续用 var(--…) 取，所以颜色始终只有 PALETTE 一个来源。 */
+  /* 把调色板里的画面色推成 <html> 上的 CSS 变量：CSS 规则（.markov-stage 的 background、
+     .key.source 的底色……）继续用 var(--…) 取，所以颜色始终只有 PALETTE 一个来源。
+     点与连线不在 CSS 里画（点逐帧算、连线是每条边自己的渐变），所以没有 --graph-edge 了。 */
   const palette = PALETTE[themeName];
   const rootStyle = document.documentElement.style;
   const push = (key, cssName, value) => {
@@ -1421,14 +1463,12 @@ const applyTheme = theme => {
     console.warn('[调色板] ' + themeName + '.' + key + ' 不是合法色值：' + JSON.stringify(value)
       + '（应为 #RRGGBB），已沿用上一个合法颜色');
   };
-  /* 画面色推成 <html> 上的 CSS 变量：CSS 规则（.chain-edge 的 stroke、.markov-stage 的 background、
-     .key.source 的底色……）继续用 var(--…) 取，所以颜色始终只有 PALETTE 一个来源。
-     点本身不在 CSS 里画（它的颜色逐帧算），所以没有对应的 --graph-node-* 变量了。 */
-  push('edge', '--graph-edge', palette.edge);
   push('stageBg', '--stage-bg', palette.stageBg);
   push('nodeBase', '--graph-node-base', palette.nodeBase);   // 图例里"本段落可到达状态"那个点用它
   /* 没播放时图例上那个点用的是 --section-color：先拿本主题的段落色 A 垫着（播放后由 tweenSectionColor 接管） */
   push('sections[0]', '--section-color', (palette.sections || [])[0]);
+  /* 连线的墨色与两端浓度：渐变是逐边建的 DOM，所以这里要遍历更新（换主题时两端颜色会变） */
+  applyEdgeInk(palette);
   /* 点颜色是逐帧插值出来的，直接吃 RGB 数组（paintNode 每帧重画，所以这里改完立刻生效） */
   NODE_BASE = hexToRgb(palette.nodeBase) || NODE_BASE;
   /* 音名的深浅两个候选，然后按 nodeBase 重挑一次（点本来的颜色变了，字色可能也要换） */
@@ -1648,11 +1688,28 @@ const ensurePhraseGraph = () => {
     const [from, to] = key.split('|');
     const a = byNote.get(from), b = byNote.get(to);
     if (!a || !b) return;
+    /* 每条边一条自己的线性渐变：轴 = 这条边的弦（每帧跟着点更新），
+       两端用 stop-opacity 做出"起点亮 → 终点淡"的**方向**（用户要求用它代替箭头）。
+       ★ stop-color 只能写具体颜色，不能写 currentColor / context-stroke，
+         所以墨色由 applyTheme()/这条边的创建处从 PALETTE.edge 写进去。 */
+    const gradientId = edgeId(from, to) + '-grad';
+    const geometry = edgeGeometry(a, b);
+    const gradient = svgNode('linearGradient', {
+      id: gradientId, gradientUnits: 'userSpaceOnUse',
+      x1: geometry.x1.toFixed(2), y1: geometry.y1.toFixed(2),
+      x2: geometry.x2.toFixed(2), y2: geometry.y2.toFixed(2),
+    });
+    const stopFrom = svgNode('stop', { offset: '0', 'stop-color': edgeInkState.ink, 'stop-opacity': String(edgeInkState.from) });
+    const stopTo = svgNode('stop', { offset: '1', 'stop-color': edgeInkState.ink, 'stop-opacity': String(edgeInkState.to) });
+    gradient.appendChild(stopFrom);
+    gradient.appendChild(stopTo);
+    defs.appendChild(gradient);
     const path = svgNode('path', {
-      id: edgeId(from, to), d: dynamicEdgePath(a, b), class: 'chain-edge',
+      id: edgeId(from, to), d: geometry.d, class: 'chain-edge',
       'stroke-width': EDGE_STROKE_WIDTH,
     });
-    /* 初始不可见：透明度由 JS 写内联样式，箭头也在生长完成后才挂上 */
+    path.style.stroke = `url(#${gradientId})`;   // 内联样式：CSS 里的 stroke 会盖不住它，也不会被它盖住
+    /* 初始不可见：透明度由 JS 写内联样式（= 转移概率），方向由上面的渐变表达，**没有箭头** */
     path.style.opacity = '0';
     edgeLayer.appendChild(path);
     /* 彩色行进层：与灰边同一条曲线，靠 dashoffset 从起点揭示到终点。
@@ -1671,11 +1728,11 @@ const ensurePhraseGraph = () => {
     headPath.style.opacity = '0';
     pulseLayer.appendChild(headPath);
     graphMotion.edges.set(key, {
-      from: a, to: b, path, pulsePath, headPath,
+      from: a, to: b, path, pulsePath, headPath, gradient, gradientStops: [stopFrom, stopTo],
       /* 连线弹簧的静止长度（铰链用）：初始化为环上的距离，视口变化时由 layoutGraph 重算 */
       rest: Math.hypot(b.home.x - a.home.x, b.home.y - a.home.y),
       presence: 0, presenceFrom: 0, presenceTarget: 0, presenceStartedAt: 0, presenceDuration: 0,
-      probability: 0, opacity: 0, arrowOn: false, pulseArrowOn: false, headArrowOn: false,
+      probability: 0, opacity: 0, pulseArrowOn: false, headArrowOn: false,
       pulse: { active: false, startedAt: 0, duration: 0, retreatStartedAt: null, recolored: false, headAngle: 0, lastHeadAt: 0 },
     });
   });
@@ -2091,10 +2148,8 @@ const activateEngine = async seed => {
       edge.pulse.active = false;
       edge.pulse.recolored = false;
       edge.pulse.retreatStartedAt = null;
-      edge.path.classList.remove('active');
       setPulseArrow(edge, false);
       hideHeadArrow(edge);
-      syncEdgeArrow(edge);
       edge.pulsePath.style.opacity = '0';
     });
     previousVisualNote = null;
