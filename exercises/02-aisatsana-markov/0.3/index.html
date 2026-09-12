@@ -945,8 +945,43 @@ const updateEdgePulse = (edge, time) => {
     edge.path.classList.add('active');   // 箭头此时亮起，尺寸与灰箭头完全相同
     setPulseArrow(edge, true);           // 行进层也挂上同一支箭头：箭头与线的明度因此逐帧相等
   }
-  path.setAttribute('stroke-dasharray', length + ' ' + length);
-  path.setAttribute('stroke-dashoffset', length * (1 - reveal));
+  /* ★ 彩色层永远不能比灰线长：可见区间 = 扫过区间 [0, reveal·L) ∩ 灰线的可见区间。
+     灰线在**收回**时（presence → 0）彩色层跟着它一起反向生长，而且**全程保持满透明度**：
+     收回关乎"这条线还在不在"，不是高亮衰减 —— 旧版让彩色层保持满长、只靠 1.2 秒退色消失，
+     于是换句时看起来就是"激活的连线被透明度抹掉"，而不是跟着线一起退回去（用户 2026-09 反馈）。 */
+  const retracting = edge.presenceTarget <= 0 && edge.presence < 1;
+  if (retracting) {
+    if (edge.presence <= 0) {
+      /* 收完了：高亮结束（几何也已经为空，画面上本来就看不到东西） */
+      pulse.active = false;
+      pulse.recolored = false;
+      edge.path.classList.remove('active');
+      setPulseArrow(edge, false);
+      path.style.opacity = '0';
+      return;
+    }
+    opacity = 1;
+    setPulseArrow(edge, false);          // 灰线收回途中本来就不挂箭头
+  } else if (edge.presence >= 1 && pulse.recolored) {
+    setPulseArrow(edge, true);           // 灰线画满就得有箭头：它可能在生长途中被摘掉过
+  }
+  const baseStart = edge.presence >= 1 || !edge.revealFromEnd ? 0 : (1 - edge.presence) * length;
+  const baseEnd = edge.presence >= 1 || !edge.revealFromEnd ? edge.presence * length : length;
+  const start = baseStart;
+  const end = Math.min(baseEnd, length * reveal);
+  if (end - start <= 0.01) {
+    /* 交集为空：彩色层这一帧不该出现在任何地方 */
+    path.setAttribute('stroke-dasharray', '0 ' + length);
+    path.setAttribute('stroke-dashoffset', '0');
+  } else if (start <= 0.01) {
+    /* 从起点画 [0, end)：与旧实现完全等价（dash 取全长、只推 offset），所以平直的头部不变 */
+    path.setAttribute('stroke-dasharray', length + ' ' + length);
+    path.setAttribute('stroke-dashoffset', String(length - end));
+  } else {
+    /* 灰线是从终点端长出来/退回去的：交集是中间一段，用 "段长 全长" + 负 offset 表示 */
+    path.setAttribute('stroke-dasharray', (end - start) + ' ' + length);
+    path.setAttribute('stroke-dashoffset', String(-start));
+  }
   path.style.opacity = opacity.toFixed(3);   // 内联样式：CSS 覆盖不了
 };
 
@@ -1410,7 +1445,11 @@ const applyPhraseVisual = (section, morphSeconds, ringShift) => {
        概率 = 该转移的出现次数 ÷ 该起点音的后继总数（walkNote 是等概率挑后继） */
     const successors = NOTE_CHAINS[section].transitions.get(edge.from.note) || [];
     edge.probability = count > 0 && successors.length ? count / successors.length : 0;
-    edge.opacity = count > 0 ? edgeOpacityFor(edge.probability) : 0;
+    /* ★ 不属于本段落时**不要**把明度清成 0：这条线还要"反向生长"退场，若此刻就写成 0，
+       整段收回过程是看不见的 —— 用户看到的就是"激活的连线被透明度抹掉"（2026-09 反馈），
+       明明几何在缩、画面上却只剩一条彩色层留在原处。明度只在"它属于本段落"时才更新，
+       收完之后（presence = 0）由 updateEdgePresence 统一压到 0。 */
+    if (count > 0) edge.opacity = edgeOpacityFor(edge.probability);
     const fromWoke = woke.has(edge.from.note), toWoke = woke.has(edge.to.note);
     const fromSlept = slept.has(edge.from.note), toSlept = slept.has(edge.to.note);
     /* 线与点同速：优先用“刚出现/刚收起”的那个点自己的时长；
