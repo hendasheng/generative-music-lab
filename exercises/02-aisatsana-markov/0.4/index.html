@@ -231,9 +231,11 @@
       换句时不是整体外扩，而是给在场节点一次<b>切向</b>抖动，位移<b>沿连线传给邻居</b>：
       连线是铰链，弹因此是传开的。力度分两级：<b>换句/段落切换</b>抖得明显，
       单个<b>音符发声</b>只是很轻地推一下。段落色逐帧插值，不在句界跳变。<br>
-      <b>环境层涟漪：</b><b>每当 birds 环境声出现</b>，画面上会从一点炸开一发涟漪
-      （3 圈同心环 + 6 根短放射线，减速外扩、描边细到 0 才消失）——它<b>只跟 birds 有关</b>，
-      颜色跟随当前段落色，<b>大小与该层的音量</b>挂钩。形式借鉴自 okazz 的
+      <b>环境层涟漪：</b><b>birds 环境声响着的期间</b>，画面上会<b>时不时炸开一发涟漪</b>
+      （3 圈同心环 + 6 根短放射线，减速外扩、描边细到 0 才消失）；
+      一段鸟叫里来好几发（开场一发，之后约每 4–6 秒一发，跟着这一层的淡入快慢走）。
+      它<b>只跟 birds 有关</b>：<b>三圈各取一个色相、跟随当前段落色</b>（换段/切主题整组一起变），
+      <b>大小与击发节奏都和这一层的声音</b>挂钩。形式借鉴自 okazz 的
       <code>240809a</code>（<a href="https://openprocessing.org/sketch/2326097" target="_blank" rel="noreferrer">openprocessing</a>，CC BY-NC-SA），
       只借思路、未使用其代码。<br>
       <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>f</code> 全屏、再按一次退出。<br>
@@ -681,11 +683,12 @@ const createMoodistTextures = async (destination, rng, options = {}) => {
         try {
           texture.player.start(time);
           texture.player.stop(time + duration + fade);
-          /* 通知视觉侧"这一层开始发声了"。
+          /* 通知视觉侧"这一层开始发声了"，并把这一响的实际时长一起给它
+             （视觉要用它排出整段声音里的几发涟漪）。
              ★ 必须走 Tone.Draw：这个回调本身是**预排**的（lookAhead 会提前跑），
                只有 Draw 到达 time 那一刻才是真正听到声音的时刻（见"与音频的接口"一节）。
-             ★ 视觉要在这一刻做 DOM 操作，所以 handler 里不要做重活（涟漪只有 9 个元素）。 */
-          if (options.onStart) Tone.Draw.schedule(() => options.onStart(texture, time), time);
+             ★ 视觉要在这一刻做 DOM 操作，所以 handler 里不要做重活（一发涟漪只有 9 个元素）。 */
+          if (options.onStart) Tone.Draw.schedule(() => options.onStart(texture, time, duration), time);
           console.info('[Moodist] texture in:', texture.name, duration.toFixed(0) + 's');
         } catch (err) {
           console.warn('[Moodist] 播放失败:', texture.name, err);
@@ -1619,7 +1622,12 @@ const easeInCubic = progress => progress * progress * progress;
  *     `targetGain` 决定（相对目前最响的那层 = `BURST_GAIN_REFERENCE`），扩张时长由该层的 `fade` 推出；
  *   · **位置**横向由该层的 `pan` 推出（birds `pan 0.3` → 落在偏右处），纵向每次不同但由种子决定；
  *   · **只读、不改图**：涟漪不参与节点/连线的力学，否则"同一段音乐画出同一张图"就破了；
- *   · 颜色逐帧从 `sectionColorRgb` 取，所以**换段或切主题时涟漪会跟着变**，不需要另配颜色。 */
+ *   · **颜色是一套配色、不是单色**（用户 2026-09："要配色，不要单色"）：三圈各取一个色相偏移，
+ *     中间那圈就是本段落色本身，外/内圈各偏 ±`BURST_RING_HUE_SHIFT`，放射线用段落色 ——
+ *     所以既有层次与配色，又整体**跟随本段落色**（换段/切主题时整组一起变，见 updateBursts）。
+ *   · **一段鸟叫里会来好几发**（用户 2026-09："不要只在开始的时候，在 birds 发声的过程时不时出现"）：
+ *     开场立刻一发，之后按该层的节奏续发（间隔 = `fade × BURST_CADENCE_FADE_RATIO`，两头钳制，
+ *     带一点由种子决定的抖动），直到这段声音结束；见 scheduleBurstsForTexture。 */
 const BURST_RING_COUNT = 3;           // 一发里几圈涟漪（"主要还是涟漪"，不要多）
 const BURST_SPOKE_COUNT = 6;          // 起爆瞬间的几根短放射线（只负责"炸开"那一下，很快消失）
 const BURST_RING_STAGGER_S = 0.16;    // 圈与圈的启动间隔：一圈圈推出去，而不是三圈同时放大
@@ -1634,14 +1642,56 @@ const BURST_SPOKE_STROKE = 1.6;
 const BURST_RING_SHRINK = 0.21;       // 每内一圈的半径比例（第 i 圈 = R × (1 − i × 该值)）
 const BURST_PAN_SPREAD = 0.35;        // 声像 → 横向位置：pan 0.3 → 视口宽的 10.5%
 const BURST_Y_JITTER = 0.18;          // 每次的纵向位置抖动（视口高比例，来自视觉随机流）
-const BURST_RING_FADE_MIX = 0.25;     // 内圈往 nodeBase 混合的比例（让三圈有层次，但仍是同一族色）
+/* 配色：三圈的色相偏移（度）。中间那圈 = 本段落色本身，所以整组永远"跟着段落走"；
+   外圈偏暖、内圈偏冷，三圈之间有层次但不散架。放射线不偏，起爆那一下仍然是本段落色。 */
+const BURST_RING_HUE_SHIFT = [34, 0, -34];
+const BURST_HUE_JITTER = 18;          // 每一发整体再偏一点（种子流），让连着几发不重样（±18°）
+/* 续发的节奏：间隔取"这一层的淡入时长 × RATIO"（它呼吸一次，画面就来一发），两头钳制，
+   再叠一点由种子决定的抖动（避免听起来/看起来像节拍器）。 */
+const BURST_CADENCE_FADE_RATIO = 0.9;
+const BURST_CADENCE_MIN_S = 3;
+const BURST_CADENCE_MAX_S = 6;
+const BURST_CADENCE_JITTER = 0.22;
+/* 一发涟漪至少要有这么大比例落在"还能听到这层"的时间窗里（最后一发因此不会整发都落在静音里） */
+const BURST_IN_WINDOW_RATIO = 0.5;
 
 const bursts = [];
 let burstLayer = null;
-/* 视觉侧自己的随机流（只给涟漪的位置抖动用）。
+/* 视觉侧自己的随机流（涟漪的位置 / 色相 / 续发间隔的抖动用）。
    ★ 与 textureRng 分开：那条流决定"环境层什么时候出现、出现多久"，视觉要是去消耗它，
      加一个视觉功能就等于改了音频调度 —— 那就违反"音乐不动"了（0.2 踩过同类坑）。 */
 let burstRng = makeRng(0);
+
+/* 把一个颜色按色相旋转若干度（保持饱和度与明度）。
+   RGB → HSL → 转 h → RGB。加它是因为"配色"要能从本段落色**算出来**（跟随段落/主题），
+   而不是另写一组固定色值 —— 那样一换主题就会和画面其它部分脱节。 */
+const shiftHue = (rgb, degrees) => {
+  const [r, g, b] = rgb.map(value => value / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const light = (max + min) / 2;
+  const delta = max - min;
+  if (delta < 1e-6 || degrees === 0) return rgb;          // 灰阶没有色相可转
+  const saturation = light > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+  let hue = max === r ? (g - b) / delta + (g < b ? 6 : 0) : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+  hue = ((hue / 6 + degrees / 360) % 1 + 1) % 1;
+  const channel = (p, q, t) => {
+    let x = t;
+    if (x < 0) x += 1;
+    if (x > 1) x -= 1;
+    if (x < 1 / 6) return p + (q - p) * 6 * x;
+    if (x < 1 / 2) return q;
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+    return p;
+  };
+  const q = light < 0.5 ? light * (1 + saturation) : light + saturation - light * saturation;
+  const p = 2 * light - q;
+  return [channel(p, q, hue + 1 / 3), channel(p, q, hue), channel(p, q, hue - 1 / 3)]
+    .map(value => Math.round(Math.max(0, Math.min(1, value)) * 255));
+};
+
+/* 一发涟漪的扩张时长（= 该层的呼吸速度） */
+const burstGrowSeconds = texture => Math.max(BURST_GROW_MIN_S,
+  Math.min(BURST_GROW_MAX_S, (texture.fade || 0) * 0.5));
 
 const ensureBurstLayer = () => {
   if (burstLayer) return burstLayer;
@@ -1651,40 +1701,47 @@ const ensureBurstLayer = () => {
 };
 
 /* 起爆。texture = 那一层环境音的配置（只需要 targetGain / fade / pan 三个数）。
-   ⚠️ 位置与半径都按**视口比例**存（fx/fy/rRatio），逐帧再乘当前视口 —— 这样它在全屏切换、
+   ⚠️ 位置与半径都按**视口比例**存（fx/fy + 设计单位半径），逐帧再乘当前视口 —— 这样它在全屏切换、
       窗口缩放时仍然待在同一个相对位置、按同一比例缩放（和 §12 的"设计单位"是一回事）。 */
 const spawnBurst = texture => {
   const layer = ensureBurstLayer();
   ensureGraphAnimation();     // 视觉主循环必须活着（图还没建起来时也要能画这一发）
   const gain = Math.max(0, Math.min(1, (texture.targetGain || 0) / BURST_GAIN_REFERENCE));
-  const grow = Math.max(BURST_GROW_MIN_S, Math.min(BURST_GROW_MAX_S, (texture.fade || 0) * 0.5));
+  const grow = burstGrowSeconds(texture);
   const fx = 0.5 + (texture.pan || 0) * BURST_PAN_SPREAD;
   const fy = 0.5 + (burstRng() * 2 - 1) * BURST_Y_JITTER;
+  const hueBase = (burstRng() * 2 - 1) * BURST_HUE_JITTER;   // 这一发整体的色相偏移
   const parts = [];
   for (let i = 0; i < BURST_RING_COUNT; i += 1) {
     const ring = svgNode('circle', { class: 'burst-ring', cx: 0, cy: 0, r: 0 });
     /* 起始描边与颜色在这里就写好：即使还没轮到它启动（r=0，本来就画不出来），
-       元素也是"完全指定"的状态，不会出现"某个属性还是 none"的半成品。 */
+       元素也是"完全指定"的状态，不会出现"某个属性还是 none"的半成品。
+       颜色 = 本段落色按色相偏移（中间那圈偏移 0 = 段落色本身）→ 三圈是一套配色。 */
+    const hueShift = hueBase + (BURST_RING_HUE_SHIFT[i] || 0);
     ring.style.strokeWidth = String(BURST_RING_STROKE * (1 - i * BURST_RING_SHRINK));
-    ring.style.stroke = rgbToHex(mixRgb(sectionColorRgb, NODE_BASE, i * BURST_RING_FADE_MIX));
+    ring.style.stroke = rgbToHex(shiftHue(sectionColorRgb, hueShift));
     layer.appendChild(ring);
     parts.push({
       el: ring, shape: 'ring', t0: i * BURST_RING_STAGGER_S, life: grow,
       radius: BURST_RADIUS_MIN + (BURST_RADIUS_MAX - BURST_RADIUS_MIN) * gain,
       scale: 1 - i * BURST_RING_SHRINK,
       stroke0: BURST_RING_STROKE * (1 - i * BURST_RING_SHRINK),
-      mix: i * BURST_RING_FADE_MIX,
+      hueShift,
     });
   }
   const spokeLife = grow * BURST_SPOKE_LIFE_RATIO;
   const baseAngle = burstRng() * Math.PI * 2;
+  /* 放射线：起爆那一下的颜色取"本段落色与第一圈之间"的中间色相 —— 这样它和两圈都不是同一个色，
+     整发凑起来就是一套配色（三圈 3 色 + 放射线 1 色），而不是单色。 */
+  const spokeHue = hueBase * 0.5 + (BURST_RING_HUE_SHIFT[0] || 0) * 0.5;
   for (let i = 0; i < BURST_SPOKE_COUNT; i += 1) {
     const spoke = svgNode('line', { class: 'burst-spoke', x1: 0, y1: 0, x2: 0, y2: 0 });
     spoke.style.strokeWidth = String(BURST_SPOKE_STROKE);
-    spoke.style.stroke = rgbToHex(sectionColorRgb);
+    spoke.style.stroke = rgbToHex(shiftHue(sectionColorRgb, spokeHue));
     layer.appendChild(spoke);
     parts.push({
-      el: spoke, shape: 'spoke', t0: 0, life: spokeLife, mix: 0, stroke0: BURST_SPOKE_STROKE,
+      el: spoke, shape: 'spoke', t0: 0, life: spokeLife, stroke0: BURST_SPOKE_STROKE,
+      hueShift: spokeHue,
       angle: baseAngle + i / BURST_SPOKE_COUNT * Math.PI * 2 + (burstRng() - 0.5) * 0.22,
       length: (BURST_RADIUS_MIN + (BURST_RADIUS_MAX - BURST_RADIUS_MIN) * gain) * 1.22,
     });
@@ -1708,8 +1765,8 @@ const updateBursts = time => {
       const eased = easeOutCubic(progress);
       /* 描边同时**细到 0** —— 消失是几何（墨变细），不是透明度 */
       const stroke = part.stroke0 * (1 - progress);
-      const ink = part.mix > 0 ? mixRgb(sectionColorRgb, NODE_BASE, part.mix) : sectionColorRgb;
-      part.el.style.stroke = rgbToHex(ink);
+      /* 颜色逐帧算：本段落色按这一发/这一圈的色相偏移 → 换段或切主题时整组配色一起跟着走 */
+      part.el.style.stroke = rgbToHex(shiftHue(sectionColorRgb, part.hueShift));
       part.el.style.strokeWidth = stroke.toFixed(2);
       if (part.shape === 'ring') {
         part.el.setAttribute('cx', x.toFixed(1));
@@ -1733,10 +1790,30 @@ const clearBursts = () => {
   if (burstLayer) burstLayer.replaceChildren();
 };
 
-/* 环境层"真的开始发声"时的入口。音频那边只负责报告事实（哪一层、什么时刻开始），
-   "只有 birds 画涟漪"这条判断留在视觉侧（用户 2026-09："只在出现 birds 来一发，它只跟 birds 相关"）。 */
-const onTextureStart = texture => {
-  if (texture && texture.name === 'birds') spawnBurst(texture);
+/* 环境层"真的开始发声"时的入口。音频那边只负责报告事实（哪一层、什么时刻开始、这一响有多长），
+   "只有 birds 画涟漪"这条判断留在视觉侧（用户 2026-09："只在出现 birds 来一发，它只跟 birds 相关"）。
+   ★ 用户 2026-09 的第二轮要求："不要只在开始的时候，在 birds 发声的过程时不时出现" ——
+     所以这里不是起爆一次，而是**按这一层的节奏排一串**：
+       · 开场立刻一发（鸟叫一响就有反应）；
+       · 之后每隔 `间隔` 再排一发，间隔 = 该层 `fade × BURST_CADENCE_FADE_RATIO`（钳到 3–6 秒）
+         —— "它呼吸一次，画面就来一发"；每发再叠 ±`BURST_CADENCE_JITTER` 的抖动（种子流），
+         免得像节拍器；
+       · 排到"这一响还能听到的时间窗"里为止（窗 = `duration + fade`，即淡入到淡出结束），
+         并保证每发至少有 `BURST_IN_WINDOW_RATIO` 的扩张落在窗内 —— 于是最后一发不会整发落在静音里。
+     ★ 这些后续的起爆都是用 `Tone.Draw.schedule(…, time + offset)` 排在**音频时刻**上的，
+       所以视觉与"听到鸟叫"始终同源；停止播放时 `end()` 里的 `Tone.Draw.cancel(0)` 会把它们一起取消。 */
+const onTextureStart = (texture, time, duration) => {
+  if (!texture || texture.name !== 'birds') return;
+  spawnBurst(texture);
+  const grow = burstGrowSeconds(texture);
+  const window = Math.max(0, (duration || 0) + (texture.fade || 0));
+  const cadence = Math.max(BURST_CADENCE_MIN_S,
+    Math.min(BURST_CADENCE_MAX_S, (texture.fade || 0) * BURST_CADENCE_FADE_RATIO));
+  let offset = cadence;
+  while (offset <= window - grow * BURST_IN_WINDOW_RATIO) {
+    Tone.Draw.schedule(() => spawnBurst(texture), time + offset);
+    offset += Math.max(BURST_CADENCE_MIN_S * 0.5, cadence * (1 + (burstRng() * 2 - 1) * BURST_CADENCE_JITTER));
+  }
 };
 
 /* ---------- 连线与箭头的几何（参考点决定“路径末端落在箭头的哪个位置”） ----------
