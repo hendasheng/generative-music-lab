@@ -240,19 +240,23 @@
       主体不是圆，而是一群<b>一边自转、一边往外游走的线</b>：每根线绕自己的中心转，中心同时在慢慢漂走，
       画出来是<b>一小段扫过的弧</b>（只留最近约 0.13 秒的轨迹）。另有<b>偶尔才有的涟漪圈</b>
       （三成的一发完全没有圈；有圈时圆心也是偏出去的，不是同心）和几道向外飞散并变细的短痕。
-      <b>每一发、每一个元素都不一样</b>：线的数量、自转半径、转速、走多远、寿命、描边、颜色逐项各取一份 ——
-      有的小步慢转、有的飞快甩出去，<b>短的不到 1 秒就没了、长的能飘 4 秒多</b>，
-      这样才对得上鸟叫本身"忽大忽小、忽快忽慢"的样子。
+      <b>每一发、每一个元素都不一样</b>：线的数量（每发 7–16 根）、自转半径、转速、走多远、寿命、描边、
+      颜色逐项各取一份 —— 有的小步慢转、有的飞快甩出去，<b>短的不到 1 秒就没了、长的能飘 4 秒多</b>。
+      ★ <b>而且好几发会同时在场</b>：一次"击发"有 45% 的概率不是 1 发、而是一簇 <b>2–4 发</b>
+      （在 1.1 秒内先后炸开，位置各不相同），所以画面上的节奏是"有时一声、有时几下发在一起"，
+      而不是整齐的一个接一个 —— 这样才对得上鸟叫本身忽大忽小、忽快忽慢的随机感。
       出现是半径/长度从 0 长出来、消失是描边细到 0，全程不用透明度。
       它<b>只跟 birds 有关</b>，<b>颜色全部由当前段落色转出来</b>（换段/切主题整组一起变）；
       <b>整体尺度仍由这一层的声音</b>决定（`targetGain` → 大小范围、`fade` → 时间范围），
-      随机只在**这个范围之内**分配，不替代音乐决定的关系（见视觉规则 §14.7）。<br>
+      随机只在**这个范围之内**分配，不替代音乐决定的关系（判据见视觉规则 §15）。<br>
+      <b>参考出处：</b>这个效果的形式借鉴自 <b>okazz</b> 的 p5.js sketch <b>「240809a」</b>
+      （<a href="https://openprocessing.org/sketch/2326097" target="_blank" rel="noreferrer">openprocessing.org/sketch/2326097</a>，
+      许可 <b>CC BY-NC-SA</b>）—— 只借"旋转游走的拖尾线 + 减速外扩的涟漪圈 + 描边随生命变细"这三个<b>动作</b>，
+      <b>没有复制它的任何一行代码</b>（元素数量、颜色、随机、尺寸全部按本项目的规则重写），
+      所以本仓库不会被它的 SA 条款传染。<br>
       <b>调试图方便：</b>在画面上<b>任意位置点一下，就在点击处来一发</b> ——
       参数取的就是 birds 那一份（所以看到的就是真鸟叫时会看到的那一发），不用等鸟叫；
       每点一下形态都不同（"第 N 下"可复现），而且不动用鸟叫那条随机流。见 <code>DEBUG_CLICK_BURST</code>。<br>
-      形式借鉴自 okazz 的
-      <code>240809a</code>（<a href="https://openprocessing.org/sketch/2326097" target="_blank" rel="noreferrer">openprocessing</a>，CC BY-NC-SA），
-      只借思路、未使用其代码。<br>
       <b>操作：</b>点击画面隐藏 / 显示界面（同时在点击处起爆一发调试涟漪）；按 <code>f</code> 全屏、再按一次退出。<br>
       <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
       音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
@@ -1693,7 +1697,7 @@ const BURST_ORB_TRAVEL_MIN = 0.25;
 const BURST_ORB_TRAVEL_MAX = 2.8;
 const BURST_ORB_LIFE_RATIO = [0.35, 1.8]; // 寿命（× 该层的扩张时长）—— 有的 0.9 秒就没了、有的活 4.5 秒
 const BURST_ORB_STROKE_RATIO = 0.0022;   // 起始描边（× 短边）→ 短边 703 时约 1.5，比图的连线略粗一点
-const BURST_ORB_COUNT_RANGE = [8, 15];   // 一发里几根线（每一发都不同）
+const BURST_ORB_COUNT_RANGE = [7, 16];   // 一发里几根线（每一发都不同）
 /* ---- 短痕（Sparkle）：朝一个随机方向飞出去、把尾巴拉长，同时细到 0 ---- */
 const BURST_SPARKLE_DIST_RATIO = [0.5, 2.0];  // 飞多远（× 外圈半径）→ 比涟漪圈远，和参考的比例一致
 const BURST_SPARKLE_LEN_RATIO = 0.5;          // 短痕最长多少（× 外圈半径）
@@ -1709,11 +1713,28 @@ const BURST_SPARKLE_COUNT_RANGE = [5, 14];
 const BURST_RING_NONE_CHANCE = 0.30;  // 三成的一发**完全没有圈**（只剩一群线在游走）
 const BURST_RING_ONE_CHANCE = 0.40;   // 四成一圈，三成两圈
 const BURST_RING_OFFSET_MAX = 0.55;   // 圆心最多从爆点偏出多远（× 外圈半径）→ 两圈因此不同心
-const BURST_RING_STAGGER_MAX_S = 0.7; // 每圈的起始时刻在 0–0.7 秒里各取一个（不再是固定 0.16 秒错峰）
 const BURST_RING_LIFE_RATIO = [0.45, 1.7];  // 寿命 = 扩张时长（× 该层的扩张时长）→ 有快有慢
 const BURST_RING_RADIUS_SPREAD = [0.7, 1.6];// 半径（× 外圈半径）→ 有大有小，不再是固定比例的一对
+/* ★ **一发内部不要"一个接一个地冒出来"**（用户 2026-09："允许同时出现几个，而不是明显一个接一个的出现，
+   这也是为了贴近鸟鸣的随机感"）。参考的做法也是**一次性全部创建**（`addObjs()` 里 20+50+2+10 个对象同一帧出生，
+   差异全来自各自的随机寿命），所以这里把各元素起始时刻的抖动收到很小 —— 一发就是"一下炸开"，
+   而不是用 0.5–0.8 秒慢慢铺开。 */
+const BURST_RING_STAGGER_MAX_S = 0.25;   // 圈的起始时刻抖动（不再是固定 0.16 秒错峰）
+const BURST_ORB_STAGGER_MAX_S = 0.12;    // 线的
+const BURST_SPARKLE_STAGGER_MAX_S = 0.18; // 短痕的
 const BURST_PAN_SPREAD = 0.35;        // 声像 → 横向位置：pan 0.3 → 视口宽的 10.5%
 const BURST_Y_JITTER = 0.18;          // 每次的纵向位置抖动（视口高比例，来自视觉随机流）
+/* ★ 横向也要抖：`pan` 只当**锚点**（"这一层的声音偏右，画面就偏右"这条关系保留），
+   在它附近再散开一点 —— 否则每一发都落在同一个 x 上，几发同时出现时会叠成一个点。
+   （用户要的是"同时出现几个"，那就得看得出是"几个"而不是一坨。） */
+const BURST_X_JITTER = 0.13;
+/* ★★ 几发可以**同时在场**：鸟叫不是节拍器 —— 有时一声接一声、有时几下发在一起。
+   所以一次"击发"里，有 `BURST_CLUSTER_CHANCE` 的概率不是 1 发，而是 2–4 发在
+   `BURST_CLUSTER_SPREAD_S` 秒内陆续炸开（它们寿命 1–4 秒，因此**必然同时可见**）。
+   用户 2026-09："允许同时出现几个，而不是明显一个接一个的出现"。 */
+const BURST_CLUSTER_CHANCE = 0.55;
+const BURST_CLUSTER_EXTRA = [1, 3];   // 除首发之外再来 1–3 发 → 一簇共 2–4 发
+const BURST_CLUSTER_SPREAD_S = 1.1;   // 这一簇在 0–1.1 秒里散开
 /* 配色：每根线 / 每圈 / 每道痕各取一个色相偏移（在 ±该值内），所以"一发里有好几种颜色"，
    而且全部从本段落色算出来（换段/切主题时整组跟着走，不是另配一组固定色值）。 */
 const BURST_HUE_SPREAD = 42;
@@ -1800,7 +1821,9 @@ const spawnBurst = (texture, at, rng = burstRng) => {
   const grow = burstGrowSeconds(texture);
   /* 外圈半径（× 短边）：这一层越响，整发越大（用户要求"大小和 birds 的声音关联"） */
   const ringR = BURST_RING_RATIO_MIN + (BURST_RING_RATIO_MAX - BURST_RING_RATIO_MIN) * gain;
-  const fx = at ? at.fx : 0.5 + (texture.pan || 0) * BURST_PAN_SPREAD;
+  /* 横向 = 该层 `pan` 当锚点 + 一点抖动（所以几发同时出现时位置不同、不会叠成一个点） */
+  const fx = at ? at.fx
+    : 0.5 + (texture.pan || 0) * BURST_PAN_SPREAD + (rng() * 2 - 1) * BURST_X_JITTER;
   const fy = at ? at.fy : 0.5 + (rng() * 2 - 1) * BURST_Y_JITTER;
   const hueBase = (rng() * 2 - 1) * BURST_HUE_JITTER;   // 这一发整体的色相偏移
   /* 每个元素的色相各取一份 —— "一发里有好几种颜色"靠这个，而且都是从本段落色转出来的 */
@@ -1810,7 +1833,7 @@ const spawnBurst = (texture, at, rng = burstRng) => {
      直接用 `rng()`（均匀分布）时每个元素的大小还是"差不多"，看起来仍然是"一摸一样"
      （用户 2026-09："还是太大了，包括生命值也一摸一样，这个就是想从观感上和鸟叫适配，有大有小，有快有慢"）。
      ⚠️ 它只负责在**已经由声音定好的范围之内**分配：整体尺度仍由该层 `targetGain` 决定、
-     时间尺度仍由 `fade` 决定 —— 随机不替代"由音乐决定的关系"（见 §14.7）。 */
+     时间尺度仍由 `fade` 决定 —— 随机不替代"由音乐决定的关系"（见 §15）。 */
   const spread = (min, max) => min + (max - min) * rng() * rng();
   /* 数量也不是固定的：固定的数量会让每一发长得像"同一发的复制" */
   const pickCount = ([min, max]) => min + Math.floor(rng() * (max - min + 1));
@@ -1860,7 +1883,7 @@ const spawnBurst = (texture, at, rng = burstRng) => {
     const travel = ringR * spread(BURST_ORB_TRAVEL_MIN, BURST_ORB_TRAVEL_MAX);
     parts.push({
       shape: 'orb', el, strokeRatio, hueShift,
-      t0: rng() * 0.5,                          // 起跑略有先后，不要全体同时出发
+      t0: rng() * BURST_ORB_STAGGER_MAX_S,      // 一发就是"一下炸开"，不要一个个慢慢冒
       life,
       orbitRatio: ringR * BURST_ORB_RADIUS_RATIO * spread(0.3, 1.5),   // 自转半径（× 短边）
       growSeconds: BURST_ORB_GROW_S * spread(0.5, 1.6),                // 展开快慢
@@ -1884,7 +1907,7 @@ const spawnBurst = (texture, at, rng = burstRng) => {
     const dir = rng() * Math.PI * 2;
     parts.push({
       shape: 'spark', el, strokeRatio, hueShift,
-      t0: rng() * 0.8,
+      t0: rng() * BURST_SPARKLE_STAGGER_MAX_S,
       life: grow * spread(BURST_SPARKLE_LIFE_RATIO[0], BURST_SPARKLE_LIFE_RATIO[1]),
       dirX: Math.cos(dir), dirY: Math.sin(dir),
       distRatio: ringR * spread(BURST_SPARKLE_DIST_RATIO[0], BURST_SPARKLE_DIST_RATIO[1]),
@@ -1961,7 +1984,7 @@ const clearBursts = () => {
 
 /* 环境层"真的开始发声"时的入口。音频那边只负责报告事实（哪一层、什么时刻开始、这一响有多长），
    "只有 birds 画涟漪"这条判断留在视觉侧（用户 2026-09："只在出现 birds 来一发，它只跟 birds 相关"）。
-   ★ 用户 2026-09 的第二轮要求："不要只在开始的时候，在 birds 发声的过程时不时出现" ——
+   ★ 第二轮要求："不要只在开始的时候，在 birds 发声的过程时不时出现" ——
      所以这里不是起爆一次，而是**按这一层的节奏排一串**：
        · 开场立刻一发（鸟叫一响就有反应）；
        · 之后每隔 `间隔` 再排一发，间隔 = 该层 `fade × BURST_CADENCE_FADE_RATIO`（钳到 3–6 秒）
@@ -1969,20 +1992,36 @@ const clearBursts = () => {
          免得像节拍器；
        · 排到"这一响还能听到的时间窗"里为止（窗 = `duration + fade`，即淡入到淡出结束），
          并保证每发至少有 `BURST_IN_WINDOW_RATIO` 的扩张落在窗内 —— 于是最后一发不会整发落在静音里。
-     ★ 这些后续的起爆都是用 `Tone.Draw.schedule(…, time + offset)` 排在**音频时刻**上的，
-       所以视觉与"听到鸟叫"始终同源；停止播放时 `end()` 里的 `Tone.Draw.cancel(0)` 会把它们一起取消。 */
+   ★ 第四轮要求："允许同时出现几个，而不是明显一个接一个的出现" ——
+     所以一次"击发"里有 `BURST_CLUSTER_CHANCE` 的概率**不是 1 发而是一簇 2–4 发**
+     （在 `BURST_CLUSTER_SPREAD_S` 秒内陆续炸开，各自位置不同；它们寿命 1–4 秒，因此必然同时可见）。
+     于是画面上的节奏是"有时一声、有时几下发在一起"，而不是整齐的队列 —— 这才是鸟叫的随机感。
+   ★ 这些起爆都用 `Tone.Draw.schedule(…, time + offset)` 排在**音频时刻**上，
+     所以视觉与"听到鸟叫"始终同源；停止播放时 `end()` 里的 `Tone.Draw.cancel(0)` 会把它们一起取消。 */
 const onTextureStart = (texture, time, duration) => {
   if (!texture || texture.name !== 'birds') return;
-  spawnBurst(texture);
   const grow = burstGrowSeconds(texture);
   const window = Math.max(0, (duration || 0) + (texture.fade || 0));
   const cadence = Math.max(BURST_CADENCE_MIN_S,
     Math.min(BURST_CADENCE_MAX_S, (texture.fade || 0) * BURST_CADENCE_FADE_RATIO));
-  let offset = cadence;
+  /* 先把这一整段鸟叫里所有的**击发时刻**算出来（含簇的成员），再逐个排到音频时刻上。
+     先算完再排的好处：簇的成员和它所属的那次击发一起确定，不会出现"排到一半被打断"。 */
+  const offsets = [];
+  let offset = 0;   // ★ 从 0 开始，所以**开场那一发也能成簇**（不是只有后续几发才会"几发一起"）
   while (offset <= window - grow * BURST_IN_WINDOW_RATIO) {
-    Tone.Draw.schedule(() => spawnBurst(texture), time + offset);
+    offsets.push(offset);
+    if (burstRng() < BURST_CLUSTER_CHANCE) {
+      const extra = BURST_CLUSTER_EXTRA[0]
+        + Math.floor(burstRng() * (BURST_CLUSTER_EXTRA[1] - BURST_CLUSTER_EXTRA[0] + 1));
+      for (let i = 0; i < extra; i += 1) offsets.push(offset + burstRng() * BURST_CLUSTER_SPREAD_S);
+    }
     offset += Math.max(BURST_CADENCE_MIN_S * 0.5, cadence * (1 + (burstRng() * 2 - 1) * BURST_CADENCE_JITTER));
   }
+  offsets.forEach(at => {
+    /* 第一发就是"现在"（这个回调本身已经落在音频时刻 `time` 上），其余各排到自己的时刻 */
+    if (at === 0) spawnBurst(texture);
+    else Tone.Draw.schedule(() => spawnBurst(texture), time + at);
+  });
 };
 
 /* 点击处 → 视口比例（0–1）。用 `getScreenCTM()` 的逆变换换算，而不是拿 `getBoundingClientRect()`
