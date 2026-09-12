@@ -916,7 +916,11 @@ const setPulseArrow = (edge, on) => {
  * dasharray = 全长，所以 dashoffset 从全长降到 0 的过程就是“颜色走完全程”。
  * 箭头不用行进层自己的 marker：那会让箭头尺寸跟着行进层的粗描边（2.4）一起放大。
  * 做法是颜色到位时给**灰底边**加 .active —— 同一个 path、同一个 marker、同一条描边宽度，
- * 所以彩色箭头与灰箭头的尺寸必然一致，位置也一样。行进层只负责“正在走”的那段彩色。 */
+ * 所以彩色箭头与灰箭头的尺寸必然一致，位置也一样。行进层只负责“正在走”的那段彩色。
+ * ★ 一条连线的高亮**出现和消失都必须是几何**（生长 / 反向生长），任何一处都不许用透明度：
+ *   出现 = 从起点长到终点；被下一条转移取代 = **沿原路退回去**（终点端先消失、起点端最后消失），
+ *   用的时长与它走过来时相同（= 该音的 I）。旧版这里是 1.2 秒退色，于是"当前转移"的退场
+ *   看起来像被透明度擦掉 —— 与"所有连线的出现/消失都走几何"这条规则不一致（用户 2026-09 指出）。 */
 const updateEdgePulse = (edge, time) => {
   const pulse = edge.pulse;
   if (!pulse.active) return;
@@ -925,20 +929,21 @@ const updateEdgePulse = (edge, time) => {
   const length = Math.max(1, path.getTotalLength());
   const elapsed = (time - pulse.startedAt) / 1000;
   let reveal = 1;
-  let opacity = 1;
-  if (pulse.fadeStartedAt === null) {
+  if (pulse.retreatStartedAt === null) {
     reveal = pulse.duration > 0 ? Math.min(1, elapsed / pulse.duration) : 1;
   } else {
-    const fadeElapsed = (time - pulse.fadeStartedAt) / 1000;
-    if (fadeElapsed >= EDGE_SWEEP_FADE_S) {
+    /* 反向生长：揭示区间从全长缩回 0（终点端先退，起点端最后退），全程满透明度 */
+    const retreatElapsed = (time - pulse.retreatStartedAt) / 1000;
+    const retreatDuration = pulse.duration > 0 ? pulse.duration : EDGE_SWEEP_MIN_S;
+    if (retreatElapsed >= retreatDuration) {
       pulse.active = false;
       pulse.recolored = false;
-      edge.path.classList.remove('active');
+      pulse.retreatStartedAt = null;
       setPulseArrow(edge, false);
       path.style.opacity = '0';
       return;
     }
-    opacity = 1 - fadeElapsed / EDGE_SWEEP_FADE_S;
+    reveal = 1 - retreatElapsed / retreatDuration;
   }
   if (reveal >= 1 && !pulse.recolored) {
     pulse.recolored = true;
@@ -946,24 +951,24 @@ const updateEdgePulse = (edge, time) => {
     setPulseArrow(edge, true);           // 行进层也挂上同一支箭头：箭头与线的明度因此逐帧相等
   }
   /* ★ 彩色层永远不能比灰线长：可见区间 = 扫过区间 [0, reveal·L) ∩ 灰线的可见区间。
-     灰线在**收回**时（presence → 0）彩色层跟着它一起反向生长，而且**全程保持满透明度**：
-     收回关乎"这条线还在不在"，不是高亮衰减 —— 旧版让彩色层保持满长、只靠 1.2 秒退色消失，
-     于是换句时看起来就是"激活的连线被透明度抹掉"，而不是跟着线一起退回去（用户 2026-09 反馈）。 */
+     灰线在**收回**时（presence → 0）彩色层跟着它一起反向生长，同样全程满透明度。 */
   const retracting = edge.presenceTarget <= 0 && edge.presence < 1;
   if (retracting) {
     if (edge.presence <= 0) {
       /* 收完了：高亮结束（几何也已经为空，画面上本来就看不到东西） */
       pulse.active = false;
       pulse.recolored = false;
+      pulse.retreatStartedAt = null;
       edge.path.classList.remove('active');
       setPulseArrow(edge, false);
       path.style.opacity = '0';
       return;
     }
-    opacity = 1;
     setPulseArrow(edge, false);          // 灰线收回途中本来就不挂箭头
   } else if (edge.presence >= 1 && pulse.recolored) {
     setPulseArrow(edge, true);           // 灰线画满就得有箭头：它可能在生长途中被摘掉过
+  } else if (reveal < 1) {
+    setPulseArrow(edge, false);          // 正在退回去：颜色已经离开终点，箭头就不该留在那儿
   }
   const baseStart = edge.presence >= 1 || !edge.revealFromEnd ? 0 : (1 - edge.presence) * length;
   const baseEnd = edge.presence >= 1 || !edge.revealFromEnd ? edge.presence * length : length;
@@ -982,21 +987,22 @@ const updateEdgePulse = (edge, time) => {
     path.setAttribute('stroke-dasharray', (end - start) + ' ' + length);
     path.setAttribute('stroke-dashoffset', String(-start));
   }
-  path.style.opacity = opacity.toFixed(3);   // 内联样式：CSS 覆盖不了
+  path.style.opacity = '1';   // 内联样式：CSS 覆盖不了；★ 高亮的出现与消失都由几何表达，这里恒为 1
 };
 
-/* 新的转移开始行进时，之前那条还亮着的转移同时开始退色（底边与行进层一起） */
+/* 新的转移开始行进时，之前那条还亮着的转移**沿原路退回去**（底边的颜色同时淡回灰） */
 const startEdgePulse = (edge, intervalSeconds, time) => {
   graphMotion.edges.forEach(other => {
-    if (other !== edge && other.pulse.active && other.pulse.fadeStartedAt === null) {
-      other.pulse.fadeStartedAt = time;
+    if (other !== edge && other.pulse.active && other.pulse.retreatStartedAt === null) {
+      other.pulse.retreatStartedAt = time;   // 开始反向生长（不是退色）
       other.pulse.recolored = false;
       other.path.classList.remove('active');
+      setPulseArrow(other, false);           // 颜色要退回去，箭头先摘掉
     }
   });
   edge.pulse.active = true;
   edge.pulse.startedAt = time;
-  edge.pulse.fadeStartedAt = null;
+  edge.pulse.retreatStartedAt = null;
   edge.pulse.duration = Math.max(EDGE_SWEEP_MIN_S, Math.min(EDGE_SWEEP_MAX_S, intervalSeconds));
   if (edge.pulse.recolored) {   // 同一条重新走一遍：先把底边退回灰色，等颜色再次到达终点
     edge.pulse.recolored = false;
@@ -1101,7 +1107,8 @@ const HIDDEN_NODE_OPACITY = 0;
      以及行进到位后箭头亮起的时刻 —— 三者因此天然同步。 */
 const EDGE_SWEEP_MIN_S = 0.16;
 const EDGE_SWEEP_MAX_S = 1.5;
-const EDGE_SWEEP_FADE_S = 1.2;      // 下一条转移开始行进时，上一条开始退色
+/* 高亮退场用同一个时长（反向生长回去），所以这里不再需要单独的退色时长：
+   旧版有个 EDGE_SWEEP_FADE_S = 1.2，用于"被下一条取代后按透明度退色"，已随几何化改造删除。 */
 const FIRST_NOTE_INTERVAL_S = 0.5;  // 第一个音没有“上一个音”可参照，用这个兜底
 const NODE_IDLE_FILL = [63, 63, 70];          // #3f3f46 收起
 const NODE_PRESENT_FILL = [82, 82, 91];       // #52525b 在场
@@ -1321,7 +1328,7 @@ const ensurePhraseGraph = () => {
       rest: Math.hypot(b.home.x - a.home.x, b.home.y - a.home.y),
       presence: 0, presenceFrom: 0, presenceTarget: 0, presenceStartedAt: 0, presenceDuration: 0,
       probability: 0, opacity: 0, arrowOn: false, pulseArrowOn: false,
-      pulse: { active: false, startedAt: 0, duration: 0, fadeStartedAt: null, recolored: false },
+      pulse: { active: false, startedAt: 0, duration: 0, retreatStartedAt: null, recolored: false },
     });
   });
 
@@ -1711,6 +1718,7 @@ const activateEngine = async seed => {
     graphMotion.edges.forEach(edge => {
       edge.pulse.active = false;
       edge.pulse.recolored = false;
+      edge.pulse.retreatStartedAt = null;
       edge.path.classList.remove('active');
       setPulseArrow(edge, false);
       edge.pulsePath.style.opacity = '0';
