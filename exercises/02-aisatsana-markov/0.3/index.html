@@ -750,14 +750,19 @@ const updateGraphViewBox = (rescaleNodes = false) => {
     layoutGraph();
   }
 };
+/* 日志一行 = 一个乐句，按**它所属段落**的颜色着色。
+   ★ 记的是**段落号**而不是颜色字符串：颜色要能跟着主题换（见下面的 repaintLog）。
+   旧版存的是 `{ msg, color }`，于是切主题后老行永远留在旧主题的配色里
+   （用户 2026-09："打印的乐句颜色没跟上吧"）。 */
 const logLines = [];
-const log = (msg, color) => {
-  logLines.push({ msg, color });
+const log = (msg, section) => {
+  const rgb = hexToRgb(sectionColors()[section]) || [255, 255, 255];
   const line = document.createElement('div');
   line.className = 'log-line';
-  line.style.color = color;
+  line.style.color = rgbToHex(rgb);
   line.textContent = msg;
   logContentEl.appendChild(line);
+  logLines.push({ element: line, section, rgb });
   if (logLines.length > 80) {
     logLines.shift();
     logContentEl.firstElementChild.remove();
@@ -768,6 +773,27 @@ const log = (msg, color) => {
   void logContentEl.offsetHeight;
   logContentEl.style.transition = 'transform .6s cubic-bezier(.22,1,.36,1)';
   logContentEl.style.transform = 'translateY(0)';
+};
+/* 切主题时把**已经打印出来的行**也重新着色：逐行从旧主题那个色插值到新主题的同一个段落色，
+   时长沿用 SECTION_COLOR_MORPH_S —— "颜色永远不跳变"这条规则对主题切换同样成立。
+   （每一行有它自己的段落，所以要按行各自插值，不能共用 tweenSectionColor 那一个"当前段落色"。） */
+let logColorFrame = null;
+const repaintLog = () => {
+  if (logColorFrame !== null) { cancelAnimationFrame(logColorFrame); logColorFrame = null; }
+  if (!logLines.length) return;
+  const froms = logLines.map(entry => entry.rgb);
+  const targets = logLines.map(entry => hexToRgb(sectionColors()[entry.section]) || entry.rgb);
+  const startedAt = performance.now();
+  const step = () => {
+    const progress = Math.min(1, (performance.now() - startedAt) / (SECTION_COLOR_MORPH_S * 1000));
+    const eased = progress * progress * (3 - 2 * progress);
+    logLines.forEach((entry, index) => {
+      entry.rgb = froms[index].map((value, i) => Math.round(value + (targets[index][i] - value) * eased));
+      entry.element.style.color = rgbToHex(entry.rgb);
+    });
+    logColorFrame = progress < 1 ? requestAnimationFrame(step) : null;
+  };
+  logColorFrame = requestAnimationFrame(step);
 };
 const setStatus = html => { statusEl.innerHTML = html; };
 
@@ -1513,6 +1539,7 @@ if (themeToggleEl) {
          段落色管着刚发声的点、彩色连线、图例彩点与日志文字，它们会一直停在旧主题的颜色上）。
        ★ 这里必须真正跑完：所以包一层 try 并显式报错，免得以后再出类似问题又变成"静默半切换"。 */
     try {
+      repaintLog();   // 已经打印出来的行也要换成新主题的段落色（逐行、同样 2.4 秒插值）
       tweenSectionColor(sectionColors()[currentVisualSection]);
     } catch (error) {
       console.warn('[主题] 切换后没能把当前段落色接到新主题上：', error);
@@ -2145,7 +2172,7 @@ const activateEngine = async seed => {
         visualPhraseId += 1;
         phraseVisualId = visualPhraseId;
         setStatus(statusHtml);
-        log(logLine, sectionColors()[section]);
+        log(logLine, section);
         swapVisualText(
           SECTION_NAMES[section] + ' · 乐句 ' + String.fromCharCode(65 + phraseIndex),
           variant.name + ' · ' + playedEvents.length + '/' + rawNoteCount
