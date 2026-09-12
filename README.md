@@ -7,7 +7,7 @@
 | 编号 | 名称 | 内容 | 运行方式 |
 | --- | --- | --- | --- |
 | 01 | [Ambient Pulse](exercises/01-ambient-pulse/) | C 自然小调、氛围合成、动机发展与呼吸型节奏 | 打开 `exercises/01-ambient-pulse/index.html` |
-| 02 | [Aisatsana Markov 0.3](exercises/02-aisatsana-markov/0.3/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture | 打开 `exercises/02-aisatsana-markov/0.3/index.html` |
+| 02 | [Aisatsana Markov 0.4](exercises/02-aisatsana-markov/0.4/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture（0.4 起点 = 0.3 完整副本，需求待定） | 打开 `exercises/02-aisatsana-markov/0.4/index.html`；上一版是 `0.3/index.html` |
 | 03 | [Phase Loops 0.2](exercises/03-phase-process/0.2/) | 独立音符循环、全屏圆环、触发轮廓与环境等高线 | 打开 `exercises/03-phase-process/0.2/index.html` |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
@@ -24,7 +24,7 @@ generative-music-lab/
 │  └─ 02-aisatsana-markov/
 │     ├─ README.md            # 本练习的演进与实测数据
 │     ├─ 视觉规则.md          # 本练习专有的视觉规范（可复用的规则文档）
-│     ├─ 0.1/ 0.2/ 0.3/       # 各版本的实现文件
+│     ├─ 0.1/ 0.2/ 0.3/ 0.4/   # 各版本的实现文件（0.4 = 当前版本）
 ├─ notes/                     # 跨练习的源码阅读与学习笔记
 ├─ shared/                    # 两个以上练习共用的轻量组件或工具
 │  └─ exercise-controls.js    # 公共播放/暂停、种子、reset 控件

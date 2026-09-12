@@ -1,0 +1,2290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>02 · Aisatsana Markov 0.4（Markov 乐句重组）</title>
+<!--
+  02 0.4 —— 起点是 0.3 的**完整实现**副本（音频与视觉都照搬），用来承载下一轮需求。
+  · 音频链路与 0.3 一字未改：段落链 + 句内音高链 + Moodist texture + VSCO2 钢琴。
+  · 视觉也照搬 0.3：持续状态图（节点/边的状态机）、设计单位视口、深/浅主题、PALETTE 调色板、
+    "常规连线不画箭头、方向靠沿线灰度渐变"。
+  · 0.3 的文件保持不动，方便 A/B 对照（与当初 0.3 对 0.2 的做法一致）。
+  · 规则以 exercises/02-aisatsana-markov/视觉规则.md 为准；本版改动后要同步那份规范与练习 README。
+-->
+<script>
+  /* 主题必须在**首帧之前**定下来，否则选了浅色的人每次打开都会先闪一帧深色。
+     这里只做两件事：读存储、写 data-theme。存储可能不可用（file:// 或隐私模式会抛错），
+     失败就保持默认深色。★ 默认深色、不跟随系统 prefers-color-scheme —— 这块深底就是这个练习的身份。 */
+  try {
+    const saved = localStorage.getItem('gml-theme');
+    if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
+  } catch (error) {}
+</script>
+<style>
+  /* ---------- 主题：深色（默认）/ 浅色 ----------
+     用户 2026-09：“准备调整配色，先在 HUD 里加 light/dark 按钮”。
+     配色**只有这一处定义**：页面元素直接用这些变量，JS 也从同一批变量里读（见 applyTheme）——
+     因为 SVG 的节点颜色是逐帧用 RGB 三元组插值算出来的，没法直接吃 CSS 变量。
+     绝不能把颜色在 CSS 和 JS 里各写一份：一处改了另一处没改，切主题时就会出现
+     “面板变白了、环上的点还是黑的”这种半截状态。
+     两套值是**镜像**的（深色用的是 zinc 色阶，浅色把深浅对调），所以浅色不是另一种风格，
+     而是同一张图的底片：面板始终比底色亮一点、节点始终比底色灰一点、墨色始终反过来。 */
+  :root {
+    color-scheme:dark;
+    --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32;
+    --hairline:#2a2a2e;              /* 面板内的细分隔线（.status / .matrix） */
+    --log-fg:#f4f4f5;
+    --code-bg:#27272a; --code-fg:#e4e4e7;
+    --control-primary:#fafafa; --control-primary-fg:#18181b;
+    --control-secondary:#27272a; --control-secondary-fg:#fafafa;
+    --control-input-bg:#0d0d0f; --control-input-fg:#fafafa; --control-input-border:#3f3f46;
+    --control-focus:#a1a1aa;
+    /* ★ 画面上的颜色（--stage-bg / --graph-* / --section-color）**不在这里**：
+       它们集中在 JS 的 PALETTE 里，由 applyTheme() 推成 <html> 的内联变量。
+       内联样式优先级高于样式表，所以在这里写一份不但没用、还会让人以为"改了没反应"。
+       调色请看文件里那一段带 ★★ 的"调色板（画面）"注释。 */
+  }
+  html[data-theme="light"] {
+    color-scheme:light;
+    --bg:#fafafa; --panel:#ffffff; --fg:#18181b; --dim:#52525b; --line:#d4d4d8;
+    --hairline:#e4e4e7;
+    --log-fg:#18181b;
+    --code-bg:#e4e4e7; --code-fg:#3f3f46;
+    --control-primary:#18181b; --control-primary-fg:#fafafa;
+    --control-secondary:#e4e4e7; --control-secondary-fg:#18181b;
+    --control-input-bg:#ffffff; --control-input-fg:#18181b; --control-input-border:#d4d4d8;
+    --control-focus:#71717a;
+    /* 画面的浅色配色同样在 JS 的 PALETTE.light 里（含 §14.3 那条"反差由纸提供"的说明）。 */
+  }
+  * { box-sizing:border-box; }
+  html, body { width:100%; height:100%; }
+  body { margin:0; overflow:hidden; background:var(--bg); color:var(--fg); font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  .wrap { position:relative; width:100%; height:100%; }
+  h1 { font-size:24px; font-weight:650; letter-spacing:-.035em; margin:0 0 5px; }
+  h1 small { color:var(--dim); font:500 13px/1 Consolas,monospace; letter-spacing:0; vertical-align:5px; }
+  .sub { color:var(--dim); font-size:12px; line-height:1.5; }
+  .hud { position:fixed; z-index:10; background:var(--panel); border:1px solid var(--line); border-radius:7px; transition:opacity .2s ease; }
+  .intro-hud { top:20px; left:20px; padding:14px 16px; }
+  .controls-hud { top:20px; right:20px; width:310px; padding:14px; }
+  .status { margin-top:12px; padding-top:10px; border-top:1px solid var(--hairline); color:var(--dim); font-size:11px; line-height:1.5; }
+  .status b { color:var(--fg); }
+  .visual-head { position:absolute; z-index:3; right:20px; bottom:16px; display:flex; align-items:baseline; gap:8px; color:var(--dim); opacity:.55; transition:opacity .2s ease; }
+  .visual-title { color:inherit; font-size:11px; font-weight:500; transition:opacity .18s ease; }
+  .visual-meta { color:inherit; font:10px Consolas,monospace; transition:opacity .18s ease; }
+  .markov-stage { position:fixed; z-index:1; inset:0; overflow:hidden; width:100vw; height:100vh; background:var(--stage-bg); isolation:isolate; }
+  .markov-map { position:absolute; z-index:2; inset:0; display:block; width:100%; height:100%; background:transparent; }
+  /* 乐句之间是“变形”，不是“切换”：节点与边一次建好、永不增删。
+     存在度（opacity）表达“这个音高/转移是否属于当前段落”，用慢过渡；
+     当前状态（颜色与描边）表达“刚刚发声”，用快过渡。两者分离，所以
+     段落的更替不会产生任何瞬时跳变。CSS 时长与 JS 里的 GRAPH_*_S 需保持一致。 */
+  /* 灰色转移边：是否属于当前段落由 JS 用 dash 生长表达（从起点画到终点），不是淡入，
+     所以这里不写 opacity 过渡，避免和逐帧写入的内联样式打架。
+     ★ 明度（= 该转移的马尔可夫概率）也由 JS 写内联样式。
+     ★ stroke-width 由 JS 按 EDGE_STROKE_WIDTH 写进 path 属性，单一来源。
+     ★ **stroke 由 JS 写成"每条边自己的线性渐变"**（`url(#edge-grad-…)`），
+       方向靠"起点端亮、终点端淡"的灰度读出 —— 用户 2026-09："去掉常规连线的箭头，显得很乱，
+       能否用渐灰度代替箭头的方向"。所以这里既不写 stroke，也没有 `.active` 变色规则：
+       底边**永远不变色**（它没有箭头了，而且激活时会被 2.4 宽的彩色层完整盖住）。
+     ★ 这里不写 stroke-opacity：元素 opacity 是概率明度的唯一来源（EDGE_OPACITY_MIN/MAX），
+       渐变的两端再用 stop-opacity 乘上去，方向与概率因此是两个互不干扰的通道。 */
+  .chain-edge { fill:none; }
+  /* “骑行箭头”的载体：它的描边**不可见**（stroke-opacity: 0），只用来承载 marker ——
+     实测 marker 的 fill（context-stroke）不受 stroke-opacity 影响，所以描边不显示、箭头照常显示。
+     描边宽度必须与灰线一致（1.1），否则 markerUnits="strokeWidth" 会让箭头尺寸对不上。
+     它的 d 每帧重算成"一小段曲线"，终点放在正在移动的头部，于是 orient="auto" 给出的就是
+     **曲线在头部处的切线**（不是结尾的朝向，也不是固定角度）。 */
+  .chain-head { fill:none; stroke:var(--section-color); stroke-width:1.1; stroke-opacity:0; }
+  /* 激活的转移不用“整条变色”，而是让彩色沿曲线从起点长到终点：
+     覆盖层用 stroke-dasharray = 全长、stroke-dashoffset 由全长推到 0，
+     走完之前只有头段被揭示出来。进度由 JS 逐帧写入（时长按音程算，见 startEdgePulse）。
+     ★ 透明度只能由 JS 写内联样式：CSS 里一旦写 opacity，SVG 呈现属性就会被它覆盖，
+       表现就是“属性写了 1 但画面完全不显示”。
+     ★ 端头必须是**平头（butt）**：圆头会让彩色比算出来的端点再多伸 1.2（半描边宽）——
+       行进时那多出来的一截正好藏在箭头身体里看不出来，但**反向生长时箭头在头部后面**，
+       这 1.2 就从箭头旁边露出来了（用户 2026-09："反生长的时候，线的端点也会超出箭头一点"）。
+       平头之后彩色严格止于头部，而头部表面由箭头负责，两头都不会露出线头。 */
+  .chain-edge-pulse { fill:none; stroke:var(--section-color); stroke-width:2.4; stroke-linecap:butt; stroke-linejoin:round; pointer-events:none; }
+  /* 节点的存在度、半径、颜色由 JS 逐帧写入（见 paintNode）：节点会在“藏身层”和
+     “在场层”之间搬动，而 DOM 搬动会重启动 CSS 过渡，所以节点不用 CSS 过渡。 */
+  .chain-node { stroke-width:1; }
+  /* 音名的字色由 JS 每帧写内联（取 PALETTE 里那一个 `labelInk`，压不出对比度时自动退回安全墨色，见 refreshNodeLabelInk），
+     这里不写 fill：写死一种颜色就会在"把 nodeBase 换成亮色"的时候糊掉。 */
+  .node-label { font:600 12px Consolas,monospace; text-anchor:middle; dominant-baseline:middle; pointer-events:none; }
+  .legend { position:absolute; z-index:3; left:50%; bottom:18px; display:flex; gap:18px; color:var(--dim); font-size:11px; transform:translateX(-50%); transition:opacity .2s ease; }
+  body.hud-hidden .hud,
+  body.hud-hidden .visual-head,
+  body.hud-hidden .legend { opacity:0; pointer-events:none; }
+  .key { display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; vertical-align:1px; }
+  .key.source { background:var(--graph-node-base); }
+  .key.played { background:var(--section-color); }
+  .log { position:absolute; z-index:1; inset:110px 5vw 54px; display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; color:var(--log-fg); font:13px/1.775 Consolas,monospace; text-align:left; opacity:.8; pointer-events:none; }
+  .log-content { flex:0 0 auto; width:100%; white-space:pre-wrap; will-change:transform; }
+  .log-line { min-height:1.775em; animation:logLineIn .55s cubic-bezier(.22,1,.36,1) both; }
+  @keyframes logLineIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+  .info-hud { left:20px; bottom:20px; width:min(620px,calc(100vw - 40px)); max-height:65vh; padding:10px 13px; overflow:auto; color:var(--dim); }
+  .info-hud:not([open]) { width:auto; }
+  .info-hud summary { color:var(--fg); font-size:12px; cursor:pointer; user-select:none; }
+  .matrix { margin-top:12px; padding-top:12px; border-top:1px solid var(--hairline); font-family:Consolas,monospace; font-size:11px; color:var(--dim); line-height:1.6; }
+  .matrix b { color:var(--fg); }
+  .hint { font-size:12.5px; color:var(--dim); line-height:1.9; }
+  .hint b { color:var(--fg); }
+  code { background:var(--code-bg); padding:2px 5px; border-radius:3px; font-size:12px; color:var(--code-fg); }
+  /* 主题按钮放在控制面板里（和播放/种子/换一版同属"页面控件"）。
+     图标风格与 shared/exercise-controls.js 里那套完全一致（24×24 viewBox、fill:none、
+     stroke 继承 currentColor、stroke-width 2.4），所以看起来是同一套图标，不是新引入的一套。 */
+  .controls-row { display:flex; align-items:center; gap:10px; }
+  .theme-toggle {
+    margin-left:auto;
+    display:inline-flex; align-items:center; justify-content:center;
+    width:28px; height:28px; padding:0;
+    border:1px solid var(--line); border-radius:4px;
+    background:transparent; color:var(--dim); cursor:pointer;
+    transition:color .15s ease, border-color .15s ease;
+  }
+  .theme-toggle:hover { color:var(--fg); border-color:var(--dim); }
+  .theme-toggle:focus-visible { outline:1px solid var(--control-focus); outline-offset:1px; }
+  .theme-toggle svg { width:15px; height:15px; stroke-width:2.4; }
+  exercise-controls {
+    --exercise-control-radius:4px;
+    --exercise-control-primary:var(--control-primary);
+    --exercise-control-primary-fg:var(--control-primary-fg);
+    --exercise-control-secondary:var(--control-secondary);
+    --exercise-control-secondary-fg:var(--control-secondary-fg);
+    --exercise-control-input-border:var(--control-input-border);
+    --exercise-control-input-bg:var(--control-input-bg);
+    --exercise-control-input-fg:var(--control-input-fg);
+    --exercise-control-focus:var(--control-focus);
+  }
+  @media (max-width:640px) {
+    .intro-hud { top:10px; left:10px; padding:10px 12px; }
+    h1 { font-size:18px; }
+    h1 small { font-size:10px; vertical-align:3px; }
+    .sub { display:none; }
+    .controls-hud { top:76px; left:10px; right:10px; width:auto; padding:10px; }
+    .status { margin-top:8px; padding-top:8px; }
+    .log { inset:140px 16px 50vh; font-size:11px; line-height:1.55; }
+    .visual-head { right:10px; bottom:40px; }
+    .legend { left:auto; right:10px; bottom:12px; gap:8px 12px; transform:none; }
+    .info-hud { left:10px; bottom:10px; width:auto; max-width:calc(100vw - 170px); padding:8px 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="markov-stage">
+    <div class="log"><div class="log-content" id="logContent"></div></div>
+    <svg class="markov-map" id="markovMap" viewBox="0 0 960 430" role="img" aria-label="当前段落的马尔可夫音高状态网络"></svg>
+    <div class="visual-head">
+      <div class="visual-title" id="visualTitle">等待第一条乐句</div>
+      <div class="visual-meta" id="visualMeta">32 steps</div>
+    </div>
+    <div class="legend"><span><i class="key source"></i>本段落可到达状态</span><span><i class="key played"></i>刚发声的音与刚发生的转移</span><span>连线越亮 = 该转移在马尔可夫链里概率越高</span></div>
+  </div>
+
+  <header class="hud intro-hud">
+    <h1>02 · Aisatsana Markov <small>0.4</small></h1>
+    <div class="sub">乐句顺序与句内音高沿马尔可夫链重组。</div>
+  </header>
+
+  <div class="hud controls-hud">
+    <div class="controls-row">
+      <exercise-controls id="transportControls"></exercise-controls>
+      <!-- 图标由 JS 按当前主题写入（深色时显示太阳 = 点了变浅色）。见 applyTheme。 -->
+      <button type="button" class="theme-toggle" id="themeToggle" title="切换到浅色" aria-label="切换到浅色" aria-pressed="false"></button>
+    </div>
+    <div class="status" id="status">点击播放开始。日志会显示每次乐句转换（马尔可夫链的"行走"）。按 <b>f</b> 全屏。</div>
+  </div>
+
+  <details class="hud info-hud">
+    <summary>机制与转移</summary>
+    <div class="matrix" id="matrix"></div>
+    <div class="hint">
+      <b>机制（对照 aisatsana 源码）：</b>① 音符素材按八分音符网格量化 → ② 每 32 步切成一个乐句 →
+      ③ 乐句序列喂给段落链训练转换概率 → ④ 当前段落内的音符相邻关系训练第二条链 →
+      ⑤ 演出时两条链分别重组乐句顺序和句内音高。节奏位置、力度与演奏版本仍沿用 0.1。<br>
+      <b>0.4 视觉：</b>节点（全部段落用过的音高）与边（全部出现过的转移）只建一次、永不重建。
+      <b>连线的明度 = 转移概率</b>：`walkNote` 是从当前音的后继里等概率挑一个（重复项就是权重），
+      所以 from→to 的概率 = 出现次数 ÷ 该音后继总数；越常走的转移画得越亮。
+      属于当前段落的音高留在环上，其余音高收进下层、<b>滑到某个在场节点背后被挡住</b>；
+      变成乐句点时它从宿主背后<b>一次弹出</b>：起步很猛，临到落点单次过冲再收回；
+      <b>每次换句所有点都会移动一段距离</b>（环的相位与半径每句轻微改变），
+      刚变成乐句点的点用“弹”、本来就是乐句点的点用平滑滑位；
+      <b>每个点速度不同</b>，而且允许飞到首音之后才落位。
+      <b>连线也一起生长</b>：一端刚变成乐句点的转移<b>朝那个新点</b>长过去（新点在起点端就从另一端长过来）；
+      两端本来就是在场的乐句点时，连线只是跟着点移动，不重新生长。
+      整段结构变化<b>在首音那一刻开始</b>，时长基准是<b>本句内部第一个音程</b>（首音 → 第二个音）：
+      于是变换跟着音乐发生（旧版落在“上一句尾音 → 本句首音”的空白里，那段区间没有新音，观感很干）。
+      所以不会出现“一条还没长完、另一条已经开始”。
+      转移被激活时不是整条变色，而是<b>彩色沿曲线从起点走到终点，到达终点时箭头才亮起</b>；
+      <b>同一个音程同时决定三件事</b>：彩色行进走多久、这个点从亮到暗用多久、箭头何时亮 ——
+      音密处一闪即暗、留白处余韵长（不是每个音都固定时长）。
+      <b>只有被激活的连线才有箭头</b>（行进中跟着彩色头部走、反向生长时慢慢掉头，走到终点后停在终点）；
+      常规连线不画箭头 —— 它的方向靠<b>沿线灰度渐变</b>读：<b>起点端亮、终点端淡</b>，
+      线越亮 = 该转移在马尔可夫链里概率越高。
+      换句时不是整体外扩，而是给在场节点一次<b>切向</b>抖动，位移<b>沿连线传给邻居</b>：
+      连线是铰链，弹因此是传开的。力度分两级：<b>换句/段落切换</b>抖得明显，
+      单个<b>音符发声</b>只是很轻地推一下。段落色逐帧插值，不在句界跳变。<br>
+      <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>f</code> 全屏、再按一次退出。<br>
+      <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
+      音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
+      <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
+      （首次约 50MB，之后走浏览器缓存）；加载失败自动回退 FM 合成钢琴，不会卡死。<br>
+      <b>版权说明：</b>aisatsana 原曲谱面（Aphex Twin）不直接搬运，本练习使用同风格的<b>自写</b>极简琶音素材演示机制；采样库为 CC0 许可。
+    </div>
+  </details>
+</div>
+
+<!-- Tone.js v14.7.58 从 CDN 加载（unpkg） -->
+<script src="../../../shared/exercise-controls.js"></script>
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+/* ============================================================
+ * 02 · aisatsana 式极简钢琴（Markov 乐句重组）
+ * 对照源码：generative-music/pieces-alex-bainter 仓库内
+ *   packages/piece-aisatsana/src/piece.js（86 行，机制全貌）
+ *   packages/piece-aisatsana/src/instructions.json（原曲谱面数据）
+ * 版本：0.4 起点 = 0.3 的完整实现（乐句链 + 句内音高链 + Moodist texture + 持续状态图视觉，
+ *   含设计单位视口、深/浅主题与 PALETTE 调色板、连线方向灰度渐变）。**音频与 0.3 一字未改**，
+ *   本轮只在视觉上推进；0.3 的文件保持不动，方便 A/B 对照。
+ * 学习点：
+ *   1. 谱面 → 八分音符网格量化（本练习简化：素材直接用步索引）
+ *   2. 乐句切分（32 步一组）+ 马尔可夫链训练乐句转换
+ *   3. 段落链沿概率重组乐句顺序 —— 记忆 + 重排
+ *   4. 段落内音高链沿素材中的相邻关系重组句内音符
+ *   5. 提前 1 秒触发 + ±25ms 人性化抖动（与 piece-zed 同源手法）
+ * ============================================================ */
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '⚠ 无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+/* ---------- ① 音符素材：段落化乐句库 ----------
+ * ★ 段落感来自素材结构（对照原版：301 秒谱面含 intro→主题→发展→结尾的段落性格）。
+ * 本练习 10 个乐句分 4 段：
+ *   A 安静段（0-1）：稀疏、低音区、长休止
+ *   B 主题段（2-4）：完整琶音、主旋律
+ *   C 发展段（5-7）：密集、双音、切分、高音
+ *   D 结尾段（8-9）：下行走势、渐弱收束
+ * 每步格式 [{ n: 音名, v: 力度 0~1 }]，空数组 = 休止。 */
+const PHRASES = [
+  /* --- 段落 A：安静（稀疏低音） --- */
+  /* A0：低音琶音，每 4~6 步一个音 */
+  [
+    [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.55 }], [], [], [],
+    [{ n: 'E3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'C3', v: 0.55 }], [], [], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'E3', v: 0.55 }], [], [], [], [{ n: 'C3', v: 0.65 }], [], [], [],
+  ],
+  /* A1：低音 + 高音点缀，仍稀疏 */
+  [
+    [{ n: 'C3', v: 0.55 }], [], [{ n: 'E4', v: 0.4 }], [], [{ n: 'G3', v: 0.5 }], [], [], [],
+    [{ n: 'E3', v: 0.55 }], [], [{ n: 'C4', v: 0.4 }], [], [{ n: 'G3', v: 0.45 }], [], [], [],
+    [{ n: 'C3', v: 0.5 }], [], [{ n: 'G4', v: 0.35 }], [], [{ n: 'E3', v: 0.5 }], [], [], [],
+    [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G3', v: 0.45 }], [], [], [],
+  ],
+  /* --- 段落 B：主题（完整琶音、主旋律） --- */
+  /* B0：切分上行琶音（3+3+2 感）+ 低八度重音 */
+  [
+    [{ n: 'C4', v: 0.7 }], [], [{ n: 'E4', v: 0.55 }], [], [{ n: 'G4', v: 0.75 }], [], [], [{ n: 'C5', v: 0.5 }],
+    [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.7 }], [{ n: 'G3', v: 0.8 }], [], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.7 }], [], [], [{ n: 'C5', v: 0.45 }],
+    [], [{ n: 'B4', v: 0.6 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'C4', v: 0.75 }], [], [],
+  ],
+  /* B1：跨音区 + 高音点缀（C6） */
+  [
+    [{ n: 'C5', v: 0.6 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.65 }], [{ n: 'C5', v: 0.55 }],
+    [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'G4', v: 0.6 }], [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.6 }],
+    [{ n: 'D4', v: 0.5 }], [{ n: 'E4', v: 0.65 }], [],
+    [{ n: 'C5', v: 0.6 }], [], [{ n: 'E4', v: 0.5 }], [], [{ n: 'G4', v: 0.65 }], [{ n: 'C5', v: 0.55 }],
+    [], [{ n: 'B4', v: 0.7 }], [], [{ n: 'C6', v: 0.75 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.7 }], [], [],
+  ],
+  /* B2：五音上行 C4-E4-G4-C5-E5 + 回落 */
+  [
+    [{ n: 'C4', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.7 }], [], [{ n: 'C5', v: 0.65 }], [],
+    [{ n: 'E5', v: 0.7 }], [], [{ n: 'C5', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'E4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'G3', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'C4', v: 0.65 }], [],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'C5', v: 0.55 }], [],
+  ],
+  /* --- 段落 C：发展（密集、双音、切分） --- */
+  /* C0：双音和弦块 + 低音重音 */
+  [
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'E4', v: 0.65 }], [], [{ n: 'G3', v: 0.8 }, { n: 'C5', v: 0.45 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'F3', v: 0.8 }, { n: 'A4', v: 0.5 }], [], [],
+    [{ n: 'C3', v: 0.8 }, { n: 'E4', v: 0.5 }], [], [], [{ n: 'C4', v: 0.6 }, { n: 'G4', v: 0.55 }],
+    [], [{ n: 'D4', v: 0.6 }], [], [{ n: 'G3', v: 0.8 }, { n: 'B4', v: 0.5 }], [], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'C4', v: 0.55 }], [], [{ n: 'C3', v: 0.75 }, { n: 'G4', v: 0.4 }], [], [],
+  ],
+  /* C1：密集切分 + 双音 */
+  [
+    [{ n: 'C4', v: 0.7 }, { n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'G4', v: 0.6 }], [],
+    [{ n: 'C5', v: 0.7 }], [{ n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.7 }], [], [{ n: 'C4', v: 0.6 }],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'G4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.7 }, { n: 'G4', v: 0.55 }], [], [{ n: 'E4', v: 0.65 }], [{ n: 'B4', v: 0.6 }], [],
+    [{ n: 'C5', v: 0.7 }], [{ n: 'B4', v: 0.55 }], [], [{ n: 'G4', v: 0.7 }], [], [{ n: 'E4', v: 0.6 }],
+    [{ n: 'D4', v: 0.55 }], [], [{ n: 'C4', v: 0.7 }], [{ n: 'G3', v: 0.75 }], [], [],
+  ],
+  /* C2：附点长音对比 + 渐强 */
+  [
+    [{ n: 'E4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'C5', v: 0.7 }], [], [], [{ n: 'G4', v: 0.55 }],
+    [{ n: 'E4', v: 0.6 }], [], [], [{ n: 'C4', v: 0.65 }], [], [{ n: 'D4', v: 0.5 }], [],
+    [{ n: 'E4', v: 0.65 }], [], [{ n: 'G4', v: 0.7 }], [], [], [{ n: 'B4', v: 0.75 }], [], [], [{ n: 'C5', v: 0.6 }],
+    [{ n: 'G4', v: 0.65 }], [], [], [{ n: 'E4', v: 0.7 }], [], [{ n: 'C4', v: 0.55 }], [{ n: 'G3', v: 0.8 }],
+  ],
+  /* --- 段落 D：结尾（下行走势、收束） --- */
+  /* D0：长下行走势 + 尾部留白 */
+  [
+    [{ n: 'C5', v: 0.65 }], [], [{ n: 'B4', v: 0.6 }], [], [{ n: 'G4', v: 0.65 }], [], [{ n: 'E4', v: 0.6 }], [],
+    [{ n: 'C4', v: 0.65 }], [], [{ n: 'G3', v: 0.6 }], [], [{ n: 'E3', v: 0.65 }], [], [{ n: 'C3', v: 0.7 }], [],
+    [{ n: 'C3', v: 0.6 }], [], [], [{ n: 'G3', v: 0.55 }], [], [], [{ n: 'E3', v: 0.5 }], [], [], [{ n: 'C3', v: 0.6 }],
+    [], [], [], [], [], [], [],
+  ],
+  /* D1：收束到根音 G2/C3，长尾 */
+  [
+    [{ n: 'E4', v: 0.55 }], [], [{ n: 'C4', v: 0.5 }], [], [{ n: 'G3', v: 0.55 }], [], [], [{ n: 'E3', v: 0.5 }],
+    [], [{ n: 'C3', v: 0.6 }], [], [], [], [{ n: 'G2', v: 0.7 }], [], [],
+    [], [], [], [], [], [{ n: 'C3', v: 0.55 }], [], [], [], [], [], [], [], [], [], [],
+  ],
+];
+
+/* ★ 段落结构（对照原版的段落衔接）：
+ * 乐句索引 → 段落分组；段落 → 下一段落概率矩阵。
+ * 主循环 A→B→C→A（安静→主题→发展→回安静），D 结尾偶尔出现后循环回 A。 */
+const SECTION_PHRASES = [
+  [0, 1],          // A 安静
+  [2, 3, 4],       // B 主题
+  [5, 6, 7],       // C 发展
+  [8, 9],          // D 结尾
+];
+const SECTION_NAMES = ['A 安静', 'B 主题', 'C 发展', 'D 结尾'];
+
+/* ======================================================== 调色板（画面） ========================================================
+ * ★★ 画面上所有颜色都在这一块，两套主题各一份 —— 调色只动这里，不要再去 <style> 里找 ★★
+ *
+ * 用户 2026-09：“把非激活点 / 音符字 / 连线 / 背景色这些变量和段落色写到一块，我边看边调”。
+ * 于是画面相关的色值全部集中到这里（原先散在 <style> 的 :root 与 html[data-theme="light"] 两块里）。
+ *
+ * 为什么放在 JS 而不是 CSS：
+ *   · **段落色本来就必须在 JS** —— 节点的点亮染色是逐帧用 RGB 三元组插值算出来的（见 paintNode 的 mixRgb），
+ *     吃不了 CSS 变量；既然要"一块看、一块调"，画面其它颜色就一并搬过来；
+ *   · applyTheme() 会把这里的值**推成 <html> 上的 CSS 变量**，CSS 规则照旧用 `var(--stage-bg)`、
+ *     `var(--stage-bg)` 取值。★ CSS 那边**不再声明这几个变量**：内联样式优先级高于样式表，
+ *     留在那边改根本不生效，只会让人以为"改了没反应"。
+ * 页面 HUD 的配色（面板、正文、分割线、播放控件、行内 code）不是画面的一部分，仍在 <style> 的两个变量块里。
+ *
+ * 两套主题的关系见 视觉规则.md §14.3：**浅色不是把色阶对调** —— 纸亮了墨就得压深，
+ * 所以浅色的节点看着比深色的深，那是对齐对比度的结果（在场节点 2.55:1 vs 深色 2.51:1）。
+ * 两套主题的段落色互不影响，可以各挑一组；下面注释里的"紫/绿/橙/粉"只是角色名。
+ *
+ * 色值写 `#RRGGBB`（6 位十六进制）。写错不会白屏：applyTheme() 会跳过非法值、保留上一个合法颜色，
+ * 并在控制台点名是哪个键（方便边调边试）。改完刷新页面即可，不需要构建。
+ * ============================================================================================================================ */
+const PALETTE = {
+  dark: {
+    stageBg: '#0d0d0f',                                     // 背景色（画面底，.markov-stage）
+    edge: '#71717a',                                        // 未激活的连线（灰色转移线）
+    nodeBase: '#414149',                                    // 乐句点**本来的颜色**（平时就长这样）
+    edgeFadeFrom: 1,                                        // 连线渐变：**起点端**的墨浓度
+    edgeFadeTo: 0.3,                                        // 连线渐变：**终点端**的墨浓度（谁亮谁暗 = 方向）
+    labelInk: '#ffffff',                                    // 音名的字色（压在 nodeBase 上要看得清）
+    sections: ['#624DFF', '#8DFE03', '#FF7904', '#FA2251'], // A 紫 / B 绿 / C 橙 / D 粉 = 被激活时的颜色
+  },
+  light: {
+    stageBg: '#f4f4f5',
+    edge: '#71717a',                                        // 与深色共用同一个墨色：反差由纸提供（§14.3）
+    nodeBase: '#C2C2C2',
+    edgeFadeFrom: 1,
+    edgeFadeTo: 0.3,
+    labelInk: '#18181b',
+    sections: ['#FFC228', '#2558FF', '#FF741E', '#45C674'], // A / B / C / D
+  },
+};
+/* 点的颜色只有**两个状态、两种来源**（用户 2026-09 的原话："乐句点有本来的颜色和被激活的颜色
+ * （跟随乐句颜色）"）：
+ *   平时的乐句点 = `nodeBase`            ← 点**本来的颜色**，它自己的一种色，不随段落变
+ *   刚发声的点   = 本段落色               ← **跟随乐句颜色**，所以没有"激活色"这个配置项
+ *   中间（flash 衰减）= 两者线性插值（时长 = 该音的 I，见 §3/§4）
+ * 也就是说"被激活的颜色"不是调出来的，而是**算出来的**：`fill = mix(nodeBase, 本段落色, flash)`。
+ * 因此调色板里每个键都能在画面上指出来：`stageBg` 画面底、`edge` 未激活的连线、
+ * `nodeBase` 平时那些点（图例的灰点也是它）、`labelInk*` 点上的音名、`sections` 被激活的点与彩色连线。
+ * ★ 曾经把这段读成"平时也该带一点段落色"，加过 `nodeTint`（`mix(nodeBase, 段落色, tint)`）——
+ *   结果整圈都变成段落色、看不出"本来的颜色"了，用户直接指出："现在全部都成乐句颜色了"。
+ *   不要再往这个方向改：平时的点必须是它自己的颜色。
+ * ★ 音名的字色就是 `labelInk` **一个键**：曾经做成"浅墨/深墨两个候选 + 自动挑对比度高的"，
+ *   结果被读成"浅色主题的字色 / 深色主题的字色"，两边各填了一组同明度的值，
+ *   于是两套主题里音名都糊在点上（实测深色 `#18181b` 压 `#414149` = 1.8:1、
+ *   浅色 `#ffffff` 压 `#C2C2C2` = 1.6:1）。**键名要说清"它是什么"，不能靠猜**；
+ *   现在是一个明确的字色，只有对比度低于 3:1 时才自动退回白/深墨并报警。
+ * ★ **常规连线不画箭头**，方向由 `edgeFadeFrom` / `edgeFadeTo` 这对浓度值表达：
+ *   每条线是一个以自己弦为轴的线性渐变，从起点端（`edgeFadeFrom`）过渡到终点端（`edgeFadeTo`）。
+ *   默认"起点亮、终点淡"，于是终点端那截"箭头位"正好被渐隐吃掉、不会显得线被截断；
+ *   **想反过来就把两个数对调**（比如 0.3 / 1）。两个值再乘上元素 opacity（= 转移概率），
+ *   所以"方向"和"概率"是两个互不干扰的通道。 */
+/* 换一整组色时的做法（2026-09 用户的要求）：**按色相最近一一对应**，不要凭感觉指派 ——
+   "当前如果有蓝色，就用这组色值中的蓝色，其它也是一个意思"。
+   当时把浅色的紫/绿/橙/粉换到深色那组，实测色相距离 29°/23°/3°/9°，各自"次近候选"都远得多
+   （35°/58°/32°/22°），所以对应没有歧义；那组里给不出对应物的蓝 #0248FD 与红 #FE0000 就没用上。
+   现在的值是手工调的，不一定要满足这个规则 —— 那只是当时换色的依据。 */
+const sectionColors = () => (themeName === THEME_LIGHT ? PALETTE.light.sections : PALETTE.dark.sections);
+const SECTION_TRANSITIONS = [
+  [0.1, 0.75, 0.1, 0.05],   // A → 主要进主题
+  [0.1, 0.2, 0.6, 0.1],     // B → 主要进发展
+  [0.55, 0.15, 0.15, 0.15], // C → 主要回落安静
+  [0.7, 0.1, 0.1, 0.1],     // D → 回到安静（循环）
+];
+
+/* 0.2：从每个段落的原始乐句学习“当前音 → 下一音”。
+ * 不跨乐句首尾建立转移，避免人为制造素材中不存在的衔接；重复出现的
+ * 转移会自然拥有更高权重。句内节奏、力度和音符数量仍由原乐句决定。 */
+const NOTE_CHAINS = SECTION_PHRASES.map(phraseIndexes => {
+  const transitions = new Map();
+  const starts = [];
+  phraseIndexes.forEach(phraseIndex => {
+    const sequence = PHRASES[phraseIndex].flat().map(note => note.n);
+    if (sequence.length) starts.push(sequence[0]);
+    for (let i = 0; i < sequence.length - 1; i += 1) {
+      const choices = transitions.get(sequence[i]) || [];
+      choices.push(sequence[i + 1]);
+      transitions.set(sequence[i], choices);
+    }
+  });
+  return { transitions, starts };
+});
+
+const walkNote = (currentNote, section, rng, fallbackNote) => {
+  const chain = NOTE_CHAINS[section];
+  const choices = chain.transitions.get(currentNote);
+  if (choices && choices.length) return choices[Math.floor(rng() * choices.length)];
+  if (chain.starts.length) return chain.starts[Math.floor(rng() * chain.starts.length)];
+  return fallbackNote;
+};
+
+const STEP_DURATION_S = 0.3;      // 八分音符时长（≈ 100 BPM，aisatsana 用 102 BPM / 0.294s）
+const PHRASE_LENGTH = 32;         // 每乐句 32 步（对照源码 phraseLength）
+const PHRASE_DURATION_S = PHRASE_LENGTH * STEP_DURATION_S;
+
+/* ---------- ② 段落感知马尔可夫链（对照 aisatsana 的 markov-chains 库） ----------
+ * 两层随机：
+ *   段落层：按 SECTION_TRANSITIONS 选下一段落（主循环 A→B→C→A）
+ *   句层：段落内随机选一个乐句
+ * 这模拟原版的段落衔接规律（intro→主题→发展→结尾），
+ * 而不是把所有乐句混在一起随机转 —— 段落感来自这里。 */
+const buildSectionChain = rng => {
+  let currentSection = 0;              // 从 A 安静段开始
+  return {
+    next: () => {
+      const weights = SECTION_TRANSITIONS[currentSection];
+      const total = weights.reduce((a, b) => a + b, 0);
+      let roll = rng() * total;
+      let nextSection = 0;
+      for (let i = 0; i < weights.length; i += 1) {
+        roll -= weights[i];
+        if (roll <= 0) { nextSection = i; break; }
+      }
+      const pool = SECTION_PHRASES[nextSection];
+      const phraseIndex = pool[Math.floor(rng() * pool.length)];
+      currentSection = nextSection;
+      return { phraseIndex, section: nextSection };
+    },
+    getSection: () => currentSection,
+    transitions: SECTION_TRANSITIONS,
+  };
+};
+
+/* ---------- ③ 钢琴：真实采样（vsco2-piano-mf）+ 合成回退 ----------
+ * 来源：samples-alex-bainter 仓库 samples/vsco2-piano-mf/（VSCO2 免费钢琴采样，CC0）。
+ * 加载策略（由快到慢，逐级回退，永不卡死）：
+ *   1) jsDelivr wav（GitHub 镜像，约 50MB 首次，之后走浏览器缓存）
+ *   2) FM 合成钢琴（最后兜底）
+ * 官方 CDN samples.alexbainter.com 对直连返回 403（有访问控制），所以不走它。
+ * 只加载旋律音区（C3~C6）所需 12 个采样。 */
+const PIANO_NOTES = ['A2', 'C#3', 'F3', 'A3', 'C#4', 'F4', 'A4', 'C#5', 'F5', 'A5', 'C#6', 'F6'];
+const sampleFile = (note, ext) => note.toLowerCase().replace('#', 'sharp') + ext;
+const JS_DELIVR_BASE = 'https://cdn.jsdelivr.net/gh/generative-music/samples-alex-bainter@master/samples/vsco2-piano-mf/';
+
+const wrapPiano = (piano, fxNodes) => ({
+  triggerAttack: (n, t, v) => piano.triggerAttack(n, t, v),
+  releaseAll: t => piano.releaseAll(t),
+  dispose: () => { piano.dispose(); fxNodes.forEach(node => node.dispose()); },
+});
+
+const createSampledPiano = async (destination, baseUrl, ext, timeoutMs) => {
+  const piano = await new Promise((resolve, reject) => {
+    const sampler = new Tone.Sampler({
+      urls: Object.fromEntries(PIANO_NOTES.map(n => [n, sampleFile(n, ext)])),
+      baseUrl,
+      release: 1.5,
+      volume: 12,                               // ★ +12dB：对齐原版 gain=5（≈+14dB）的归一化量级
+      onload: () => resolve(sampler),
+      onerror: err => reject(err),
+    });
+    setTimeout(() => reject(new Error('加载超时（' + timeoutMs / 1000 + 's）')), timeoutMs);
+  });
+  const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
+  await reverb.generate();
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
+  const limiter = new Tone.Limiter(-1).connect(destination);   // ★ 母带限幅：补偿后防削波
+  compressor.connect(limiter);
+  piano.connect(reverb);
+  reverb.connect(compressor);
+  return wrapPiano(piano, [reverb, compressor, limiter]);
+};
+
+const createFallbackPiano = async destination => {
+  const piano = new Tone.PolySynth(Tone.FMSynth, {
+    harmonicity: 3, modulationIndex: 8,
+    oscillator: { type: 'sine' },
+    modulation: { type: 'triangle' },
+    envelope: { attack: 0.005, decay: 1.2, sustain: 0, release: 1.5 },
+    modulationEnvelope: { attack: 0.005, decay: 0.4, sustain: 0, release: 0.8 },
+    volume: 6,                                  // 合成回退也提响（对齐 +12dB 量级的一半）
+  });
+  const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
+  await reverb.generate();
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
+  const limiter = new Tone.Limiter(-1).connect(destination);
+  compressor.connect(limiter);
+  piano.connect(reverb);
+  reverb.connect(compressor);
+  return wrapPiano(piano, [reverb, compressor, limiter]);
+};
+
+const createPiano = async destination => {
+  try {
+    const piano = await createSampledPiano(destination, JS_DELIVR_BASE, '.wav', 45000);
+    console.info('[钢琴] 使用真实采样 vsco2-piano-mf（jsDelivr）');
+    return piano;
+  } catch (err) {
+    console.warn('[钢琴] 采样加载失败，回退 FM 合成:', err.message);
+    setStatus('⚠ 采样加载失败（' + err.message + '），已回退合成钢琴');
+    return createFallbackPiano(destination);
+  }
+};
+
+/* ---------- 背景 texture：复用 03 的 Moodist 环境素材 ----------
+ * 使用独立随机源，确保 texture 的加载速度和调度不会改变钢琴的 Markov 路径。 */
+const MOODIST_TEXTURES = [
+  {
+    name: 'brown noise',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/noise/brown-noise.wav',
+    periodRange: [80, 140], durationRange: [35, 65], probability: 0.78,
+    filter: 380, targetGain: 0.3, pan: -0.18, fade: 9,
+  },
+  {
+    name: 'wind in trees',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/nature/wind-in-trees.mp3',
+    periodRange: [65, 125], durationRange: [24, 50], probability: 0.66,
+    filter: 1600, targetGain: 0.3, pan: 0.22, fade: 8,
+  },
+  {
+    name: 'jungle',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/nature/jungle.mp3',
+    periodRange: [75, 145], durationRange: [28, 58], probability: 0.62,
+    filter: 2800, targetGain: 0.1, pan: -0.12, fade: 9,
+  },
+  {
+    name: 'birds',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/animals/birds.mp3',
+    periodRange: [55, 115], durationRange: [12, 25], probability: 0.5,
+    filter: 3800, targetGain: 0.1, pan: 0.3, fade: 5, group: 'event', early: true,
+  },
+  {
+    name: 'busy street',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/busy-street.mp3',
+    periodRange: [85, 155], durationRange: [18, 38], probability: 0.42,
+    filter: 1900, targetGain: 0.025, pan: -0.1, fade: 7, group: 'event', early: true,
+  },
+  {
+    name: 'crowd',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/crowd.mp3',
+    periodRange: [100, 180], durationRange: [20, 42], probability: 0.36,
+    filter: 2100, targetGain: 0.022, pan: 0.08, fade: 8, group: 'event', early: true,
+  },
+];
+
+const createMoodistTextures = async (destination, rng) => {
+  const loaded = [];
+  const eventIds = new Set();
+  const randomBetween = ([min, max]) => min + rng() * (max - min);
+  const loadOne = texture => new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return false;
+      settled = true;
+      resolve();
+      return true;
+    };
+    const gain = new Tone.Gain(0);
+    const filter = new Tone.Filter({ type: 'lowpass', frequency: texture.filter, Q: 0.5 });
+    const panner = new Tone.Panner(texture.pan).connect(destination);
+    const player = new Tone.Player({
+      url: texture.url,
+      loop: true,
+      fadeIn: texture.fade,
+      fadeOut: texture.fade,
+      onload: () => {
+        if (!finish()) return;
+        player.connect(filter);
+        filter.connect(gain);
+        gain.connect(panner);
+        loaded.push({ ...texture, player, filter, gain, panner, activeUntil: -Infinity });
+      },
+      onerror: err => {
+        if (!finish()) return;
+        console.warn('[Moodist] 音效加载失败:', texture.name, err);
+        player.dispose(); filter.dispose(); gain.dispose(); panner.dispose();
+      },
+    });
+    setTimeout(() => {
+      if (settled || player.loaded) return;
+      if (!finish()) return;
+      console.warn('[Moodist] 音效加载超时:', texture.name);
+      player.dispose(); filter.dispose(); gain.dispose(); panner.dispose();
+    }, 12000);
+  });
+
+  await Promise.all(MOODIST_TEXTURES.map(loadOne));
+  const activeCountAt = time => loaded.filter(texture => texture.activeUntil > time).length;
+  const activeEventCountAt = time => loaded.filter(texture => texture.group === 'event' && texture.activeUntil > time).length;
+  const scheduleTexture = (texture, transportAt) => {
+    const eventId = Tone.Transport.scheduleOnce(time => {
+      eventIds.delete(eventId);
+      const duration = randomBetween(texture.durationRange);
+      const canPlay = activeCountAt(time) < 2 &&
+        (texture.group !== 'event' || activeEventCountAt(time) < 1) &&
+        time >= texture.activeUntil;
+      if (canPlay && rng() < texture.probability) {
+        const fade = Math.min(texture.fade, duration * 0.42);
+        texture.activeUntil = time + duration + fade;
+        texture.gain.gain.cancelScheduledValues(time);
+        texture.gain.gain.setValueAtTime(0, time);
+        texture.gain.gain.linearRampToValueAtTime(texture.targetGain, time + fade);
+        texture.gain.gain.setValueAtTime(texture.targetGain, time + Math.max(fade, duration - fade));
+        texture.gain.gain.linearRampToValueAtTime(0, time + duration);
+        try {
+          texture.player.start(time);
+          texture.player.stop(time + duration + fade);
+          console.info('[Moodist] texture in:', texture.name, duration.toFixed(0) + 's');
+        } catch (err) {
+          console.warn('[Moodist] 播放失败:', texture.name, err);
+          texture.activeUntil = time;
+        }
+      }
+      scheduleTexture(texture, transportAt + randomBetween(texture.periodRange));
+    }, transportAt);
+    eventIds.add(eventId);
+  };
+
+  return {
+    start: transportAt => loaded.forEach(texture => {
+      const firstRange = texture.early ? [5, 14] : [8, 28];
+      scheduleTexture(texture, transportAt + randomBetween(firstRange));
+    }),
+    stop: time => {
+      eventIds.forEach(eventId => Tone.Transport.clear(eventId));
+      eventIds.clear();
+      loaded.forEach(texture => {
+        texture.gain.gain.cancelScheduledValues(time);
+        texture.gain.gain.linearRampToValueAtTime(0, time + 1.5);
+        try { texture.player.stop(time + 1.6); } catch (err) { /* 已停止则忽略 */ }
+        texture.activeUntil = time;
+      });
+    },
+    dispose: () => loaded.forEach(texture => {
+      texture.player.dispose(); texture.filter.dispose(); texture.gain.dispose(); texture.panner.dispose();
+    }),
+  };
+};
+
+/* ---------- ④ 随机源（Mulberry32，种子可复现，与 01 一致） ---------- */
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h;
+};
+const $ = id => document.getElementById(id);
+const statusEl = $('status'), logContentEl = $('logContent'), matrixEl = $('matrix');
+const visualEl = document.querySelector('.markov-stage');
+const markovMapEl = $('markovMap'), visualTitleEl = $('visualTitle'), visualMetaEl = $('visualMeta');
+const hudElements = [...document.querySelectorAll('.hud, .visual-head, .legend')];
+visualEl.addEventListener('click', () => {
+  const hidden = document.body.classList.toggle('hud-hidden');
+  hudElements.forEach(element => element.setAttribute('aria-hidden', String(hidden)));
+});
+/* ---------- 视口：视觉内部用“设计单位”，不是 CSS 像素 ----------
+ * 用户反馈：窄屏很好看，但宽屏下“四周的空白太大”——原因是环的半径写了两条绝对上限
+ * （`min(380, …)` / `min(330, …)`）：窗口一旦超过约 1055×1031，环就再也不长了，
+ * 于是 2560 宽的窗口里只有 760×660 的一小圈，四周全是空的。
+ * 做法不是把常量一个个乘系数（那会让环变大、而点和字还是 17px / 12px，比例割裂），
+ * 而是把内部坐标整体定义成**设计单位**：viewBox 写设计尺寸、由浏览器把整张 SVG 等比放大，
+ * 于是环、节点、音名、箭头、连线的粗细、弹的幅度**全都按同一比例**缩放。
+ *   设计尺寸 = 窗口尺寸 ÷ scale，scale = sqrt(窗口面积 ÷ 参考面积)（下限 1、上限 GRAPH_SCALE_MAX）。
+ * 下限 1 意味着**参考尺寸以内的窗口完全按原样渲染**（所以窄屏与笔记本屏的观感一点没变），
+ * 只有更大的窗口才被整体放大；环占视口的比例因此恒定（见 layoutGraph 的 RING_FILL_*）。 */
+const GRAPH_REF_WIDTH = 1100;      // 参考窗口（scale = 1 的分界）：1100×700 及以下完全不变
+const GRAPH_REF_HEIGHT = 700;
+const GRAPH_SCALE_MAX = 2.5;       // 4K 仍按真实比例（≈2.2），更大的屏在这里止损
+const measureGraphViewport = () => {
+  const cssWidth = Math.max(320, window.innerWidth);
+  const cssHeight = Math.max(320, window.innerHeight);
+  const scale = Math.min(GRAPH_SCALE_MAX, Math.max(1,
+    Math.sqrt(cssWidth * cssHeight / (GRAPH_REF_WIDTH * GRAPH_REF_HEIGHT))));
+  const width = cssWidth / scale;
+  const height = cssHeight / scale;
+  return { width, height, centerX: width / 2, centerY: height / 2, scale };
+};
+let graphViewport = measureGraphViewport();
+const updateGraphViewBox = (rescaleNodes = false) => {
+  const previous = graphViewport;
+  graphViewport = measureGraphViewport();
+  markovMapEl.setAttribute('viewBox', `0 0 ${graphViewport.width} ${graphViewport.height}`);
+  if (rescaleNodes) {
+    /* 视口变了：先把每个点按设计尺寸的变化等比挪一下（视觉上是连续的），
+       再由 layoutGraph 重算环位，剩下的交给弹簧 */
+    graphMotion.nodes.forEach(node => {
+      node.x = graphViewport.centerX + (node.x - previous.centerX) * graphViewport.width / previous.width;
+      node.y = graphViewport.centerY + (node.y - previous.centerY) * graphViewport.height / previous.height;
+    });
+    layoutGraph();
+  }
+};
+/* 日志一行 = 一个乐句，按**它所属段落**的颜色着色。
+   ★ 记的是**段落号**而不是颜色字符串：颜色要能跟着主题换（见下面的 repaintLog）。
+   旧版存的是 `{ msg, color }`，于是切主题后老行永远留在旧主题的配色里
+   （用户 2026-09："打印的乐句颜色没跟上吧"）。 */
+const logLines = [];
+const log = (msg, section) => {
+  const rgb = hexToRgb(sectionColors()[section]) || [255, 255, 255];
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.style.color = rgbToHex(rgb);
+  line.textContent = msg;
+  logContentEl.appendChild(line);
+  logLines.push({ element: line, section, rgb });
+  if (logLines.length > 80) {
+    logLines.shift();
+    logContentEl.firstElementChild.remove();
+  }
+  const pushDistance = line.getBoundingClientRect().height;
+  logContentEl.style.transition = 'none';
+  logContentEl.style.transform = `translateY(${pushDistance}px)`;
+  void logContentEl.offsetHeight;
+  logContentEl.style.transition = 'transform .6s cubic-bezier(.22,1,.36,1)';
+  logContentEl.style.transform = 'translateY(0)';
+};
+/* 切主题时把**已经打印出来的行**也重新着色：逐行从旧主题那个色插值到新主题的同一个段落色，
+   时长沿用 SECTION_COLOR_MORPH_S —— "颜色永远不跳变"这条规则对主题切换同样成立。
+   （每一行有它自己的段落，所以要按行各自插值，不能共用 tweenSectionColor 那一个"当前段落色"。） */
+let logColorFrame = null;
+const repaintLog = () => {
+  if (logColorFrame !== null) { cancelAnimationFrame(logColorFrame); logColorFrame = null; }
+  if (!logLines.length) return;
+  const froms = logLines.map(entry => entry.rgb);
+  const targets = logLines.map(entry => hexToRgb(sectionColors()[entry.section]) || entry.rgb);
+  const startedAt = performance.now();
+  const step = () => {
+    const progress = Math.min(1, (performance.now() - startedAt) / (SECTION_COLOR_MORPH_S * 1000));
+    const eased = progress * progress * (3 - 2 * progress);
+    logLines.forEach((entry, index) => {
+      entry.rgb = froms[index].map((value, i) => Math.round(value + (targets[index][i] - value) * eased));
+      entry.element.style.color = rgbToHex(entry.rgb);
+    });
+    logColorFrame = progress < 1 ? requestAnimationFrame(step) : null;
+  };
+  logColorFrame = requestAnimationFrame(step);
+};
+const setStatus = html => { statusEl.innerHTML = html; };
+
+const noteToMidi = note => {
+  const match = /^([A-G])(#?)(-?\d+)$/.exec(note);
+  if (!match) return 60;
+  const semitones = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  return (Number(match[3]) + 1) * 12 + semitones[match[1]] + (match[2] ? 1 : 0);
+};
+const svgNode = (name, attrs = {}) => {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+  Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+  return node;
+};
+const stateId = note => note.replace('#', 's').replace('-', 'm');
+const edgeId = (from, to) => 'edge-' + stateId(from) + '-' + stateId(to);
+const GRAPH_NODE_RADIUS = 17;
+
+let visualPhraseId = 0;
+let previousVisualNote = null;
+let previousVisualTime = null;   // 上一个发声时刻，用来算转移的行进时长
+let graphMotion = {
+  nodes: [],                       // 整场演出共用的持久图（见下方“视觉”一节）
+  edges: new Map(),
+  hiddenLayer: null,
+  nodeLayer: null,
+  ringPhase: 0,                    // 环的朝向：由本句首音的槽位算出（见 applyPhraseVisual），不是随机数
+  activity: new Map(),             // 本句里每个音高的活跃度（发声次数 ÷ 本句最高次数，0~1）
+};
+let graphAnimationFrame = null;
+updateGraphViewBox();
+window.addEventListener('resize', () => updateGraphViewBox(true), { passive: true });
+
+/* ---------- 键盘：f 键全屏 / 退出全屏 ----------
+ * 浏览器只允许“用户手势”进入全屏，键盘事件算手势，所以不需要额外按钮。
+ * 全屏的是整个文档（HUD 与控制还在），想只看画面就再点一下画面隐藏界面。 */
+const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+const toggleFullscreen = () => {
+  if (fullscreenElement()) {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) exit.call(document);
+    return;
+  }
+  const root = document.documentElement;
+  const request = root.requestFullscreen || root.webkitRequestFullscreen;
+  if (!request) return;
+  const pending = request.call(root);       // 可能返回 Promise（被拒绝时别在控制台留未捕获错误）
+  if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+};
+window.addEventListener('keydown', event => {
+  if (event.key !== 'f' && event.key !== 'F') return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const target = event.target;
+  /* 在种子输入框里打字不要触发全屏 */
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+  event.preventDefault();
+  toggleFullscreen();
+});
+/* 进/出全屏会改变视口：浏览器不一定派发 resize，所以这里单独重算一次 */
+const onFullscreenChange = () => updateGraphViewBox(true);
+document.addEventListener('fullscreenchange', onFullscreenChange);
+document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+
+/* 一条边的几何：路径 d **以及**它的渐变轴（起点端 → 终点端）。
+   两者必须出自同一份计算 —— 分开算就会出现"渐变和线错开一点"的观感。
+   渐变轴用弦（不是曲线），因为 SVG 的 linearGradient 只能沿直线插值；
+   线是弯的，但"起点端亮、终点端淡"这个方向感照样成立（两端差得足够明显）。
+   ★ 自环要特别处理：起终点同一个点会让 x1,y1 == x2,y2，**整条渐变按规范不渲染**（线会消失），
+     所以自环改用它那圈"上抛"的两端当轴。 */
+const edgeGeometry = (a, b) => {
+  if (a.note === b.note) {
+    return {
+      d: `M ${a.x - 7} ${a.y - 15} C ${a.x - 38} ${a.y - 58}, ${a.x + 38} ${a.y - 58}, ${a.x + 7} ${a.y - 15}`,
+      x1: a.x - 7, y1: a.y - 15, x2: a.x + 7, y2: a.y - 15,
+    };
+  }
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const bend = ((noteToMidi(a.note) + noteToMidi(b.note)) % 2 ? 1 : -1) * Math.min(38, length * 0.16);
+  const cx = (a.x + b.x) / 2 - dy / length * bend;
+  const cy = (a.y + b.y) / 2 + dx / length * bend;
+  const startX = a.x + dx / length * (GRAPH_NODE_RADIUS + 2);
+  const startY = a.y + dy / length * (GRAPH_NODE_RADIUS + 2);
+  const endX = b.x - dx / length * (GRAPH_NODE_RADIUS + ARROW_TAIL_OFFSET);
+  const endY = b.y - dy / length * (GRAPH_NODE_RADIUS + ARROW_TAIL_OFFSET);
+  return {
+    d: `M ${startX} ${startY} Q ${cx} ${cy} ${endX} ${endY}`,
+    x1: startX, y1: startY, x2: endX, y2: endY,
+  };
+};
+const dynamicEdgePath = (a, b) => edgeGeometry(a, b).d;
+const updateEdgeGradient = (edge, geometry) => {
+  const gradient = edge.gradient;
+  if (!gradient) return;
+  gradient.setAttribute('x1', geometry.x1.toFixed(2));
+  gradient.setAttribute('y1', geometry.y1.toFixed(2));
+  gradient.setAttribute('x2', geometry.x2.toFixed(2));
+  gradient.setAttribute('y2', geometry.y2.toFixed(2));
+};
+
+const animateGraph = () => {
+  const { nodes, edges } = graphMotion;
+  if (nodes.length) {
+    const time = performance.now();
+    const centerX = graphViewport.centerX, centerY = graphViewport.centerY;
+
+    nodes.forEach(node => {
+      node.fx = 0;
+      node.fy = 0;
+      if (node.present) {
+        /* 在场：目标是环上的位置 */
+        node.targetX = node.home.x;
+        node.targetY = node.home.y;
+      } else {
+        /* 收起的点：目标是宿主的背后（宿主一定在场）。它是一路“钻”到别人下面被挡住，
+           而不是原地消失 —— 用户明确要求（原本激活点变非激活点时要移动过去被遮挡）。 */
+        const host = node.host;
+        node.targetX = (host ? host.x : centerX) + node.hideOffsetX;
+        node.targetY = (host ? host.y : centerY) + node.hideOffsetY;
+      }
+    });
+
+    for (let i = 0; i < nodes.length; i += 1) {
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const a = nodes[i], b = nodes[j];
+        if (!a.present || !b.present || a.flight || b.flight) continue;   // 收起或在飞的节点不参与推挤
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const distanceSq = Math.max(900, dx * dx + dy * dy);
+        const force = NODE_REPULSION / distanceSq;
+        const distance = Math.sqrt(distanceSq);
+        a.fx -= dx / distance * force; a.fy -= dy / distance * force;
+        b.fx += dx / distance * force; b.fy += dy / distance * force;
+      }
+    }
+    /* 转移边只不参与“布局”（不把环撑开），但参与“动力学”：它是铰链，
+       把每个点的位移传给它连接的邻居，弹才是活的而不是整体外扩。
+       静止长度取环上的原始距离，所以平衡位置依旧是那个环。 */
+    edges.forEach(edge => {
+      if (edge.from === edge.to) return;
+      if (edge.from.flight || edge.to.flight) return;
+      if (!edge.from.present || !edge.to.present) return;
+      const dx = edge.to.x - edge.from.x, dy = edge.to.y - edge.from.y;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const force = (distance - edge.rest) * EDGE_COUPLING;
+      edge.from.fx += dx / distance * force; edge.from.fy += dy / distance * force;
+      edge.to.fx -= dx / distance * force; edge.to.fy -= dy / distance * force;
+    });
+
+    nodes.forEach((node, index) => {
+      if (node.flight) {
+        /* 飞行期：位置完全由缓动曲线决定。
+           pop     = 刚变成乐句点：easeOutBack（起步极快、单次过冲）
+           glide   = 本来就是乐句点：easeInOutCubic（平滑滑到新环位、不过冲）
+           retreat = 变回收起点：easeInOutCubic 滑到宿主背后，配合下面的“越近越淡”，
+                     于是它是被宿主挡住的，而不是原地消失。 */
+        const progress = Math.min(1, (time - node.flight.startedAt) / node.flight.duration);
+        const eased = node.flight.mode === 'pop'
+          ? easeOutBack(progress)
+          : node.flight.mode === 'retreat' ? easeOutCubic(progress) : easeInOutCubic(progress);
+        node.x = node.flight.fromX + (node.targetX - node.flight.fromX) * eased;
+        node.y = node.flight.fromY + (node.targetY - node.flight.fromY) * eased;
+        node.vx = 0;
+        node.vy = 0;
+        if (progress >= 1) node.flight = null;
+      } else {
+        node.fx += (node.targetX - node.x) * NODE_HOME_SPRING;
+        node.fy += (node.targetY - node.y) * NODE_HOME_SPRING;
+        if (node.present) {
+          node.fx += Math.sin(time * 0.0007 + index * 2.3) * NODE_DRIFT;
+          node.fy += Math.cos(time * 0.0006 + index * 1.7) * NODE_DRIFT;
+        }
+        node.vx = (node.vx + node.fx) * NODE_DAMPING;
+        node.vy = (node.vy + node.fy) * NODE_DAMPING;
+        node.x += node.vx;
+        node.y += node.vy;
+        if (node.present) {
+          node.x = Math.max(36, Math.min(graphViewport.width - 36, node.x));
+          node.y = Math.max(36, Math.min(graphViewport.height - 36, node.y));
+        } else if (node.presence <= 0.02) {
+          /* 已看不见：硬贴宿主，免得弹簧拖尾把藏起来的点露出半个 */
+          node.x = node.targetX;
+          node.y = node.targetY;
+          node.vx = 0;
+          node.vy = 0;
+        }
+      }
+      if (node.flight && node.flight.mode === 'retreat') {
+        /* 收起中的点：越接近宿主越淡，最后正好被宿主挡住 —— 全过程是“移动过去被遮挡”，
+           不是原地消失（用户报的 bug：音符变少时有点突然不见了）。 */
+        const retreatProgress = Math.min(1, (time - node.flight.startedAt) / node.flight.duration);
+        node.presence = Math.max(0, 1 - easeInCubic(retreatProgress));
+      } else {
+        const presenceRate = node.targetPresence > node.presence ? PRESENCE_RISE : PRESENCE_FALL;
+        node.presence += (node.targetPresence - node.presence) * presenceRate;
+      }
+      /* 点亮 → 变暗：时长由发声那一刻的音程决定（见 showVisualNote），线性退回常态色 */
+      if (node.flash > 0) {
+        const flashElapsed = (time - node.flashStartedAt) / (node.flashDuration || 1);
+        node.flash = Math.max(0, 1 - flashElapsed);
+      }
+      paintNode(node);
+    });
+    edges.forEach(edge => {
+      const geometry = edgeGeometry(edge.from, edge.to);
+      edge.path.setAttribute('d', geometry.d);
+      updateEdgeGradient(edge, geometry);   // 点一动，渐变轴就得跟着（否则方向会指着错的地方）
+    });
+    edges.forEach(edge => {
+      /* 只在“正在生长/收回”时才逐帧刷新，画满或完全收回后不再做无谓计算 */
+      if (edge.presence !== edge.presenceTarget || (edge.presence > 0 && edge.presence < 1)) {
+        updateEdgePresence(edge, time);
+      }
+    });
+    edges.forEach(edge => updateEdgePulse(edge, time));
+  }
+  graphAnimationFrame = requestAnimationFrame(animateGraph);
+};
+
+/* 转移边的生长规则（用户明确要求）：
+ *   · 触发条件是“**有新的音高点冒出来**”：一端刚变成乐句点的连线，朝那个新点生长过去；
+ *   · 两端本来就是在场的乐句点 → 连线只是**跟着点移动**，不做生长动画（直接画满）；
+ *   · 收回同理：端点在收起时快速跟着它一起收回；两端都还在场而只是不再属于本段落时，
+ *     用稍慢的速度收回。
+ * 方向：drawn 区间是 [0,r) 表示从起点长出去；[L-r,L) 表示从终点往回长
+ *   （新点在起点端时就要从终点端长过来）。 */
+/* 连线的明度 = 该转移在马尔可夫链里的概率。
+   `walkNote` 是从当前音的后继数组里等概率挑一个（重复项就是权重），
+   所以 from→to 的概率 = 该转移的出现次数 ÷ 该音所有后继的总数。
+   线性映射即可：素材里既有大量 p=1 的确定转移、也有 p≈0.07 的偶然转移，
+   实测明度因此铺开在 0.25~0.90（元素值；若改用开方，低概率会被抬到 0.39，对比反而变弱）。
+   ★ 这两个值已经把过去写死在 CSS 里的 stroke-opacity(.8) 折算进来了（0.2×0.8 / 0.9×0.8）。
+   明度**只有一个来源**：元素的 `opacity`。理由：描边的不透明度**传不到箭头上**（箭头是 marker 的
+   fill，只受元素 opacity 影响），过去写在 `stroke-opacity` 上就会出现"线亮、箭头暗"。
+   现在连线是"渐变（方向）× 元素 opacity（概率）"两个互不干扰的通道，激活时那支箭头也吃同一个
+   元素 opacity，所以箭头与它所在的线逐帧同明度。实际观感与更早的版本一致：
+   过去元素值 0.2~0.9 乘上 0.8，屏幕上本来就是 0.16~0.72。 */
+const EDGE_OPACITY_MIN = 0.16;      // 最不可能走的转移
+const EDGE_OPACITY_MAX = 0.72;      // 最常走的转移
+const edgeOpacityFor = probability => EDGE_OPACITY_MIN
+  + (EDGE_OPACITY_MAX - EDGE_OPACITY_MIN) * Math.max(0, Math.min(1, probability));
+
+const setEdgePresence = (edge, present, time, change, durationSeconds) => {
+  const target = present ? 1 : 0;
+  if (edge.presenceTarget === target) return;   // 幂等：重复应用同一段落不会再长一遍
+  /* 时长与音符间隔挂钩：整段结构变化的时长基准是**本句内部第一个音程**（首音 → 第二个音），
+     而且重组从首音那一刻开始 —— 于是变换是跟着音乐发生的，而不是跑在无音的空白里。 */
+  const duration = durationSeconds || (target ? EDGE_GROW_S : EDGE_RETRACT_S);
+  edge.presenceFrom = edge.presence;
+  edge.presenceTarget = target;
+  edge.presenceStartedAt = time;
+  if (present) {
+    const waking = change.fromWoke || change.toWoke;
+    if (waking) {
+      edge.revealFromEnd = change.fromWoke && !change.toWoke;   // 新点在起点端 → 从终点端长过来
+      edge.presenceDuration = duration;
+    } else {
+      edge.presence = 1;                                        // 两端都是老点：连线本来就该在
+      edge.presenceDuration = 0;
+    }
+  } else {
+    /* 反向生长：揭示区间沿与生长相反的方向退回（朝留下来的那一端收），
+       透明度全程保持满值，所以看起来是“线缩回去了”，而不是淡出。 */
+    edge.revealFromEnd = change.fromSlept && !change.toSlept;
+    edge.presenceDuration = duration;
+  }
+  if (edge.presenceDuration === 0) updateEdgePresence(edge, time);   // 秒变的情形要立刻落到终态
+};
+
+const updateEdgePresence = (edge, time) => {
+  const path = edge.path;
+  if (edge.presence !== edge.presenceTarget) {
+    const progress = Math.min(1, (time - edge.presenceStartedAt) / (edge.presenceDuration * 1000));
+    edge.presence = edge.presenceFrom + (edge.presenceTarget - edge.presenceFrom) * progress;
+  }
+  if (edge.presence <= 0) {
+    setPulseArrow(edge, false);
+    path.style.opacity = '0';
+    return;
+  }
+  path.style.opacity = edge.opacity.toFixed(3);
+  if (edge.presence >= 1) {
+    /* 画满之后不留 dash：节点一直在呼吸漂移，留着就得每帧重算路径长度 */
+    path.removeAttribute('stroke-dasharray');
+    path.removeAttribute('stroke-dashoffset');
+    return;
+  }
+  /* 生长/收回中的线由 dash 表达（底边没有箭头了，所以这里没有箭头要摘）。
+     行进中“已经走过的那一段”末端由骑行箭头负责，见 updateEdgePulse。 */
+  const length = Math.max(1, path.getTotalLength());
+  const remaining = length * (1 - edge.presence);
+  path.setAttribute('stroke-dasharray', length + ' ' + length);
+  path.setAttribute('stroke-dashoffset', String(edge.revealFromEnd ? -remaining : remaining));
+};
+
+/* 行进层的箭头开关（幂等）：**颜色走到终点、并且不再移动之后才挂上** —— 这就是"激活线上的箭头"
+   （用户 2026-09 明确要求："去掉常规连线的箭头…激活线的箭头还保持啊"）。
+ * 它用自己的 marker（`#arrowhead-pulse`）而不是灰线那支：行进层描边是 2.4，直接挂
+   `markerUnits="strokeWidth"` 的箭头会被放大 2.18 倍，所以那支是 `userSpaceOnUse` + 绝对长度。
+ * ★ 颜色还在移动时不挂它 —— 那时由"骑行箭头"（headPath）跟着头部走，见 updateEdgePulse；
+   两支部队都是**激活线**的箭头，常规连线从头到尾没有 `marker-end`。
+ * （历史：更早的版本是"灰底边也挂一支箭头、到位时底边换色"，于是要同时给两层挂箭头才不让
+   箭头比线暗；底边箭头去掉之后那一整套连同 `.active` 一起删了。） */
+const setPulseArrow = (edge, on) => {
+  if (on === edge.pulseArrowOn) return;
+  edge.pulseArrowOn = on;
+  if (on) edge.pulsePath.setAttribute('marker-end', ARROW_MARKER_PULSE);
+  else edge.pulsePath.removeAttribute('marker-end');
+};
+
+/* ★ **常规（灰）连线不挂箭头**（用户 2026-09："去掉常规连线的箭头，显得很乱"）——
+   方向改由沿线灰度渐变表达（见 edgeGeometry / updateEdgeGradient 的说明）。
+   所以这里不再有"底边箭头"这套逻辑：底边从建好到退役都不写 marker-end，
+   激活时的箭头由高亮层负责（生长中是骑行箭头，颜色到位后是停在终点的那支，见 setPulseArrow）。
+   旧版这里有个 syncEdgeArrow()，负责"高亮在场时把底边箭头让出去、高亮结束再挂回来"，
+   连同 edge.arrowOn 状态一起删掉了 —— 底边不再有箭头，那个状态也就没有读者。 */
+
+/* 骑行箭头：把"一小段曲线"的终点放在正在移动的头部，让 marker 跟着头部走。
+   ★ **路径末端就放在头部上**：参考点是箭头底边中点（refX = 0），所以箭头**底边正好压在线的端点上**，
+     与静止时"线尾停在箭头底边上"的关系完全一致 ——
+     ① 线头藏在箭头较宽的身体里，不会从箭头旁边露出来；
+     ② 颜色到位时这支箭头的位置与"停在终点的那支"逐点重合，交接时不会"往前弹一下"。
+   ★ **方向：沿曲线正向是 0，反向生长时转到 π（掉头指向起点端）**，而且这个 180° 是
+     **绕头部平滑转过去**的、不是一帧翻过去（用户 2026-09："之前回退箭头转向回退的方向是对的，
+     转的速度可以慢一点，不要一瞬间转回去"）。
+     做法：末端那一小段的方向显式给出（不再依赖折线的形状），
+     `u = 切线·cos(θ) + 法线·sin(θ)` —— θ 由 0 爬升到 π 的过程中，箭头就像罗盘指针一样绕头部扫过去，
+     而**底边中点始终钉在头部**上，所以整个旋转过程中线的端点都还在箭头身体里。
+   ⚠️ 方向仍然算自曲线（切线/法线都取头部处的局部值），不是固定角度、也不是结尾处的朝向。 */
+const updateHeadArrow = (edge, head, angle, length) => {
+  const headPath = edge.headPath;
+  const clampAt = at => Math.max(0, Math.min(length, at));
+  const a = edge.pulsePath.getPointAtLength(clampAt(head - 0.5));
+  const b = edge.pulsePath.getPointAtLength(clampAt(head + 0.5));
+  const dx = b.x - a.x, dy = b.y - a.y, norm = Math.hypot(dx, dy) || 1;
+  const tx = dx / norm, ty = dy / norm;          // 头部处的切线（起点端 → 终点端）
+  const nx = -ty, ny = tx;                       // 法线（旋转 90°）
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const ux = tx * cos + nx * sin, uy = ty * cos + ny * sin;
+  const p = edge.pulsePath.getPointAtLength(clampAt(head));
+  headPath.setAttribute('d',
+    `M ${(p.x - ux * HEAD_ARROW_BACK).toFixed(2)} ${(p.y - uy * HEAD_ARROW_BACK).toFixed(2)} `
+    + `L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`);
+  if (!edge.headArrowOn) { edge.headArrowOn = true; headPath.setAttribute('marker-end', ARROW_MARKER); }
+  headPath.style.opacity = '1';
+};
+const hideHeadArrow = edge => {
+  if (!edge.headArrowOn) return;
+  edge.headArrowOn = false;
+  edge.headPath.removeAttribute('marker-end');
+};
+
+/* 一条转移的“行进”：彩色沿曲线从起点揭示到终点，颜色走完的那一刻箭头也在终点亮起。
+ * dasharray = 全长，所以 dashoffset 从全长降到 0 的过程就是“颜色走完全程”。
+ * 行进层用的是它自己的 marker（`#arrowhead-pulse`，`userSpaceOnUse` + 绝对长度）：
+ * 它的描边是 2.4，直接引用灰线那支 `markerUnits="strokeWidth"` 的箭头会被放大 2.18 倍。
+ * ★ 一条连线的高亮**出现和消失都必须是几何**（生长 / 反向生长），任何一处都不许用透明度：
+ *   出现 = 从起点长到终点；被下一条转移取代 = **沿原路退回去**（终点端先消失、起点端最后消失），
+ *   用的时长与它走过来时相同（= 该音的 I）。旧版这里是 1.2 秒退色，于是"当前转移"的退场
+ *   看起来像被透明度擦掉 —— 与"所有连线的出现/消失都走几何"这条规则不一致（用户 2026-09 指出）。 */
+const updateEdgePulse = (edge, time) => {
+  const pulse = edge.pulse;
+  if (!pulse.active) return;
+  const path = edge.pulsePath;
+  path.setAttribute('d', dynamicEdgePath(edge.from, edge.to));
+  const length = Math.max(1, path.getTotalLength());
+  const elapsed = (time - pulse.startedAt) / 1000;
+  let reveal = 1;
+  if (pulse.retreatStartedAt === null) {
+    reveal = pulse.duration > 0 ? Math.min(1, elapsed / pulse.duration) : 1;
+  } else {
+    /* 反向生长：揭示区间从全长缩回 0（终点端先退，起点端最后退），全程满透明度 */
+    const retreatElapsed = (time - pulse.retreatStartedAt) / 1000;
+    const retreatDuration = pulse.duration > 0 ? pulse.duration : EDGE_SWEEP_MIN_S;
+    if (retreatElapsed >= retreatDuration) {
+      pulse.active = false;
+      pulse.recolored = false;
+      pulse.retreatStartedAt = null;
+      setPulseArrow(edge, false);
+      hideHeadArrow(edge);
+      path.style.opacity = '0';
+      return;
+    }
+    reveal = 1 - retreatElapsed / retreatDuration;
+  }
+  if (reveal >= 1 && !pulse.recolored) {
+    pulse.recolored = true;   // 颜色到位 → 箭头由"骑行"交给"停在终点的那支"（见函数末尾）
+  }
+  /* ★ 彩色层永远不能比灰线长：可见区间 = 扫过区间 [0, reveal·L) ∩ 灰线的可见区间。
+     灰线在**收回**时（presence → 0）彩色层跟着它一起反向生长，同样全程满透明度。 */
+  const retracting = edge.presenceTarget <= 0 && edge.presence < 1;
+  if (retracting && edge.presence <= 0) {
+    /* 收完了：高亮结束（几何也已经为空，画面上本来就看不到东西） */
+    pulse.active = false;
+    pulse.recolored = false;
+    pulse.retreatStartedAt = null;
+    setPulseArrow(edge, false);
+    hideHeadArrow(edge);
+    path.style.opacity = '0';
+    return;
+  }
+  const baseStart = edge.presence >= 1 || !edge.revealFromEnd ? 0 : (1 - edge.presence) * length;
+  const baseEnd = edge.presence >= 1 || !edge.revealFromEnd ? edge.presence * length : length;
+  const start = baseStart;
+  const end = Math.min(baseEnd, length * reveal);
+  if (end - start <= 0.01) {
+    /* 交集为空：彩色层这一帧不该出现在任何地方 */
+    path.setAttribute('stroke-dasharray', '0 ' + length);
+    path.setAttribute('stroke-dashoffset', '0');
+  } else if (start <= 0.01) {
+    /* 从起点画 [0, end)：与旧实现完全等价（dash 取全长、只推 offset），所以平直的头部不变 */
+    path.setAttribute('stroke-dasharray', length + ' ' + length);
+    path.setAttribute('stroke-dashoffset', String(length - end));
+  } else {
+    /* 灰线是从终点端长出来/退回去的：交集是中间一段，用 "段长 全长" + 负 offset 表示 */
+    path.setAttribute('stroke-dasharray', (end - start) + ' ' + length);
+    path.setAttribute('stroke-dashoffset', String(-start));
+  }
+  path.style.opacity = '1';   // 内联样式：CSS 覆盖不了；★ 高亮的出现与消失都由几何表达，这里恒为 1
+
+  /* ---------- 箭头：跟着**正在移动的头部**走 ----------
+     用户 2026-09 的要求：生长/反向生长时箭头要跟随曲线的头部，而不是"一直在目的地等着曲线过来"；
+     方向按曲线在该处的切线算（不能固定、也不能固定成结尾的朝向），
+     而且反向生长时**要掉头指回起点端 —— 但要慢慢转过去，不能一帧翻过去**。
+     · 头部位置 = 彩色区间的正向端 `end`（起点端 → 终点端）；
+     · 方向角 θ 在 0（沿曲线正向）与 π（掉头）之间按下面的速率逐帧爬升，
+       两次转向的时长都取"这次高亮时长 pulse.duration × HEAD_ARROW_TURN_RATIO"（并两头钳制），
+       所以它跟音乐一样长一样短，而不是一个写死的秒数；
+     · 头部停下（颜色到位、或线自己在收回）时收起骑行箭头，改由停在终点的那支负责。 */
+  const wantAngle = pulse.retreatStartedAt !== null ? Math.PI : 0;
+  const dt = Math.max(0, Math.min(0.1, (time - (pulse.lastHeadAt || time)) / 1000));
+  pulse.lastHeadAt = time;
+  if (pulse.headAngle !== wantAngle) {
+    const turnSeconds = Math.max(HEAD_ARROW_TURN_MIN_S,
+      Math.min(HEAD_ARROW_TURN_MAX_S, pulse.duration * HEAD_ARROW_TURN_RATIO));
+    const step = Math.PI / Math.max(0.05, turnSeconds) * dt;
+    pulse.headAngle = wantAngle > pulse.headAngle
+      ? Math.min(wantAngle, pulse.headAngle + step)
+      : Math.max(wantAngle, pulse.headAngle - step);
+  }
+  const headMoving = end - start > 0.01 && !retracting
+    && (pulse.retreatStartedAt !== null || reveal < 1);
+  if (headMoving) {
+    updateHeadArrow(edge, end, pulse.headAngle, length);
+    setPulseArrow(edge, false);          // 颜色还在走：终点那支先不挂，否则就是"在目的地等着"
+  } else {
+    hideHeadArrow(edge);
+    setPulseArrow(edge, edge.presence >= 1 && pulse.recolored);
+  }
+};
+
+/* 新的转移开始行进时，之前那条还亮着的转移**沿原路退回去** */
+const startEdgePulse = (edge, intervalSeconds, time) => {
+  graphMotion.edges.forEach(other => {
+    if (other !== edge && other.pulse.active && other.pulse.retreatStartedAt === null) {
+      other.pulse.retreatStartedAt = time;   // 开始反向生长（不是退色）
+      other.pulse.recolored = false;
+      setPulseArrow(other, false);           // 颜色要退回去，箭头先摘掉
+    }
+  });
+  edge.pulse.active = true;
+  edge.pulse.startedAt = time;
+  edge.pulse.retreatStartedAt = null;
+  edge.pulse.headAngle = 0;    // 新一轮高亮从“沿曲线正向”开始，不继承上一轮的掉头状态
+  edge.pulse.lastHeadAt = time;
+  edge.pulse.duration = Math.max(EDGE_SWEEP_MIN_S, Math.min(EDGE_SWEEP_MAX_S, intervalSeconds));
+  if (edge.pulse.recolored) {   // 同一条重新走一遍：等颜色再次走到终点
+    edge.pulse.recolored = false;
+    setPulseArrow(edge, false);   // 颜色要重新走一遍，行进层的箭头先摘掉
+  }
+};
+
+const ensureGraphAnimation = () => {
+  if (graphAnimationFrame === null) graphAnimationFrame = requestAnimationFrame(animateGraph);
+};
+
+/* ---------- 视觉：一张持续存在的图，乐句之间是“变成”而不是“切换” ----------
+ * 旧做法每个乐句都 replaceChildren() 重建整张 SVG：节点与边被删除再创建，
+ * CSS 过渡没有起始状态可补间，力导向布局也被重置，于是每 9.6 秒硬切一次。
+ * 现在节点与边只建一次，乐句更替改四件事：
+ *   · 存在度：属于当前段落的节点留在环上，其余节点收进“藏身层”，滑到某个在场节点背后被挡住；
+ *   · 当前状态：刚发声的节点与刚走过的转移染色（时长由音程决定）；
+ *   · 弹一下：换句时给在场节点一次切向冲量（方向交替），位移沿连线（弹簧）传给邻居 ——
+ *     不是整体径向外扩，也不再是“全场弹簧缩放”那一套；
+ *   · 跨度：每次换句微扰环的相位与半径，于是所有点（包括一直是乐句点的）都会移动一段距离。
+ * 位置用缓动飞行 + 弹簧-阻尼求解，不是 CSS 过渡（节点会在两层之间搬动）。 */
+
+/* 图的节点集合：所有段落用过的音高并集（14 个）。它与当前段落无关，
+   所以环上的基准位置是稳定的，每次换句再叠加一点相位 / 半径微扰（见 layoutGraph）。 */
+const GRAPH_NOTES = (() => {
+  const notes = new Set();
+  NOTE_CHAINS.forEach(chain => chain.transitions.forEach((targets, from) => {
+    notes.add(from);
+    targets.forEach(to => notes.add(to));
+  }));
+  return [...notes].sort((a, b) => noteToMidi(a) - noteToMidi(b));
+})();
+
+/* 运动学常数（数值由离散弹簧模拟试出，改前先算一遍，别凭感觉调）：
+ *   归位弹簧 0.009 / 阻尼 0.92：只负责静止时的呼吸、漂移与换句抖动之后的回位；
+ *   弹出/收起不用弹簧，而是一次性“飞行”：起步极快、临到落点单次过冲约 13% 再收回（easeOutBack）；
+ *     每个音高有自己的速度倍率（0.8~1.25），而且不要求在首音之前到位 —— 时长 = 间隔 × 1.5；
+ *   换句的“弹一下”是切向冲量 + 沿连线传导（见 kickNetwork）。
+ *
+ *   ★ 2026-09 调整：用户反馈“换句的弹速度够、范围不够，像很短的弹簧，把弹簧放长一点”。
+ *     离散模拟结论：本系统阻尼很重（0.92/帧），单把弹簧变软只换到 1.25× 行程；
+ *     放松阻尼虽能加行程，却会把方向反转从 3 次推到 9 次、变成乱抖（用户明确不要）。
+ *     所以采用“软一档 + 适度加冲量”：k 0.012→0.009、连线耦合 0.016→0.012
+ *     （推挤与漂移按同比例降到 900 / 0.038，静态平衡点不变，环不会因此变松），
+ *     换句冲量 6→8.5。合计行程约 1.5×，起步速度只涨约 40%。 */
+const NODE_HOME_SPRING = 0.009;
+const NODE_DAMPING = 0.92;          // 阻尼要留余量，扰动才能沿连线传出去（0.80 会把扰动立刻吃掉）
+/* 连线弹簧（“铰链”）：静止长度 = 环上的原始距离，所以环形与平衡点都不变；
+   它的唯一作用是把一个点的运动传给相邻的点 —— 弹因此是沿连线传开的，不是整体外扩。
+   与归位弹簧保持同比例的软硬（一起调，才能既加长行程又不改变环的形状）。 */
+const EDGE_COUPLING = 0.012;
+/* 弹的力度分两级（用户明确要求）：
+ *   · 换句级：换句 / 段落切换时整网抖一下，力度保持现状（PHRASE_KICK / SECTION_KICK）；
+ *   · 音符级：每个音发声只给一个很轻的推力（NOTE_KICK），像是被轻轻带了一下，
+ *     绝不能和换句级一个量级，否则整首曲子会一直在抖、听不出“换句”这个重音。 */
+const NOTE_KICK = 1.7;              // 音符级：约 5px 位移（与换句级保持 5:1）
+const PHRASE_KICK = 8.5;            // 换句级：在场节点一次切向冲量（方向交替），约 26px 行程
+const SECTION_KICK = 12.5;          // 段落切换更强，约 38px 行程
+/* 弹出/收起：每个点有自己的速度（按音高固定，可复现），并且**不要求**在首音之前到达 ——
+   用户指出那个限制会把速度逼得太快（“不要求切换乐句后点要在第一个音之前到达目的地”）。
+   所以飞行时长 = 音符间隔 × WAKE_FLIGHT_SCALE（2.0 倍，比间隔更慢），允许延伸到首音之后；
+   WAKE_FLIGHT_MAX_S 只是防止长留白里飘太久。
+   连线的生长/反向生长用**它自己那个点的时长**，所以线长完的那一刻点也正好到位。 */
+const WAKE_FLIGHT_SCALE = 2.0;      // 相对音符间隔的倍数（用户反馈“点到目的地的速度有点快”，从 1.5 提到 2.0）
+const WAKE_FLIGHT_MIN_S = 0.6;      // 再快就成了瞬移
+const WAKE_FLIGHT_MAX_S = 2.2;
+const WAKE_SPEED_MIN = 0.8;         // 每个音高自己的倍率，围绕 1.0 两侧展开
+const WAKE_SPEED_MAX = 1.25;
+/* 每次换句都要重排环：**不用随机数，只用这一句自己的音乐**（用户 2026-09 的要求：
+   "不想让每一句的音符点分布在视觉上完全固定，每次要不一样，但整体逻辑还是要有的 ——
+    不要随机，完全的随机毫无意义"）。两条规则：
+   · 朝向 A：**把本句首音的音高槽位转到正上方** —— "这一句从哪个音开始"一眼可见。
+     但**每句最多转 RING_ORIENT_STEP**（半个槽位），也就是像伺服一样"朝目标转、有转速上限"：
+     理由是真的把首音一次摆到正上方，环会一次转 0~154° —— 实测本素材的乐句首音是
+     A: C3/C3、B: C4/C5/C4、C: C3/C4/E4、D: C5/E4（槽位 1/5/7/11），
+     C4↔C5 之间就差 6 个槽位，最远那颗点要跑约 720px，比之前 19~39px 的跨度快一个量级（一定被说"太快"）。
+     限速之后每句转 ≤ 0.5 槽位（≈ 87px 上限），首音会在几句之内逐渐转到正上方。
+     ★ 和"箭头掉头要慢慢转"是同一条原则：转向要有过程，不要一瞬间翻过去。
+   · 半径 B：**本句里发声次数越多的音越靠内**（`RING_ACTIVITY_PULL`），
+     本段落里在场但这一句没弹到的音留在最外圈 —— 于是每句的点分布成为一张不同的"密度云"：
+     内圈 = 这句的骨干，外圈 = 这句没用上的可能。
+   两条都由音乐决定、完全可复现，所以**同一段音乐必然画出同一张图**。
+   （历史：这两条以前是"每次换句取一个 ±0.1 弧度 / 0.95~1.05 倍"的随机微扰 —— 可复现但无依据，
+     而且幅度小到每句看起来几乎一样。） */
+const RING_ACTIVITY_PULL = 0.22;    // 本句弹得最多的音，比外圈靠内 22%
+const RING_ORIENT_STEP = Math.PI * 2 / 14 * 0.5;   // 每句最多转半个槽位（≈ 12.9°）
+/* 槽位本身还带一点固定的按 index 抖动：让环不是机械的正圆。
+   幅度已经缩小（过去是 ±12%，会盖过"活跃度"这个真正的信号），现在只留一点手绘感。 */
+const RING_SLOT_JITTER = 0.04;
+const PRESENCE_RISE = 0.22;         // 弹出时的出现速度（约 0.15 秒到位）
+/* 收起必须“立刻消失”：0.16 那档太慢，节点会在飞向宿主的路上被看见（用户反馈“会露馅”）。
+   0.4 的速率下约 5 帧（80ms）就低于 5% 不透明度，肉眼等同于立刻消失。 */
+const PRESENCE_FALL = 0.4;
+/* 连线生长：只在“有新的音高点冒出来”时朝新点生长；离开时**反向生长退回去**。
+   时长不是常数，而是**这段结构变化所占据的音符间隔**（见 GRAPH_MORPH_*）：
+   用户指出固定时长会“一条还没长完，另一条已经开始了”——生长必须与音符间隔关联，
+   这样每一条线都会在下一次发声之前走完。反向生长同理（用户明确要求）。 */
+const MORPH_MIN_S = 0.32;               // 时长基准（本句内部第一个音程）的钳制下限
+const MORPH_MAX_S = 1.6;                // 上限：再长就该怀疑是异常数据了
+const MORPH_LEAD_S = 0.05;              // 重组相对首音的提前量（避免视觉比听感晚一帧）
+const EDGE_GROW_S = 0.7;                // 兜底值：只有在拿不到间隔时才用
+const EDGE_RETRACT_S = 0.6;             // 兜底值，同上
+/* 推挤与漂移：只用来避免节点叠在一起、并让环有呼吸。
+   数值要与 NODE_HOME_SPRING 成比例（静态偏移 = 力/弹簧），一起调才能既加长行程、
+   又不让平衡点远离环位（早期版本就因为只动一边而让整张图看起来变松）。 */
+const NODE_REPULSION = 900;
+const NODE_DRIFT = 0.038;
+/* 刚发声的染色衰减不再是固定值：时长由该音的音程决定（见 showVisualNote 的 flashDuration） */
+const HIDDEN_NODE_RADIUS = 9;       // 藏起来时的半径
+/* 收起的节点必须完全看不见：0.16 那种“隐约可见”会在别的节点弹出时露馅（用户实际反馈过）。
+   若想留一点暗示，把这个值调到 0.05 左右即可。 */
+const HIDDEN_NODE_OPACITY = 0;
+/* 转移边的“行进”时长由实际音程决定：上一个音到这个音隔了几秒，彩色就走几秒；
+   太短看不清、太长会拖到下一个音，所以两头都设了界限。
+   ★ 同一个音程还决定“音符点亮到暗”的时长（用户要求：不要每个音都一样），
+     以及行进到位后箭头亮起的时刻 —— 三者因此天然同步。 */
+const EDGE_SWEEP_MIN_S = 0.16;
+const EDGE_SWEEP_MAX_S = 1.5;
+/* 骑行箭头"掉头"的转速：转向时长 = 这次高亮的时长 × RATIO，并两头钳制。
+   用户 2026-09："回退箭头转向回退的方向是对的，转的速度可以慢一点，不要一瞬间转回去" ——
+   所以它必须是**看得见的旋转**（绕头部扫过去），也不能慢到整段退场都在转。
+   旧版没有这个量：方向每帧直接按状态取正/反向，等于一帧翻 180°。 */
+const HEAD_ARROW_TURN_RATIO = 0.6;
+const HEAD_ARROW_TURN_MIN_S = 0.22;
+const HEAD_ARROW_TURN_MAX_S = 0.5;
+/* 骑行箭头的载体路径取多长：只用来画一段"看不见的描边"，
+   箭头朝向由头部处的切线**显式算出**（`u = 切线·cosθ + 法线·sinθ`），所以与这段长度无关。 */
+const HEAD_ARROW_BACK = 12;
+/* 高亮退场用同一个时长（反向生长回去），所以这里不再需要单独的退色时长：
+   旧版有个 EDGE_SWEEP_FADE_S = 1.2，用于"被下一条取代后按透明度退色"，已随几何化改造删除。 */
+const FIRST_NOTE_INTERVAL_S = 0.5;  // 第一个音没有“上一个音”可参照，用这个兜底
+/* ---------- 颜色工具 ----------
+ * ★ 放在这里（而不是更下面）是有原因的：`applyTheme()` 在脚本中段就会被调用一次，
+ *   而它会用到 `mixRgb`；这两个工具函数要是声明在它后面，就会踩 TDZ
+ *   （实测报 "Cannot access 'mixRgb' before initialization" 并且整页视觉都不建起来，
+ *   与 0.3 早期 "edge.rest 在边创建之前算" 那次是同一类顺序坑）。 */
+const mixRgb = (from, to, amount) => from.map((value, index) => Math.round(value + (to[index] - value) * amount));
+const rgbToHex = rgb => '#' + rgb.map(value => value.toString(16).padStart(2, '0')).join('');
+/* 点的颜色是**逐帧用 RGB 三元组插值**算出来的（见 paintNode 的 mixRgb），没法直接吃 CSS 变量，
+   所以这个值由 applyTheme() 从 PALETTE 读进来（用 let 就是为了切主题时能重赋值）。 */
+let NODE_BASE = [82, 82, 91];      // #52525b：乐句点本来的颜色（平时就长这样）
+/* 音名的字色：**一个键 `PALETTE[*].labelInk`**（用户要求字色也在调色板里）。
+   ★ 曾经做成"两个候选（浅墨/深墨）+ 自动挑对比度高的那个"，结果用户把两个键读成了
+     "浅色主题的字色 / 深色主题的字色"，两边各填了一组同明度的值 —— 于是两套主题里
+     音名都糊在点上（实测深色 #18181b 压 #414149 = 1.8:1、浅色 #ffffff 压 #C2C2C2 = 1.6:1）。
+     名字必须说清"这是什么"，不能靠猜；现在就是一个明确的字色。
+   ★ 容错：如果这个字色压在点本来的颜色上对比度太低（< LABEL_INK_MIN_CONTRAST），
+     就退回"白墨/深墨"里更清楚的那个，并在控制台点名（既不会糊，也不会静默地替用户做决定）。 */
+const LABEL_INK_FALLBACK_LIGHT = [255, 255, 255];
+const LABEL_INK_FALLBACK_DARK = [24, 24, 27];
+const LABEL_INK_MIN_CONTRAST = 3;
+let nodeLabelInk = LABEL_INK_FALLBACK_LIGHT;
+const relativeLuminance = rgb => {
+  const channel = value => {
+    const c = value / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+};
+const contrastRatio = (a, b) => {
+  const la = relativeLuminance(a), lb = relativeLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+};
+/* 点本来的颜色变了（换主题、手改调色板）才需要重算一次；段落色怎么变都不影响字色 */
+const refreshNodeLabelInk = () => {
+  const wanted = nodeLabelInk;
+  if (contrastRatio(NODE_BASE, wanted) >= LABEL_INK_MIN_CONTRAST) return;
+  const fallback = contrastRatio(NODE_BASE, LABEL_INK_FALLBACK_LIGHT) >= contrastRatio(NODE_BASE, LABEL_INK_FALLBACK_DARK)
+    ? LABEL_INK_FALLBACK_LIGHT : LABEL_INK_FALLBACK_DARK;
+  console.warn('[调色板] labelInk ' + rgbToHex(wanted) + ' 压在 nodeBase ' + rgbToHex(NODE_BASE)
+    + ' 上只有 ' + contrastRatio(NODE_BASE, wanted).toFixed(2) + ':1，音名会看不清；已临时改用 '
+    + rgbToHex(fallback) + '（' + contrastRatio(NODE_BASE, fallback).toFixed(2) + ':1）');
+  nodeLabelInk = fallback;
+};
+const SECTION_COLOR_MORPH_S = 2.4;  // 段落色渐变时长
+let graphBuilt = false;
+let colorMorphFrame = null;
+let visualTextTimer = null;
+let sectionColorRgb = [205, 98, 236];   // = 深色主题的段落色 A（#CD62EC），与 CSS 里的默认值一致
+/* 当前画面上是哪个段落（0=A…3=D），由 applyPhraseVisual 写。
+   ★ 这是**顶层**状态：主题按钮要用它把"当前段落的颜色"接到新主题上。
+     ⚠️ 不要在那句里用 `currentSection` —— 那个名字在顶层不存在（两处 `let currentSection` 分别在
+     段落链工厂与 activateEngine 内部），引用它会抛 ReferenceError；而它正好是 handler 的最后一句，
+     于是表现成"主题切了、段落色没跟着切"（用户 2026-09 报的"只有背景变"）。 */
+let currentVisualSection = 0;
+
+/* ---------- 主题：深色 / 浅色（HUD 右上角的按钮） ----------
+ * 用户 2026-09：“准备调整配色，先在 HUD 里加 light/dark 按钮”。
+ * 分工是**颜色值只写在 CSS 里**：页面元素直接用变量，SVG 那部分由这里读成 RGB 数组交给 paintNode。
+ * 为什么不能各写一份：一处改了另一处没改，切主题就会出现“面板变白了、环上的点还是黑的”这种半截状态
+ * （这正是 02 反复踩过的“同一个量有两个来源”那类坑，见箭头明度那条）。
+ * 默认深色 —— 这块深底就是这个练习的身份，所以**不跟随系统 prefers-color-scheme**；
+ * 用户的选择存在 localStorage（键 lab 级共用，将来别的练习支持浅色时可以直接沿用），
+ * 并且在 <head> 的第一段脚本里、首帧之前就应用，避免浅色用户先看到一帧深色。 */
+const THEME_STORAGE_KEY = 'gml-theme';
+const THEME_DARK = 'dark';
+const THEME_LIGHT = 'light';
+const themeToggleEl = $('themeToggle');
+/* 图标表达的是“点了会变成什么”，不是“现在是什么”：深色时显示太阳（点了变浅色）。
+   几何照抄 shared/exercise-controls.js 那套图标（24×24 viewBox、fill:none、stroke 继承 currentColor）。 */
+const THEME_ICONS = {
+  [THEME_LIGHT]: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path>'
+    + '<path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path>'
+    + '<path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path>',
+  [THEME_DARK]: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>',
+};
+/* 手改调色板时很容易把色值打错（少一位、漏 #、写成 `rgb()`），所以这里不接受非法值：
+   非法就保留上一个合法颜色并在控制台点名，免得一个字符的笔误让整张图变成 NaN 或空白。 */
+const hexToRgb = hex => {
+  const match = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!match) return null;
+  const value = parseInt(match[1], 16);
+  return [value >> 16 & 255, value >> 8 & 255, value & 255];
+};
+let themeName = THEME_DARK;
+/* 连线的墨色与两端浓度（= **方向**）。渐变是逐边建的 DOM，所以这里留一份"当前生效"的值：
+   非法值不会覆盖它（手改调色板时不该把线弄没），建新边时也直接用它。
+   ★ 必须声明在 applyTheme() **之前** —— 它在脚本中段就会被调用一次（踩过 TDZ，见 §14 与 AGENTS）。 */
+let edgeInkState = { ink: PALETTE.dark.edge, from: PALETTE.dark.edgeFadeFrom, to: PALETTE.dark.edgeFadeTo };
+const clampAlpha = value => (Number.isFinite(Number(value)) ? Math.max(0, Math.min(1, Number(value))) : null);
+const applyEdgeInk = palette => {
+  const next = { ...edgeInkState };
+  if (hexToRgb(palette.edge)) next.ink = palette.edge;
+  else console.warn('[调色板] edge 不是合法色值：' + JSON.stringify(palette.edge) + '（应为 #RRGGBB），已沿用上一个合法颜色');
+  const from = clampAlpha(palette.edgeFadeFrom);
+  const to = clampAlpha(palette.edgeFadeTo);
+  if (from !== null) next.from = from;
+  if (to !== null) next.to = to;
+  edgeInkState = next;
+  graphMotion.edges.forEach(edge => {
+    const [stopFrom, stopTo] = edge.gradientStops || [];
+    if (!stopFrom || !stopTo) return;
+    stopFrom.setAttribute('stop-color', next.ink);
+    stopTo.setAttribute('stop-color', next.ink);
+    stopFrom.setAttribute('stop-opacity', String(next.from));
+    stopTo.setAttribute('stop-opacity', String(next.to));
+  });
+};
+const applyTheme = theme => {
+  themeName = theme === THEME_LIGHT ? THEME_LIGHT : THEME_DARK;
+  document.documentElement.dataset.theme = themeName;
+  /* 把调色板里的画面色推成 <html> 上的 CSS 变量：CSS 规则（.markov-stage 的 background、
+     .key.source 的底色……）继续用 var(--…) 取，所以颜色始终只有 PALETTE 一个来源。
+     点与连线不在 CSS 里画（点逐帧算、连线是每条边自己的渐变），所以没有 --graph-edge 了。 */
+  const palette = PALETTE[themeName];
+  const rootStyle = document.documentElement.style;
+  const push = (key, cssName, value) => {
+    if (hexToRgb(value)) { rootStyle.setProperty(cssName, value); return; }
+    console.warn('[调色板] ' + themeName + '.' + key + ' 不是合法色值：' + JSON.stringify(value)
+      + '（应为 #RRGGBB），已沿用上一个合法颜色');
+  };
+  push('stageBg', '--stage-bg', palette.stageBg);
+  push('nodeBase', '--graph-node-base', palette.nodeBase);   // 图例里"本段落可到达状态"那个点用它
+  /* 没播放时图例上那个点用的是 --section-color：先拿本主题的段落色 A 垫着（播放后由 tweenSectionColor 接管） */
+  push('sections[0]', '--section-color', (palette.sections || [])[0]);
+  /* 连线的墨色与两端浓度：渐变是逐边建的 DOM，所以这里要遍历更新（换主题时两端颜色会变） */
+  applyEdgeInk(palette);
+  /* 点颜色是逐帧插值出来的，直接吃 RGB 数组（paintNode 每帧重画，所以这里改完立刻生效） */
+  NODE_BASE = hexToRgb(palette.nodeBase) || NODE_BASE;
+  /* 音名字色：读进来 → 如果压在 nodeBase 上太糊就报警并退回安全的白/深墨（见 refreshNodeLabelInk） */
+  nodeLabelInk = hexToRgb(palette.labelInk) || nodeLabelInk;
+  refreshNodeLabelInk();
+  if (!themeToggleEl) return;
+  const next = themeName === THEME_LIGHT ? THEME_DARK : THEME_LIGHT;
+  themeToggleEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">${THEME_ICONS[next]}</svg>`;
+  const label = next === THEME_LIGHT ? '切换到浅色' : '切换到深色';
+  themeToggleEl.title = label;
+  themeToggleEl.setAttribute('aria-label', label);
+  themeToggleEl.setAttribute('aria-pressed', String(themeName === THEME_LIGHT));
+};
+if (themeToggleEl) {
+  themeToggleEl.addEventListener('click', () => {
+    applyTheme(themeName === THEME_DARK ? THEME_LIGHT : THEME_DARK);
+    try { localStorage.setItem(THEME_STORAGE_KEY, themeName); } catch (error) {}
+    /* 段落色也分主题，所以要重新指向"当前段落在新主题里的那个色"：
+       走和换段完全一样的插值（SECTION_COLOR_MORPH_S 秒），
+       因为"颜色永远不跳变"这条规则对主题切换同样成立。
+       ★ 用顶层状态 `currentVisualSection`（applyPhraseVisual 写的），**不要用 `currentSection`** ——
+         这个名字在顶层不存在（那两处 `let currentSection` 分别在段落链工厂与 activateEngine 内部），
+         引用它会抛 `ReferenceError`，而它正是这个 handler 的最后一句 ——
+         于是"主题切了、段落色没跟着切"（用户 2026-09 报的"只有背景变"就是这个：
+         段落色管着刚发声的点、彩色连线、图例彩点与日志文字，它们会一直停在旧主题的颜色上）。
+       ★ 这里必须真正跑完：所以包一层 try 并显式报错，免得以后再出类似问题又变成"静默半切换"。 */
+    try {
+      repaintLog();   // 已经打印出来的行也要换成新主题的段落色（逐行、同样 2.4 秒插值）
+      tweenSectionColor(sectionColors()[currentVisualSection]);
+    } catch (error) {
+      console.warn('[主题] 切换后没能把当前段落色接到新主题上：', error);
+      tweenSectionColor(sectionColors()[0]);
+    }
+  });
+}
+applyTheme(document.documentElement.dataset.theme);
+
+/* 弹出用的缓动：起步速度约为平均的 5.7 倍（很猛），临到落点单次过冲约 13% 再收回，
+   而且过冲只发生一次 —— 这是“弹一下”的手感。 */
+const WAKE_BACK = 2.0;
+const easeOutBack = progress => {
+  const u = progress - 1;
+  return 1 + (WAKE_BACK + 1) * u * u * u + WAKE_BACK * u * u;
+};
+/* 本来就是乐句点的那些点用这个：平滑滑到新的环位，没有过冲（它们不是“飞过来”，只是换个位置） */
+const easeInOutCubic = progress => (progress < 0.5
+  ? 4 * progress * progress * progress
+  : 1 - Math.pow(-2 * progress + 2, 3) / 2);
+/* 收起用的动效曲线：立刻起步、稳稳落进宿主背后。
+   不要用 easeInOutCubic —— 它前段很慢，实测换句后 0.15 秒只移动了 0.4px，观感像“愣在原地”。 */
+const easeOutCubic = progress => 1 - Math.pow(1 - progress, 3);
+/* 收起时用这个把不透明度压到 0：前段几乎不变（所以看得出是在“移动”），
+   末段迅速淡掉 —— 而末段正好是它钻进宿主背后的时刻，于是观感是“被挡住了”。 */
+const easeInCubic = progress => progress * progress * progress;
+
+/* ---------- 连线与箭头的几何（参考点决定“路径末端落在箭头的哪个位置”） ----------
+ * 用户先后报过两个同源的毛病：①“线看起来超出了箭头”、②“线都长完了，箭头的三角还有点透明，
+ * 明明是一条完整的连接，却成了线 + 半透明的箭头”。
+ * 根源都在箭头的挂法上 —— marker 的 refX/refY 就是“路径末端在箭头坐标系里的位置”：
+ *   · 旧版 refX 让线尾伸进箭头身体里（那里箭头比线宽），线尾的方头会从收窄的锥面上露出来；
+ *     把线尾缩进箭头又制造了第二层问题：线尾与箭头重叠，两层**叠乘**，重叠处比线更实，
+ *     于是箭头整块与线不是一个明度（用户看到的就是这个差异）。
+ * 现在的做法：参考点取**箭头底边的中点**（refX = 0，refY = 箭头中线）：
+ *   · 线的描边正好终止在箭头最宽的那条底边上 —— 线尾绝不会露出箭头，也不会与箭头重叠叠乘，
+ *     线与箭头的明度因此处处相同（同一个 opacity 来源 + 不重叠的几何）；
+ *   · 箭头从路径末端朝目标节点延伸 ARROW_LENGTH，尖端固定在离节点边缘 ARROW_TIP_GAP 处，
+ *     与旧版实测位置一致（尖端 19.9px、底边 28.7px，都是“离目标节点圆心的距离”）。 */
+const EDGE_STROKE_WIDTH = 1.1;      // 灰色转移线的描边宽度（同时写进 path 属性，避免和 CSS 两处维护）
+const ARROW_WIDTH = 8;              // 原始 marker 视窗尺寸（× 描边宽度后就是箭头长度）
+const ARROW_LENGTH = ARROW_WIDTH * EDGE_STROKE_WIDTH;    // 8.8：箭头长度（用户单位）
+const ARROW_TIP_GAP = 2.9;          // 箭头尖端离目标节点边缘的距离
+const ARROW_TAIL_OFFSET = ARROW_TIP_GAP + ARROW_LENGTH;  // 11.7：路径末端（= 箭头底边）离节点边缘
+const ARROW_REF_X = 0;              // 参考点 = 底边中点：线尾巴正好停在箭头底边上
+/* 第二条箭头：彩色行进层的描边是 2.4，用 markerUnits="strokeWidth" 会让箭头放大 2.18 倍
+   （用户报过“彩色箭头比灰箭头大”），所以行进层用 userSpaceOnUse + 换算成绝对尺寸的同一几何。 */
+const ARROW_REF_X_PX = 0;           // 绝对尺寸版本的参考点，同样取底边中点
+const ARROW_MARKER = 'url(#arrowhead)';
+const ARROW_MARKER_PULSE = 'url(#arrowhead-pulse)';
+
+/* 节点外观全部逐帧写入：存在度决定半径、透明度与音名可见性；颜色是**两个状态两种来源** ——
+   平时就是点本来的颜色 `NODE_BASE`，刚发声时插值到**本段落色**（跟随乐句颜色），
+   中间由 flash 线性衰减决定（时长 = 该音的 I，见 §3/§4）。
+   ★ 点**不画描边**（用户 2026-09："音符点不要描边"），所以这里写死 stroke:none；
+     形状完全靠填充色与底色/连线的关系分出来。
+   透明度统一写内联样式：SVG 呈现属性会被 CSS 规则覆盖，写内联样式就不会出现
+   "属性看着对、画面却不可见"的情况（0.3 早期版本的行进层就踩过这个坑）。 */
+const paintNode = node => {
+  const presence = Math.max(0, Math.min(1, node.presence));
+  const flash = Math.max(0, Math.min(1, node.flash));
+  node.circle.setAttribute('cx', node.x);
+  node.circle.setAttribute('cy', node.y);
+  node.circle.setAttribute('r', HIDDEN_NODE_RADIUS + (GRAPH_NODE_RADIUS - HIDDEN_NODE_RADIUS) * presence);
+  node.circle.setAttribute('fill', rgbToHex(mixRgb(NODE_BASE, sectionColorRgb, flash)));
+  node.circle.setAttribute('stroke', 'none');
+  node.circle.style.opacity = (HIDDEN_NODE_OPACITY + (1 - HIDDEN_NODE_OPACITY) * presence).toFixed(3);
+  node.label.setAttribute('x', node.x);
+  node.label.setAttribute('y', node.y + 1);
+  node.label.style.fill = rgbToHex(nodeLabelInk);
+  node.label.style.opacity = (presence * presence).toFixed(3);
+};
+
+/* 环上的“家”位置：由视口、音高索引、以及本次换句的相位/半径微扰决定。
+   相位与半径每次换句都重新取值，所以**所有**点在换句时都会移动一段距离，
+   不再只有非激活点在动。
+   ★ 半径只按视口的**比例**算，不再设绝对上限：旧版 `min(380, W*0.36)` / `min(330, H*0.32)`
+   在宽屏上会让环停在 760×660、四周全是空白（用户 2026-09 反馈）。比例沿用窄屏本来合适的
+   0.36 / 0.32（= 横向占 72%、纵向占 64%），于是任何窗口下留白都一样多。
+   视口是设计单位（见 measureGraphViewport），所以大屏上环、点、字、箭头一起放大。 */
+const RING_FILL_X = 0.36;      // 环的半宽 ÷ 视口半宽
+const RING_FILL_Y = 0.32;      // 环的半高 ÷ 视口半高
+const RING_MIN_RADIUS = 80;    // 极小窗口的止损（免得 14 个点挤成一团）
+const layoutGraph = () => {
+  const radiusX = Math.max(RING_MIN_RADIUS, graphViewport.width * RING_FILL_X);
+  const radiusY = Math.max(RING_MIN_RADIUS, graphViewport.height * RING_FILL_Y);
+  graphMotion.nodes.forEach((node, index) => {
+    const angle = index / Math.max(1, graphMotion.nodes.length) * Math.PI * 2 - Math.PI / 2 + graphMotion.ringPhase;
+    /* 半径 = 槽位的一点固定抖动 × 本句活跃度（见 RING_ACTIVITY_PULL 的说明）：
+       activity 是本句里这个音发声的次数 ÷ 本句最高次数（0~1），0 表示"本段落在场、但这句没用上"。 */
+    const pull = 1 - RING_ACTIVITY_PULL * (graphMotion.activity.get(node.note) || 0);
+    const rx = radiusX * (1 - RING_SLOT_JITTER + Math.sin(index * 2.17) * RING_SLOT_JITTER) * pull;
+    const ry = radiusY * (1 - RING_SLOT_JITTER + Math.cos(index * 1.71) * RING_SLOT_JITTER) * pull;
+    node.home.x = graphViewport.centerX + Math.cos(angle) * rx;
+    node.home.y = graphViewport.centerY + Math.sin(angle) * ry;
+  });
+  /* 连线弹簧的静止长度 = 环上的原始距离：这样环本身就是弹簧网的平衡位置，
+     连线只负责传递运动（铰链），不会把环拉变形 */
+  graphMotion.edges.forEach(edge => {
+    edge.rest = Math.hypot(edge.to.home.x - edge.from.home.x, edge.to.home.y - edge.from.home.y);
+  });
+};
+
+const ensurePhraseGraph = () => {
+  if (graphBuilt) return;
+  graphBuilt = true;
+
+  const defs = svgNode('defs');
+  const marker = svgNode('marker', {
+    id: 'arrowhead', markerWidth: ARROW_WIDTH, markerHeight: ARROW_WIDTH,
+    refX: ARROW_REF_X, refY: ARROW_WIDTH / 2,
+    orient: 'auto', markerUnits: 'strokeWidth',
+  });
+  marker.appendChild(svgNode('path', { d: 'M0,0 L8,4 L0,8 Z', fill: 'context-stroke' }));
+  defs.appendChild(marker);
+  /* 彩色行进层专用的同一支箭头：几何与上面完全一致，只是尺寸换算成绝对用户单位，
+     这样 2.4 的粗描边不会把它放大（见常量处的注释）。它只在颜色走到终点后才挂上。 */
+  const pulseMarker = svgNode('marker', {
+    id: 'arrowhead-pulse', markerWidth: ARROW_LENGTH, markerHeight: ARROW_LENGTH,
+    refX: ARROW_REF_X_PX, refY: ARROW_LENGTH / 2,
+    orient: 'auto', markerUnits: 'userSpaceOnUse',
+  });
+  pulseMarker.appendChild(svgNode('path', {
+    d: `M0,0 L${ARROW_LENGTH},${ARROW_LENGTH / 2} L0,${ARROW_LENGTH} Z`,
+    fill: 'context-stroke',
+  }));
+  defs.appendChild(pulseMarker);
+  markovMapEl.appendChild(defs);
+
+  /* 四层：藏身节点在最下，灰色转移边其次，彩色行进层再次，在场节点在最上。
+     节点会在两层之间搬动，所以“藏起来的点”永远压在场节点之下。 */
+  const hiddenLayer = svgNode('g', { class: 'chain-hidden-layer' });
+  const edgeLayer = svgNode('g', { class: 'chain-edge-layer' });
+  const pulseLayer = svgNode('g', { class: 'chain-pulse-layer' });
+  const nodeLayer = svgNode('g', { class: 'chain-node-layer' });
+  markovMapEl.appendChild(hiddenLayer);
+  markovMapEl.appendChild(edgeLayer);
+  markovMapEl.appendChild(pulseLayer);
+  markovMapEl.appendChild(nodeLayer);
+  graphMotion.hiddenLayer = hiddenLayer;
+  graphMotion.nodeLayer = nodeLayer;
+
+  const byNote = new Map();
+  GRAPH_NOTES.forEach(note => {
+    const node = {
+      note,
+      home: { x: graphViewport.centerX, y: graphViewport.centerY },
+      present: false,
+      targetPresence: 0,
+      presence: 0,
+      flash: 0,
+      flashStartedAt: 0,
+      flashDuration: 0,
+      host: null,
+      flight: null,
+      /* 每个音高有自己的“起飞速度倍率”（0.72~1.0，按音高固定所以可复现）：
+         换句时各点因此不会像同一根弹簧那样齐步走。
+         用黄金比小数（低差异序列）打散，而不是取哈希低位 —— 音名相近时哈希低位会撞在一起，
+         实测 14 个音高只能出 9 个不同倍率，速度差被压扁到 0.75~0.81。 */
+      speedFactor: WAKE_SPEED_MIN + (WAKE_SPEED_MAX - WAKE_SPEED_MIN)
+        * (noteToMidi(note) * 0.61803398875 % 1),
+      morphDuration: 0,
+      vx: 0, vy: 0, fx: 0, fy: 0,
+      targetX: 0, targetY: 0,
+    };
+    const circle = svgNode('circle', {
+      id: 'state-' + stateId(note), cx: node.home.x, cy: node.home.y, r: HIDDEN_NODE_RADIUS,
+      class: 'chain-node',
+    });
+    const label = svgNode('text', { x: node.home.x, y: node.home.y + 1, class: 'node-label' });
+    circle.style.opacity = '0';
+    label.style.opacity = '0';
+    label.textContent = note;
+    hiddenLayer.appendChild(circle);
+    hiddenLayer.appendChild(label);
+    Object.assign(node, { circle, label });
+    graphMotion.nodes.push(node);
+    byNote.set(note, node);
+  });
+  layoutGraph();
+  graphMotion.nodes.forEach((node, index) => {
+    /* 起始就落在自己环位上，只是存在度为 0，随后淡入 */
+    node.x = node.home.x;
+    node.y = node.home.y;
+    /* 藏身时贴着宿主的小偏移，保证整个人躲在宿主圆点之内（3 + 9 < 宿主半径 17） */
+    const angle = index * 2.4;
+    node.hideOffsetX = Math.cos(angle) * 3;
+    node.hideOffsetY = Math.sin(angle) * 3;
+    paintNode(node);
+  });
+
+  const edgeTotal = new Map();
+  NOTE_CHAINS.forEach(chain => chain.transitions.forEach((targets, from) => targets.forEach(to => {
+    const key = from + '|' + to;
+    edgeTotal.set(key, (edgeTotal.get(key) || 0) + 1);
+  })));
+  edgeTotal.forEach((count, key) => {
+    const [from, to] = key.split('|');
+    const a = byNote.get(from), b = byNote.get(to);
+    if (!a || !b) return;
+    /* 每条边一条自己的线性渐变：轴 = 这条边的弦（每帧跟着点更新），
+       两端用 stop-opacity 做出"起点亮 → 终点淡"的**方向**（用户要求用它代替箭头）。
+       ★ stop-color 只能写具体颜色，不能写 currentColor / context-stroke，
+         所以墨色由 applyTheme()/这条边的创建处从 PALETTE.edge 写进去。 */
+    const gradientId = edgeId(from, to) + '-grad';
+    const geometry = edgeGeometry(a, b);
+    const gradient = svgNode('linearGradient', {
+      id: gradientId, gradientUnits: 'userSpaceOnUse',
+      x1: geometry.x1.toFixed(2), y1: geometry.y1.toFixed(2),
+      x2: geometry.x2.toFixed(2), y2: geometry.y2.toFixed(2),
+    });
+    const stopFrom = svgNode('stop', { offset: '0', 'stop-color': edgeInkState.ink, 'stop-opacity': String(edgeInkState.from) });
+    const stopTo = svgNode('stop', { offset: '1', 'stop-color': edgeInkState.ink, 'stop-opacity': String(edgeInkState.to) });
+    gradient.appendChild(stopFrom);
+    gradient.appendChild(stopTo);
+    defs.appendChild(gradient);
+    const path = svgNode('path', {
+      id: edgeId(from, to), d: geometry.d, class: 'chain-edge',
+      'stroke-width': EDGE_STROKE_WIDTH,
+    });
+    path.style.stroke = `url(#${gradientId})`;   // 内联样式：CSS 里的 stroke 会盖不住它，也不会被它盖住
+    /* 初始不可见：透明度由 JS 写内联样式（= 转移概率），方向由上面的渐变表达，**没有箭头** */
+    path.style.opacity = '0';
+    edgeLayer.appendChild(path);
+    /* 彩色行进层：与灰边同一条曲线，靠 dashoffset 从起点揭示到终点。
+       它用的是另一支绝对尺寸的箭头（#arrowhead-pulse，尺寸与灰箭头逐像素一致）：
+       颜色走到终点后才挂上 —— 这样箭头和线都是“底边 + 行进层”两层叠出来的，明度逐帧相同
+       （只挂底边时会变成“线实心、箭头半透明”，详见 setPulseArrow 的注释）。 */
+    const pulsePath = svgNode('path', {
+      id: edgeId(from, to) + '-pulse', d: dynamicEdgePath(a, b), class: 'chain-edge-pulse',
+    });
+    pulsePath.style.opacity = '0';
+    pulseLayer.appendChild(pulsePath);
+    /* 骑行箭头的载体：一小段重算的曲线，终点就是"正在移动的头部"，
+       所以 orient="auto" 得到的是**曲线在该处的切线**（详见 updateHeadArrow）。
+       它自己的描边不可见（.chain-head 的 stroke-opacity: 0），只负责承载 marker。 */
+    const headPath = svgNode('path', { id: edgeId(from, to) + '-head', d: '', class: 'chain-head' });
+    headPath.style.opacity = '0';
+    pulseLayer.appendChild(headPath);
+    graphMotion.edges.set(key, {
+      from: a, to: b, path, pulsePath, headPath, gradient, gradientStops: [stopFrom, stopTo],
+      /* 连线弹簧的静止长度（铰链用）：初始化为环上的距离，视口变化时由 layoutGraph 重算 */
+      rest: Math.hypot(b.home.x - a.home.x, b.home.y - a.home.y),
+      presence: 0, presenceFrom: 0, presenceTarget: 0, presenceStartedAt: 0, presenceDuration: 0,
+      probability: 0, opacity: 0, pulseArrowOn: false, headArrowOn: false,
+      pulse: { active: false, startedAt: 0, duration: 0, retreatStartedAt: null, recolored: false, headAngle: 0, lastHeadAt: 0 },
+    });
+  });
+
+  ensureGraphAnimation();
+};
+
+/* 段落色不用 CSS 过渡：--section-color 与 JS 里的 sectionColorRgb 一起逐帧插值，
+   整张图的当前色连续流动，而不是在句界跳过去。
+   色值来自 PALETTE[*].sections，手改时写错就跳过并报控制台（否则 `#NaN` 会让节点与连线一起坏掉）。 */
+const tweenSectionColor = target => {
+  const to = hexToRgb(target);
+  if (!to || !to.every(Number.isFinite)) {
+    console.warn('[调色板] 段落色不是合法色值：' + JSON.stringify(target) + '（应为 #RRGGBB），这一段保持上一个颜色');
+    return;
+  }
+  if (colorMorphFrame !== null) cancelAnimationFrame(colorMorphFrame);
+  const current = visualEl.style.getPropertyValue('--section-color').trim();
+  const from = hexToRgb(current) || hexToRgb(sectionColors()[0]);
+  if (from.every((value, index) => value === to[index])) {
+    visualEl.style.setProperty('--section-color', target);
+    sectionColorRgb = to;
+    return;
+  }
+  const startedAt = performance.now();
+  const step = () => {
+    const progress = Math.min(1, (performance.now() - startedAt) / (SECTION_COLOR_MORPH_S * 1000));
+    const eased = progress * progress * (3 - 2 * progress);
+    sectionColorRgb = from.map((value, index) => Math.round(value + (to[index] - value) * eased));
+    visualEl.style.setProperty('--section-color', rgbToHex(sectionColorRgb));
+    colorMorphFrame = progress < 1 ? requestAnimationFrame(step) : null;
+  };
+  colorMorphFrame = requestAnimationFrame(step);
+};
+
+/* 每个收起的节点都要有一个在场的宿主，否则它会掉到画面中央游荡 */
+const assignHosts = () => {
+  const presentNodes = graphMotion.nodes.filter(node => node.present);
+  graphMotion.nodes.forEach(node => {
+    if (node.present) { node.host = null; return; }
+    if (node.host && node.host.present) return;
+    let best = presentNodes[0] || null;
+    let bestDistance = Infinity;
+    presentNodes.forEach(candidate => {
+      const distance = Math.hypot(candidate.home.x - node.home.x, candidate.home.y - node.home.y);
+      if (distance < bestDistance) { bestDistance = distance; best = candidate; }
+    });
+    node.host = best;
+  });
+};
+
+/* 换句 = 一次重组：不重建、不清空，只调存在度、藏身关系、环的朝向与半径、颜色目标。
+   morphSeconds = 时长基准，等于**本句内部第一个音程**（首音 → 第二个音，已钳制）；
+   phraseShape = 本句的音乐形状：`firstNote`（首音）+ `counts`（每个音在这句里发声几次）。
+   环的朝向与半径都由它算出来（规则见 RING_ACTIVITY_PULL 上方），没有随机数参与。 */
+const applyPhraseVisual = (section, morphSeconds, phraseShape) => {
+  ensurePhraseGraph();
+  const presentNotes = new Set();
+  const sectionEdgeCounts = new Map();
+  NOTE_CHAINS[section].transitions.forEach((targets, from) => {
+    presentNotes.add(from);
+    targets.forEach(to => {
+      presentNotes.add(to);
+      const key = from + '|' + to;
+      sectionEdgeCounts.set(key, (sectionEdgeCounts.get(key) || 0) + 1);
+    });
+  });
+  currentVisualSection = section;   // 顶层状态：主题按钮靠它把"当前段落的颜色"接到新主题上
+  tweenSectionColor(sectionColors()[section]);
+  /* 先按**这一句的音乐**重算环的朝向、每个点的半径，再重算所有“家”位置：
+     这样连“本来就是乐句点”的那些点也会移动，整体都有跨度（用户反馈：否则只有非激活点在动）。
+     朝向 = 把本句首音摆到正上方 → 相位就是这个音高槽位的负角；没有首音（整句都是余响）时保持原样。
+     layoutGraph 同时重算连线弹簧的静止长度，所以新环位仍是弹簧网的平衡位置。 */
+  const nodes = graphMotion.nodes;
+  const indexOfNote = new Map(nodes.map((node, index) => [node.note, index]));
+  const slotCount = Math.max(1, nodes.length);
+  if (phraseShape && phraseShape.firstNote !== null && indexOfNote.has(phraseShape.firstNote)) {
+    /* 朝向：目标是"把本句首音的槽位摆到正上方"（相位 = −槽位角），
+       但**每句最多转 RING_ORIENT_STEP**（半个槽位），沿环上最短的一侧靠过去 ——
+       限速的理由见常量处的实测：不限速会一次转 0~154°，点要跑 700px 以上。 */
+    const targetPhase = -indexOfNote.get(phraseShape.firstNote) / slotCount * Math.PI * 2;
+    let delta = targetPhase - graphMotion.ringPhase;
+    delta = ((delta + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    graphMotion.ringPhase += Math.max(-RING_ORIENT_STEP, Math.min(RING_ORIENT_STEP, delta));
+  }
+  const counts = (phraseShape && phraseShape.counts) || new Map();
+  let peak = 0;
+  counts.forEach(value => { if (value > peak) peak = value; });
+  graphMotion.activity = new Map();
+  if (peak > 0) counts.forEach((value, note) => graphMotion.activity.set(note, value / peak));
+  layoutGraph();
+  const woke = new Set();
+  const slept = new Set();
+  graphMotion.nodes.forEach(node => {
+    const present = presentNotes.has(node.note);
+    const wasPresent = node.present;
+    if (present) {
+      /* 时长 = 本段结构变化时长 × WAKE_FLIGHT_SCALE × 这个音高自己的速度倍率：
+         各点速度不同，而且允许延伸到首音之后（不受“必须提前到位”的限制）。
+         刚变成乐句点 → 从宿主背后弹出（easeOutBack，带单次过冲）；
+         本来就是乐句点 → 平滑滑到新的环位（easeInOutCubic，无过冲）。 */
+      if (!wasPresent) woke.add(node.note);
+      node.morphDuration = Math.max(WAKE_FLIGHT_MIN_S,
+        Math.min(morphSeconds * WAKE_FLIGHT_SCALE * node.speedFactor, WAKE_FLIGHT_MAX_S));
+      node.flight = {
+        fromX: node.x,
+        fromY: node.y,
+        startedAt: performance.now(),
+        duration: node.morphDuration * 1000,
+        mode: wasPresent ? 'glide' : 'pop',
+      };
+      node.vx = 0;
+      node.vy = 0;
+    } else if (wasPresent) {
+      /* 变回收起点：滑到宿主背后被挡住（不是原地消失）。收起的点也用自己的速度倍率，
+         连线的反向生长要用同一个值才能和它同步退出。 */
+      slept.add(node.note);
+      node.morphDuration = Math.max(WAKE_FLIGHT_MIN_S,
+        Math.min(morphSeconds * WAKE_FLIGHT_SCALE * node.speedFactor, WAKE_FLIGHT_MAX_S));
+      node.flight = {
+        fromX: node.x,
+        fromY: node.y,
+        startedAt: performance.now(),
+        duration: node.morphDuration * 1000,
+        mode: 'retreat',
+      };
+      node.vx = 0;
+      node.vy = 0;
+    }
+    node.present = present;
+    node.targetPresence = present ? 1 : 0;
+    /* 变成乐句点：搬到在场层（压在所有藏身点之上）；变回非乐句点：搬到藏身层，之后一直贴着宿主 */
+    const layer = node.present ? graphMotion.nodeLayer : graphMotion.hiddenLayer;
+    if (node.circle.parentNode !== layer) {
+      layer.appendChild(node.circle);
+      layer.appendChild(node.label);
+    }
+  });
+  assignHosts();
+  graphMotion.edges.forEach((edge, key) => {
+    const count = sectionEdgeCounts.get(key) || 0;
+    /* 明度 = 这条转移在当前段落的马尔可夫链里的概率：
+       概率 = 该转移的出现次数 ÷ 该起点音的后继总数（walkNote 是等概率挑后继） */
+    const successors = NOTE_CHAINS[section].transitions.get(edge.from.note) || [];
+    edge.probability = count > 0 && successors.length ? count / successors.length : 0;
+    /* ★ 不属于本段落时**不要**把明度清成 0：这条线还要"反向生长"退场，若此刻就写成 0，
+       整段收回过程是看不见的 —— 用户看到的就是"激活的连线被透明度抹掉"（2026-09 反馈），
+       明明几何在缩、画面上却只剩一条彩色层留在原处。明度只在"它属于本段落"时才更新，
+       收完之后（presence = 0）由 updateEdgePresence 统一压到 0。 */
+    if (count > 0) edge.opacity = edgeOpacityFor(edge.probability);
+    const fromWoke = woke.has(edge.from.note), toWoke = woke.has(edge.to.note);
+    const fromSlept = slept.has(edge.from.note), toSlept = slept.has(edge.to.note);
+    /* 线与点同速：优先用“刚出现/刚收起”的那个点自己的时长；
+       两端都是新点时取两者平均。这样线长完的那一刻，点也正好到位。 */
+    let duration = morphSeconds;
+    if (fromWoke && toWoke) duration = (edge.from.morphDuration + edge.to.morphDuration) / 2;
+    else if (fromWoke) duration = edge.from.morphDuration;
+    else if (toWoke) duration = edge.to.morphDuration;
+    else if (fromSlept && toSlept) duration = (edge.from.morphDuration + edge.to.morphDuration) / 2;
+    else if (fromSlept) duration = edge.from.morphDuration;
+    else if (toSlept) duration = edge.to.morphDuration;
+    setEdgePresence(edge, count > 0, performance.now(), {
+      fromWoke, toWoke, fromSlept, toSlept,
+    }, duration);
+  });
+  /* 上一句末音若已不属于本段落，其节点正在退回藏身层，此时不再接力染色 */
+  if (previousVisualNote !== null && !presentNotes.has(previousVisualNote)) {
+    previousVisualNote = null;
+    previousVisualTime = null;
+  }
+};
+
+/* 换句时不再整体外扩，而是给在场节点一次**切向**冲量（方向按索引交替），
+   像有人从侧面抖了一下这个网络：位移沿连线传给邻居，落下去的过程就是“弹”。
+   与首音同刻发生。 */
+const kickNetwork = sectionChanged => {
+  const strength = sectionChanged ? SECTION_KICK : PHRASE_KICK;
+  graphMotion.nodes.forEach((node, index) => {
+    if (!node.present || node.flight) return;
+    const dx = node.x - graphViewport.centerX, dy = node.y - graphViewport.centerY;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    const direction = index % 2 === 0 ? 1 : -1;
+    node.vx += -dy / length * strength * direction;
+    node.vy += dx / length * strength * direction;
+  });
+};
+
+const swapVisualText = (title, meta) => {
+  clearTimeout(visualTextTimer);
+  visualTitleEl.style.opacity = '0';
+  visualMetaEl.style.opacity = '0';
+  visualTextTimer = setTimeout(() => {
+    visualTitleEl.textContent = title;
+    visualMetaEl.textContent = meta;
+    visualTitleEl.style.opacity = '';
+    visualMetaEl.style.opacity = '';
+  }, 180);
+};
+
+const showVisualNote = (phraseId, note, audioTime) => {
+  if (phraseId !== visualPhraseId) return;
+  const now = performance.now();
+  /* 音程（上一个音 → 这个音）同时决定三件事：彩色行进走多久、这个点从亮到暗用多久、
+     以及行进到位后箭头在什么时候亮。三者用同一个值，所以密度不同的乐句余韵也不同，
+     而它们之间永远同步（不是每个音固定 1.4 秒那种“都一样”的衰减）。 */
+  const rawInterval = (previousVisualTime === null || typeof audioTime !== 'number')
+    ? FIRST_NOTE_INTERVAL_S
+    : audioTime - previousVisualTime;
+  const interval = Number.isFinite(rawInterval)
+    ? Math.max(EDGE_SWEEP_MIN_S, Math.min(EDGE_SWEEP_MAX_S, rawInterval))
+    : FIRST_NOTE_INTERVAL_S;
+  const node = graphMotion.nodes.find(candidate => candidate.note === note);
+  if (node) {
+    node.flash = 1;
+    node.flashStartedAt = now;
+    node.flashDuration = interval * 1000;
+    /* 发声的节点被切向推一下：这个位移会沿连线传给邻居，网络因此一直在动 */
+    const dx = node.x - graphViewport.centerX, dy = node.y - graphViewport.centerY;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    node.vx += -dy / length * NOTE_KICK;
+    node.vy += dx / length * NOTE_KICK;
+  }
+  if (previousVisualNote !== null && previousVisualNote !== note) {
+    const edge = graphMotion.edges.get(previousVisualNote + '|' + note);
+    if (edge) startEdgePulse(edge, interval, now);
+  }
+  previousVisualNote = note;
+  previousVisualTime = typeof audioTime === 'number' ? audioTime : null;
+};
+
+/* ---------- ⑤ 引擎：activate(seed) → { deactivate, schedule, end } ----------
+ * 对照 aisatsana：activate 加载素材并训练链，schedule 沿 Transport 安排乐句 */
+let engine = null;
+let currentSeed = null;
+
+const activateEngine = async seed => {
+  const rng = makeRng(seed);
+  const textureRng = makeRng((seed ^ 0x9e3779b9) >>> 0);
+  /* 视觉这一侧现在**完全不用随机数**：环的朝向与每个点的半径都由本句的音乐算出来
+     （首音 + 各音发声次数，见 applyPhraseVisual）。所以这里不再需要 visualRng ——
+     它过去只服务于"每次换句 ±0.1 弧度 / 0.95~1.05 倍"的环形微扰，那套已经删掉。
+     ⚠️ 若将来又要给视觉加随机，仍然必须像 textureRng 这样**从种子派生一条独立流**，
+     绝不能消耗钢琴的 rng（否则同一个种子的音符序列会因视觉改动而变化，0.2 踩过这个坑）。 */
+  const chain = buildSectionChain(rng);
+  const [piano, moodistTextures] = await Promise.all([
+    createPiano(Tone.Destination),
+    createMoodistTextures(Tone.Destination, textureRng),
+  ]);
+
+  let currentSection = 0;
+  let lastSection = 0;
+  let phraseCount = 0;
+  let densityMemory = 1;
+
+  const PLAYBACK_VARIANTS = [
+    { name: '完整', keep: 1, velocity: 1, late: 0, tail: 0.72, chordLimit: 2 },
+    { name: '骨架', keep: 0.52, velocity: 0.9, late: 0, tail: 0.5, chordLimit: 1 },
+    { name: '回声', keep: 0.38, velocity: 0.72, late: 0.6, tail: 0.38, chordLimit: 1 },
+    { name: '迟到回应', keep: 0.62, velocity: 0.82, late: 2.4, tail: 0.46, chordLimit: 1 },
+  ];
+
+  const chooseVariant = section => {
+    const weightsBySection = [
+      [0.18, 0.36, 0.34, 0.12],  // A 安静：更多骨架与回声
+      [0.42, 0.26, 0.14, 0.18],  // B 主题：主题可以完整，但不总是完整
+      [0.24, 0.32, 0.1, 0.34],   // C 发展：前冲后留呼吸
+      [0.12, 0.26, 0.52, 0.1],   // D 结尾：更像残影
+    ][section];
+    let roll = rng() * weightsBySection.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < weightsBySection.length; i += 1) {
+      roll -= weightsBySection[i];
+      if (roll <= 0) return PLAYBACK_VARIANTS[i];
+    }
+    return PLAYBACK_VARIANTS[0];
+  };
+
+  const shouldKeepStep = (step, noteCount, variant, section) => {
+    const beatRole = step % 8 === 0 ? 0.34 : step % 4 === 0 ? 0.2 : 0;
+    const tailStart = PHRASE_LENGTH * (section === 2 ? 0.56 : 0.68);
+    const tailFade = step >= tailStart
+      ? Math.max(0.12, 1 - (step - tailStart) / (PHRASE_LENGTH - tailStart) * variant.tail)
+      : 1;
+    const chordPenalty = noteCount > variant.chordLimit ? 0.62 : 1;
+    const probability = Math.min(0.98, (variant.keep * densityMemory + beatRole) * tailFade * chordPenalty);
+    return rng() < probability;
+  };
+
+  const schedule = () => {
+    const showMatrix = () => {
+      let html = '<b>段落转移矩阵</b>（行=当前段落，列=下一段落概率）：<br>';
+      SECTION_NAMES.forEach((name, i) => {
+        const row = chain.transitions[i];
+        const total = row.reduce((a, b) => a + b, 0);
+        html += name + ': ' + row.map((c, j) => (c / total).toFixed(2)).join('  ') + '<br>';
+      });
+      matrixEl.innerHTML = html;
+    };
+    showMatrix();
+    moodistTextures.start(Tone.Transport.seconds + 0.05);
+
+    /* 演出：每次取一个乐句（段落层 + 句层两步随机），把音符安排在对应步。
+     * 提前 1 秒触发 + ±25ms 人性化抖动（原样照搬 aisatsana 手法） */
+    const playPhrase = time => {
+      const phraseTime = typeof time === 'number' ? time : Tone.now();
+      const { phraseIndex, section } = chain.next();
+      const variant = chooseVariant(section);
+      const comingDownFromDevelopment = lastSection === 2 && section !== 2;
+      const sectionChanged = phraseCount > 0 && section !== lastSection;
+      currentSection = section;
+      const phrase = PHRASES[phraseIndex];
+      const playedNotes = [];
+      const playedEvents = [];
+      const rawNoteCount = phrase.flat().length;
+      let noteState = null;
+
+      phrase.forEach((notes, step) => {
+        if (!notes.length || !shouldKeepStep(step, notes.length, variant, section)) return;
+        const limitedNotes = notes.slice(0, variant.chordLimit);
+        notes.forEach(({ n, v }) => {
+          if (!limitedNotes.some(note => note.n === n)) return;
+          const playedNote = noteState === null ? n : walkNote(noteState, section, rng, n);
+          noteState = playedNote;
+          const waitTime = step * STEP_DURATION_S;
+          const tailStart = PHRASE_LENGTH * 0.68;
+          const tailScale = step >= tailStart
+            ? Math.max(0.45, 1 - (step - tailStart) / (PHRASE_LENGTH - tailStart) * 0.45)
+            : 1;
+          const transitionBreath = sectionChanged && step < 4 ? 0.68 : 1;
+          const velocity = (0.62 + v * 0.28) * variant.velocity * tailScale * transitionBreath;
+          const audioTime = phraseTime + waitTime + 1 + variant.late + rng() * 0.05 - 0.025;
+          /* ★ 力度上移补偿：原版 aisatsana 不传力度（满响度），
+           * 现在再叠加演奏版本、句尾衰减和转场呼吸：留白来自说话方式，而不是插入空段。 */
+          piano.triggerAttack(
+            playedNote,
+            audioTime,   // 对照源码：+1 秒预延迟 + 抖动
+            velocity
+          );
+          playedNotes.push(playedNote);
+          playedEvents.push({ step, note: playedNote, audioTime });
+        });
+      });
+      if (section === 2) {
+        densityMemory = Math.max(0.58, densityMemory - 0.12);
+      } else if (comingDownFromDevelopment) {
+        densityMemory = 0.5;
+      } else {
+        densityMemory = Math.min(1, densityMemory + 0.08);
+      }
+      lastSection = section;
+      phraseCount += 1;
+      const statusHtml =
+        '▶ 播放中 · 段落 <b>' + SECTION_NAMES[currentSection] +
+        '</b> · 乐句 <b>' + String.fromCharCode(65 + phraseIndex) +
+        '</b> · 演奏 <b>' + variant.name +
+        '</b> · 音符 ' + playedNotes.length + '/' + rawNoteCount +
+        ' · 种子 ' + currentSeed;
+      const logLine = playedNotes.length + '/' + rawNoteCount + ' ← ' + (playedNotes.join(' ') || '余响');
+      const visualStartTime = playedEvents.length
+        ? Math.min(...playedEvents.map(event => event.audioTime)) - 0.01
+        : phraseTime + 1 + variant.late;
+      /* 重组在**本句首音那一刻**开始，时长基准是**本句内部第一个音程**（首音 → 第二个音）。
+         早先的版本用“上一个乐句的最后一个音 → 本句首音”这个间隔当窗口，但那段区间按定义
+         里面没有任何新音，于是整段变换都跑在没有声音的地方，观感很干（用户反馈）。
+         现在跟着新句自己的密度走：密句里变换短、疏句里长，且与首音同刻开始。
+         只有一个音（拿不到内部音程）时用 `STEP_DURATION_S` 兜底。 */
+      const firstNoteTime = visualStartTime + 0.01;
+      const internalInterval = playedEvents.length >= 2
+        ? playedEvents[1].audioTime - playedEvents[0].audioTime
+        : STEP_DURATION_S;
+      const morphSeconds = Math.max(MORPH_MIN_S, Math.min(MORPH_MAX_S, internalInterval));
+      let phraseVisualId = null;
+      /* 环的朝向与半径**由这一句的音乐决定**（首音 + 各音发声次数），不用随机数：
+         见 applyPhraseVisual 与 RING_ACTIVITY_PULL 的说明。这样同一段音乐必然画出同一张图。
+         用 Tone.now() 兜底，保证首句的目标时刻落在过去时也立刻发生。 */
+      const counts = new Map();
+      playedEvents.forEach(event => counts.set(event.note, (counts.get(event.note) || 0) + 1));
+      const phraseShape = {
+        firstNote: playedEvents.length ? playedEvents[0].note : null,
+        counts,
+      };
+      Tone.Draw.schedule(() => {
+        applyPhraseVisual(section, morphSeconds, phraseShape);
+      }, Math.max(Tone.now(), firstNoteTime - MORPH_LEAD_S));
+      Tone.Draw.schedule(() => {
+        visualPhraseId += 1;
+        phraseVisualId = visualPhraseId;
+        setStatus(statusHtml);
+        log(logLine, section);
+        swapVisualText(
+          SECTION_NAMES[section] + ' · 乐句 ' + String.fromCharCode(65 + phraseIndex),
+          variant.name + ' · ' + playedEvents.length + '/' + rawNoteCount
+        );
+        kickNetwork(sectionChanged);   // 与首音同刻：从侧面抖一下这个网络
+      }, visualStartTime);
+      playedEvents.forEach(event => {
+        Tone.Draw.schedule(() => showVisualNote(phraseVisualId, event.note, event.audioTime), event.audioTime);
+      });
+      console.info('[' + SECTION_NAMES[currentSection] + '] 乐句 ' + String.fromCharCode(65 + phraseIndex) +
+          ' · ' + variant.name + ' · ' + playedNotes.length + '/' + rawNoteCount +
+          ' ← ' + (playedNotes.join(' ') || '余响'));
+    };
+
+    Tone.Transport.scheduleRepeat(playPhrase, PHRASE_DURATION_S, 0);  // 对照源码 scheduleRepeat
+  };
+
+  const end = () => {
+    moodistTextures.stop(Tone.now());
+    Tone.Transport.cancel();
+    Tone.Transport.stop();
+    Tone.Draw.cancel(0);
+    /* 停止时只收回“当前状态”，图本身保留 —— 下次播放接着同一张图继续变形 */
+    graphMotion.nodes.forEach(node => { node.flash = 0; });
+    graphMotion.edges.forEach(edge => {
+      edge.pulse.active = false;
+      edge.pulse.recolored = false;
+      edge.pulse.retreatStartedAt = null;
+      setPulseArrow(edge, false);
+      hideHeadArrow(edge);
+      edge.pulsePath.style.opacity = '0';
+    });
+    previousVisualNote = null;
+    previousVisualTime = null;
+    piano.releaseAll(0);
+  };
+
+  const deactivate = () => {
+    end();
+    piano.dispose();
+    moodistTextures.dispose();
+  };
+
+  return { deactivate, schedule, end };
+};
+
+/* ---------- ⑥ 控制器 ---------- */
+const transportControls = $('transportControls');
+
+const playCurrent = async () => {
+  transportControls.setBusy(true);
+  await Tone.start();
+  try {
+    if (!engine) {
+      const text = transportControls.seedValue;
+      currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      setStatus('正在构建引擎（种子 ' + currentSeed + '）… 首次播放需下载钢琴与背景 texture 素材，请耐心');
+      engine = await activateEngine(currentSeed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    transportControls.setPlaying(true);
+    setStatus('▶ 播放中 · 种子 ' + currentSeed);
+  } catch (err) {
+    console.error(err);
+    transportControls.setPlaying(false);
+    setStatus('⚠ 播放失败：' + err.message);
+  } finally {
+    transportControls.setBusy(false);
+  }
+};
+
+transportControls.addEventListener('exercise-play', playCurrent);
+
+transportControls.addEventListener('exercise-stop', () => {
+  if (!engine) return;
+  engine.end();
+  transportControls.setPlaying(false);
+  setStatus('■ 已停止');
+});
+
+transportControls.addEventListener('exercise-regenerate', () => {
+  transportControls.setBusy(true);
+  if (engine) {
+    engine.deactivate();
+    engine = null;
+  }
+  transportControls.clearSeed();
+  transportControls.setPlaying(false);
+  transportControls.setBusy(false);
+  playCurrent();
+});
+
+/* 统一激活接口（AGENTS.md 约定） */
+window.exercise = {
+  activate: activateEngine,
+};
+</script>
+</body>
+</html>
