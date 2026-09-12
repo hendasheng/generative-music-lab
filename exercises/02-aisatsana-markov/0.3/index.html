@@ -665,8 +665,9 @@ let graphMotion = {
   edges: new Map(),
   hiddenLayer: null,
   nodeLayer: null,
-  ringPhase: 0,                    // 每次换句微扰的环形相位（不累积）
-  ringScale: 1,                    // 每次换句微扰的环半径倍率
+  ringPhase: 0,                    // 环的朝向：由本句首音的槽位算出（见 applyPhraseVisual），不是随机数
+  ringScale: 1,                    // 环的半径倍率（固定 1；每点的半径差异来自本句活跃度，见 layoutGraph）
+  activity: new Map(),             // 本句里每个音高的活跃度（发声次数 ÷ 本句最高次数，0~1）
 };
 let graphAnimationFrame = null;
 updateGraphViewBox();
@@ -1156,12 +1157,27 @@ const WAKE_FLIGHT_MIN_S = 0.6;      // 再快就成了瞬移
 const WAKE_FLIGHT_MAX_S = 2.2;
 const WAKE_SPEED_MIN = 0.8;         // 每个音高自己的倍率，围绕 1.0 两侧展开
 const WAKE_SPEED_MAX = 1.25;
-/* 每次换句轻微改一下环的相位与半径：让**本来就是乐句点**的那些点也有一定跨度。
-   不然每次只有非激活点在动，画面会显得只有局部在变（用户反馈）。
-   相位在 ±RING_SHIFT_PHASE/2 弧度内重新取值（不累积，所以不会越转越偏），半径同理。 */
-const RING_SHIFT_PHASE = 0.2;       // ±0.1 弧度 ≈ 环上 ±30px
-const RING_SHIFT_SCALE_MIN = 0.95;
-const RING_SHIFT_SCALE_MAX = 1.05;
+/* 每次换句都要重排环：**不用随机数，只用这一句自己的音乐**（用户 2026-09 的要求：
+   "不想让每一句的音符点分布在视觉上完全固定，每次要不一样，但整体逻辑还是要有的 ——
+    不要随机，完全的随机毫无意义"）。两条规则：
+   · 朝向 A：**把本句首音的音高槽位转到正上方** —— "这一句从哪个音开始"一眼可见。
+     但**每句最多转 RING_ORIENT_STEP**（半个槽位），也就是像伺服一样"朝目标转、有转速上限"：
+     理由是真的把首音一次摆到正上方，环会一次转 0~154° —— 实测本素材的乐句首音是
+     A: C3/C3、B: C4/C5/C4、C: C3/C4/E4、D: C5/E4（槽位 1/5/7/11），
+     C4↔C5 之间就差 6 个槽位，最远那颗点要跑约 720px，比之前 19~39px 的跨度快一个量级（一定被说"太快"）。
+     限速之后每句转 ≤ 0.5 槽位（≈ 87px 上限），首音会在几句之内逐渐转到正上方。
+     ★ 和"箭头掉头要慢慢转"是同一条原则：转向要有过程，不要一瞬间翻过去。
+   · 半径 B：**本句里发声次数越多的音越靠内**（`RING_ACTIVITY_PULL`），
+     本段落里在场但这一句没弹到的音留在最外圈 —— 于是每句的点分布成为一张不同的"密度云"：
+     内圈 = 这句的骨干，外圈 = 这句没用上的可能。
+   两条都由音乐决定、完全可复现，所以**同一段音乐必然画出同一张图**。
+   （历史：这两条以前是"每次换句取一个 ±0.1 弧度 / 0.95~1.05 倍"的随机微扰 —— 可复现但无依据，
+     而且幅度小到每句看起来几乎一样。） */
+const RING_ACTIVITY_PULL = 0.22;    // 本句弹得最多的音，比外圈靠内 22%
+const RING_ORIENT_STEP = Math.PI * 2 / 14 * 0.5;   // 每句最多转半个槽位（≈ 12.9°）
+/* 槽位本身还带一点固定的按 index 抖动：让环不是机械的正圆。
+   幅度已经缩小（过去是 ±12%，会盖过"活跃度"这个真正的信号），现在只留一点手绘感。 */
+const RING_SLOT_JITTER = 0.04;
 const PRESENCE_RISE = 0.22;         // 弹出时的出现速度（约 0.15 秒到位）
 /* 收起必须“立刻消失”：0.16 那档太慢，节点会在飞向宿主的路上被看见（用户反馈“会露馅”）。
    0.4 的速率下约 5 帧（80ms）就低于 5% 不透明度，肉眼等同于立刻消失。 */
@@ -1291,8 +1307,11 @@ const layoutGraph = () => {
   const radiusY = Math.max(RING_MIN_RADIUS, graphViewport.height * RING_FILL_Y) * graphMotion.ringScale;
   graphMotion.nodes.forEach((node, index) => {
     const angle = index / Math.max(1, graphMotion.nodes.length) * Math.PI * 2 - Math.PI / 2 + graphMotion.ringPhase;
-    const rx = radiusX * (0.88 + Math.sin(index * 2.17) * 0.12);
-    const ry = radiusY * (0.88 + Math.cos(index * 1.71) * 0.12);
+    /* 半径 = 槽位的一点固定抖动 × 本句活跃度（见 RING_ACTIVITY_PULL 的说明）：
+       activity 是本句里这个音发声的次数 ÷ 本句最高次数（0~1），0 表示"本段落在场、但这句没用上"。 */
+    const pull = 1 - RING_ACTIVITY_PULL * (graphMotion.activity.get(node.note) || 0);
+    const rx = radiusX * (1 - RING_SLOT_JITTER + Math.sin(index * 2.17) * RING_SLOT_JITTER) * pull;
+    const ry = radiusY * (1 - RING_SLOT_JITTER + Math.cos(index * 1.71) * RING_SLOT_JITTER) * pull;
     node.home.x = graphViewport.centerX + Math.cos(angle) * rx;
     node.home.y = graphViewport.centerY + Math.sin(angle) * ry;
   });
@@ -1474,10 +1493,11 @@ const assignHosts = () => {
   });
 };
 
-/* 换句 = 一次重组：不重建、不清空，只调存在度、藏身关系、环位微扰与颜色目标。
+/* 换句 = 一次重组：不重建、不清空，只调存在度、藏身关系、环的朝向与半径、颜色目标。
    morphSeconds = 时长基准，等于**本句内部第一个音程**（首音 → 第二个音，已钳制）；
-   ringShift = 本次换句的环形相位 / 半径微扰，让所有点都有跨度。 */
-const applyPhraseVisual = (section, morphSeconds, ringShift) => {
+   phraseShape = 本句的音乐形状：`firstNote`（首音）+ `counts`（每个音在这句里发声几次）。
+   环的朝向与半径都由它算出来（规则见 RING_ACTIVITY_PULL 上方），没有随机数参与。 */
+const applyPhraseVisual = (section, morphSeconds, phraseShape) => {
   ensurePhraseGraph();
   const presentNotes = new Set();
   const sectionEdgeCounts = new Map();
@@ -1490,14 +1510,29 @@ const applyPhraseVisual = (section, morphSeconds, ringShift) => {
     });
   });
   tweenSectionColor(SECTION_COLORS[section]);
-  /* 先微扰环的相位 / 半径并重算所有“家”位置：这样连“本来就是乐句点”的那些点也会移动，
-     整体都有跨度（用户反馈：否则只有非激活点在动，观感不好）。
+  /* 先按**这一句的音乐**重算环的朝向、每个点的半径，再重算所有“家”位置：
+     这样连“本来就是乐句点”的那些点也会移动，整体都有跨度（用户反馈：否则只有非激活点在动）。
+     朝向 = 把本句首音摆到正上方 → 相位就是这个音高槽位的负角；没有首音（整句都是余响）时保持原样。
      layoutGraph 同时重算连线弹簧的静止长度，所以新环位仍是弹簧网的平衡位置。 */
-  if (ringShift) {
-    graphMotion.ringPhase = ringShift.phase;
-    graphMotion.ringScale = ringShift.scale;
-    layoutGraph();
+  const nodes = graphMotion.nodes;
+  const indexOfNote = new Map(nodes.map((node, index) => [node.note, index]));
+  const slotCount = Math.max(1, nodes.length);
+  graphMotion.ringScale = 1;
+  if (phraseShape && phraseShape.firstNote !== null && indexOfNote.has(phraseShape.firstNote)) {
+    /* 朝向：目标是"把本句首音的槽位摆到正上方"（相位 = −槽位角），
+       但**每句最多转 RING_ORIENT_STEP**（半个槽位），沿环上最短的一侧靠过去 ——
+       限速的理由见常量处的实测：不限速会一次转 0~154°，点要跑 700px 以上。 */
+    const targetPhase = -indexOfNote.get(phraseShape.firstNote) / slotCount * Math.PI * 2;
+    let delta = targetPhase - graphMotion.ringPhase;
+    delta = ((delta + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    graphMotion.ringPhase += Math.max(-RING_ORIENT_STEP, Math.min(RING_ORIENT_STEP, delta));
   }
+  const counts = (phraseShape && phraseShape.counts) || new Map();
+  let peak = 0;
+  counts.forEach(value => { if (value > peak) peak = value; });
+  graphMotion.activity = new Map();
+  if (peak > 0) counts.forEach((value, note) => graphMotion.activity.set(note, value / peak));
+  layoutGraph();
   const woke = new Set();
   const slept = new Set();
   graphMotion.nodes.forEach(node => {
@@ -1645,9 +1680,11 @@ let currentSeed = null;
 const activateEngine = async seed => {
   const rng = makeRng(seed);
   const textureRng = makeRng((seed ^ 0x9e3779b9) >>> 0);
-  /* 视觉专用的随机流：换句时的环形微扰用它，绝不动钢琴的 rng，
-     否则同一个种子的音符序列会因为视觉改动而变化（0.2 的 texture 就踩过这个坑）。 */
-  const visualRng = makeRng((seed ^ 0x85ebca6b) >>> 0);
+  /* 视觉这一侧现在**完全不用随机数**：环的朝向与每个点的半径都由本句的音乐算出来
+     （首音 + 各音发声次数，见 applyPhraseVisual）。所以这里不再需要 visualRng ——
+     它过去只服务于"每次换句 ±0.1 弧度 / 0.95~1.05 倍"的环形微扰，那套已经删掉。
+     ⚠️ 若将来又要给视觉加随机，仍然必须像 textureRng 这样**从种子派生一条独立流**，
+     绝不能消耗钢琴的 rng（否则同一个种子的音符序列会因视觉改动而变化，0.2 踩过这个坑）。 */
   const chain = buildSectionChain(rng);
   const [piano, moodistTextures] = await Promise.all([
     createPiano(Tone.Destination),
@@ -1776,15 +1813,17 @@ const activateEngine = async seed => {
         : STEP_DURATION_S;
       const morphSeconds = Math.max(MORPH_MIN_S, Math.min(MORPH_MAX_S, internalInterval));
       let phraseVisualId = null;
-      /* 环形相位/半径的微扰用**独立随机源**，不消耗钢琴与 texture 的那条随机流，
-         所以同一个种子产生的音符序列不会因为视觉而改变（见 AGENTS.md 的同类教训）。
+      /* 环的朝向与半径**由这一句的音乐决定**（首音 + 各音发声次数），不用随机数：
+         见 applyPhraseVisual 与 RING_ACTIVITY_PULL 的说明。这样同一段音乐必然画出同一张图。
          用 Tone.now() 兜底，保证首句的目标时刻落在过去时也立刻发生。 */
-      const ringShift = {
-        phase: (visualRng() - 0.5) * RING_SHIFT_PHASE,
-        scale: RING_SHIFT_SCALE_MIN + visualRng() * (RING_SHIFT_SCALE_MAX - RING_SHIFT_SCALE_MIN),
+      const counts = new Map();
+      playedEvents.forEach(event => counts.set(event.note, (counts.get(event.note) || 0) + 1));
+      const phraseShape = {
+        firstNote: playedEvents.length ? playedEvents[0].note : null,
+        counts,
       };
       Tone.Draw.schedule(() => {
-        applyPhraseVisual(section, morphSeconds, ringShift);
+        applyPhraseVisual(section, morphSeconds, phraseShape);
       }, Math.max(Tone.now(), firstNoteTime - MORPH_LEAD_S));
       Tone.Draw.schedule(() => {
         visualPhraseId += 1;
