@@ -52,8 +52,12 @@
      覆盖层用 stroke-dasharray = 全长、stroke-dashoffset 由全长推到 0，
      走完之前只有头段被揭示出来。进度由 JS 逐帧写入（时长按音程算，见 startEdgePulse）。
      ★ 透明度只能由 JS 写内联样式：CSS 里一旦写 opacity，SVG 呈现属性就会被它覆盖，
-       表现就是“属性写了 1 但画面完全不显示”。 */
-  .chain-edge-pulse { fill:none; stroke:var(--section-color); stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
+       表现就是“属性写了 1 但画面完全不显示”。
+     ★ 端头必须是**平头（butt）**：圆头会让彩色比算出来的端点再多伸 1.2（半描边宽）——
+       行进时那多出来的一截正好藏在箭头身体里看不出来，但**反向生长时箭头在头部后面**，
+       这 1.2 就从箭头旁边露出来了（用户 2026-09："反生长的时候，线的端点也会超出箭头一点"）。
+       平头之后彩色严格止于头部，而头部表面由箭头负责，两头都不会露出线头。 */
+  .chain-edge-pulse { fill:none; stroke:var(--section-color); stroke-width:2.4; stroke-linecap:butt; stroke-linejoin:round; pointer-events:none; }
   /* 节点的存在度、半径、颜色由 JS 逐帧写入（见 paintNode）：节点会在“藏身层”和
      “在场层”之间搬动，而 DOM 搬动会重启动 CSS 过渡，所以节点不用 CSS 过渡。 */
   .chain-node { stroke-width:1; }
@@ -929,22 +933,23 @@ const syncEdgeArrow = edge => {
 };
 
 /* 骑行箭头：把"一小段曲线"的终点放在正在移动的头部，让 marker 跟着头部走、
-   并按 **曲线在该处的切线** 定方向（用户要求：不能固定在结尾朝向）。
-   dir = +1 表示头部沿曲线正向移动（起点端 → 终点端），−1 表示反向。
+   并按 **曲线在该处的切线** 定方向（用户要求：不能固定在结尾朝向、要按曲线算）。
    ★ **路径末端就放在头部上**：参考点是箭头底边中点（refX = 0），所以箭头**底边正好压在线的端点上**，
      与静止时"线尾停在箭头底边上"的关系完全一致 ——
-     ① 线头（连同 2.4 宽描边的圆头）都藏在箭头较宽的身体里，不会从箭头旁边露出来（用户报过"线的端点会超出箭头"）；
+     ① 线头（连同 2.4 宽描边的端头）都藏在箭头较宽的身体里，不会从箭头旁边露出来（用户报过"线的端点会超出箭头"）；
      ② 颜色到位时这支箭头的位置与"停在终点的那支"逐点重合，交接时不会出现"箭头突然往前弹一下"。
-     （早期版本把**尖端**放在头部上，于是线头露出 1 段、交接时位置差一个箭头长度 —— 两个毛病都来自这里。）
-   ★ 取样 4 个点覆盖头部前 HEAD_ARROW_BACK 个用户单位：够长到切线稳定，
-     又短到能跟住曲线本身的弯曲（所以方向来自"曲线在这里的切线"，不是整条线的朝向）。
-     ⚠️ 取样顺序必须**从后往前排到头部**：marker 朝向取自末端那一小段，写反会正好掉头 180°。 */
+   ★ **方向始终沿曲线正向（起点端 → 终点端），也就是"过渡的方向"，不随头部运动方向调头**：
+     调头（反向生长时指向起点端）会让箭头指进线内部，而线必然从箭尖旁边伸出来 ——
+     用户 2026-09 报的"反生长的时候线的端点也会超出箭头"就是这么来的。
+     方向仍然**算自曲线**：取头部前 HEAD_ARROW_BACK 个用户单位的一小段，
+     所以用的是**该点的局部切线**（曲线是带弯曲的，与结尾处的朝向并不相同）。
+   ⚠️ 取样顺序必须**从后往前排到头部**：marker 朝向取自末端那一小段，写反会正好掉头 180°。 */
 const HEAD_ARROW_BACK = 12;
-const updateHeadArrow = (edge, head, dir, length) => {
+const updateHeadArrow = (edge, head, length) => {
   const headPath = edge.headPath;
   const clampAt = at => Math.max(0, Math.min(length, at));
   const endAt = clampAt(head);
-  const backAt = clampAt(head - dir * HEAD_ARROW_BACK);
+  const backAt = clampAt(head - HEAD_ARROW_BACK);
   const points = [];
   for (let i = 0; i <= 3; i += 1) {
     const p = edge.pulsePath.getPointAtLength(clampAt(backAt + (endAt - backAt) * (i / 3)));
@@ -1036,14 +1041,14 @@ const updateEdgePulse = (edge, time) => {
   /* ---------- 箭头：跟着**正在移动的头部**走 ----------
      用户 2026-09 的要求：生长/反向生长时箭头要跟随曲线的头部，而不是"一直在目的地等着曲线过来"；
      方向必须按曲线在该处的切线算，不能固定、更不能固定成结尾的朝向。
-     · 头部位置 = 彩色区间的正向端 `end`；
-     · 行进时头部沿曲线正向走（dir = +1），反向生长时退回起点端（dir = −1）——
-       同一支箭头在退回去时会调头指向起点端，这正是"不固定成结尾朝向"的含义；
+     · 头部位置 = 彩色区间的正向端 `end`（起点端 → 终点端）；
+     · 方向始终沿曲线正向（= 过渡的方向），用头部处的**局部切线**（所以不是"结尾的朝向"）；
+       不随头部运动方向调头 —— 调头会让箭头指进线内部，线头必然从箭尖旁边露出来；
      · 头部停下（颜色到位、或线自己在收回）时收起骑行箭头，改由停在终点的那支负责。 */
   const headMoving = end - start > 0.01 && !retracting
     && (pulse.retreatStartedAt !== null || reveal < 1);
   if (headMoving) {
-    updateHeadArrow(edge, end, pulse.retreatStartedAt !== null ? -1 : 1, length);
+    updateHeadArrow(edge, end, length);
     setPulseArrow(edge, false);          // 颜色还在走：终点那支先不挂，否则就是"在目的地等着"
   } else {
     hideHeadArrow(edge);
