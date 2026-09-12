@@ -25,7 +25,7 @@
      而是同一张图的底片：面板始终比底色亮一点、节点始终比底色灰一点、墨色始终反过来。 */
   :root {
     color-scheme:dark;
-    --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32; --section-color:#8b5cf6; --accent2:#fafafa;
+    --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32; --section-color:#CD62EC; --accent2:#fafafa;
     --hairline:#2a2a2e;              /* 面板内的细分隔线（.status / .matrix） */
     --stage-bg:#0d0d0f;              /* 画面底色 */
     --graph-edge:#71717a;            /* 灰色转移线的墨色；明度另外由 JS 写元素 opacity（EDGE_OPACITY_MIN/MAX） */
@@ -42,6 +42,7 @@
   }
   html[data-theme="light"] {
     color-scheme:light;
+    --section-color:#8b5cf6;         /* 浅色主题的段落色仍是原来那四个（见 SECTION_COLORS_LIGHT） */
     --bg:#fafafa; --panel:#ffffff; --fg:#18181b; --dim:#52525b; --line:#d4d4d8;
     --hairline:#e4e4e7;
     --stage-bg:#f4f4f5;
@@ -363,7 +364,18 @@ const SECTION_PHRASES = [
   [8, 9],          // D 结尾
 ];
 const SECTION_NAMES = ['A 安静', 'B 主题', 'C 发展', 'D 结尾'];
-const SECTION_COLORS = ['#8b5cf6', '#00c896', '#ff8a00', '#ff2876'];
+/* 段落色 A/B/C/D：深色主题用 2026-09 用户给的那组高饱和色，浅色主题保持原来这四个
+   （用户明确选择："浅色主题保持现在这四色不动"）。
+   ★ 对应规则是**同色系一一替换**（用户："当前如果有蓝色，就用这组色值中的蓝色，其它也是一个意思"）：
+   原来的紫 / 绿 / 橙 / 粉按**色相最近**落到新色里的紫 / 绿 / 橙 / 粉 ——
+   实测色相距离 29° / 23° / 3° / 9°，而每个的"次近"都远得多（35° / 58° / 32° / 22°），所以对应没有歧义。
+   新色里的蓝 `#0248FD` 与红 `#FE0000` 在这个练习里**没有对应物**（原来的四色里既没有蓝、也没有纯红），
+   所以暂时没用上；要用得先决定给谁，不要随手安到某个元素上。 */
+const SECTION_COLORS_DARK = ['#CD62EC', '#03FE5F', '#F67602', '#ED8199'];
+const SECTION_COLORS_LIGHT = ['#8b5cf6', '#00c896', '#ff8a00', '#ff2876'];
+/* 当前主题的段落色。themeName / THEME_LIGHT 声明在下面的主题模块里，
+   但这个函数只在播放与切主题时被调用（那时整个脚本早就执行完了），所以顺序上没有问题。 */
+const sectionColors = () => (themeName === THEME_LIGHT ? SECTION_COLORS_LIGHT : SECTION_COLORS_DARK);
 const SECTION_TRANSITIONS = [
   [0.1, 0.75, 0.1, 0.05],   // A → 主要进主题
   [0.1, 0.2, 0.6, 0.1],     // B → 主要进发展
@@ -1304,7 +1316,7 @@ const SECTION_COLOR_MORPH_S = 2.4;  // 段落色渐变时长
 let graphBuilt = false;
 let colorMorphFrame = null;
 let visualTextTimer = null;
-let sectionColorRgb = [139, 92, 246];
+let sectionColorRgb = [205, 98, 236];   // = 深色主题的段落色 A（#CD62EC），与 CSS 里的默认值一致
 
 /* ---------- 主题：深色 / 浅色（HUD 右上角的按钮） ----------
  * 用户 2026-09：“准备调整配色，先在 HUD 里加 light/dark 按钮”。
@@ -1354,6 +1366,12 @@ if (themeToggleEl) {
   themeToggleEl.addEventListener('click', () => {
     applyTheme(themeName === THEME_DARK ? THEME_LIGHT : THEME_DARK);
     try { localStorage.setItem(THEME_STORAGE_KEY, themeName); } catch (error) {}
+    /* 段落色也分主题，所以要重新指向"当前段落在新主题里的那个色"：
+       走和换段完全一样的插值（SECTION_COLOR_MORPH_S 秒），
+       因为"颜色永远不跳变"这条规则对主题切换同样成立。
+       这里不写进 applyTheme() 里是因为 applyTheme 在脚本中段就会被调用一次，
+       而 tweenSectionColor / currentSection 那时还没声明（会踩 TDZ）。 */
+    tweenSectionColor(sectionColors()[currentSection]);
   });
 }
 applyTheme(document.documentElement.dataset.theme);
@@ -1587,7 +1605,7 @@ const ensurePhraseGraph = () => {
    整张图的当前色连续流动，而不是在句界跳过去。 */
 const tweenSectionColor = target => {
   if (colorMorphFrame !== null) cancelAnimationFrame(colorMorphFrame);
-  const current = visualEl.style.getPropertyValue('--section-color').trim() || SECTION_COLORS[0];
+  const current = visualEl.style.getPropertyValue('--section-color').trim() || sectionColors()[0];
   const to = [1, 3, 5].map(index => parseInt(target.slice(index, index + 2), 16));
   const from = [1, 3, 5].map(index => parseInt(current.slice(index, index + 2), 16));
   if (from.every((value, index) => value === to[index])) {
@@ -1638,7 +1656,7 @@ const applyPhraseVisual = (section, morphSeconds, phraseShape) => {
       sectionEdgeCounts.set(key, (sectionEdgeCounts.get(key) || 0) + 1);
     });
   });
-  tweenSectionColor(SECTION_COLORS[section]);
+  tweenSectionColor(sectionColors()[section]);
   /* 先按**这一句的音乐**重算环的朝向、每个点的半径，再重算所有“家”位置：
      这样连“本来就是乐句点”的那些点也会移动，整体都有跨度（用户反馈：否则只有非激活点在动）。
      朝向 = 把本句首音摆到正上方 → 相位就是这个音高槽位的负角；没有首音（整句都是余响）时保持原样。
@@ -1958,7 +1976,7 @@ const activateEngine = async seed => {
         visualPhraseId += 1;
         phraseVisualId = visualPhraseId;
         setStatus(statusHtml);
-        log(logLine, SECTION_COLORS[section]);
+        log(logLine, sectionColors()[section]);
         swapVisualText(
           SECTION_NAMES[section] + ' · 乐句 ' + String.fromCharCode(65 + phraseIndex),
           variant.name + ' · ' + playedEvents.length + '/' + rawNoteCount
