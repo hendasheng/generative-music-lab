@@ -242,12 +242,17 @@
       （三成的一发完全没有圈；有圈时圆心也是偏出去的，不是同心）和几道向外飞散并变细的短痕。
       <b>每一发、每一个元素都不一样</b>：线的数量（每发 7–16 根）、自转半径、转速、走多远、寿命、描边、
       颜色逐项各取一份 —— 有的小步慢转、有的飞快甩出去，<b>短的不到 1 秒就没了、长的能飘 4 秒多</b>。
-      ★ <b>而且好几发会同时在场</b>：一次"击发"有 45% 的概率不是 1 发、而是一簇 <b>2–4 发</b>
+      ★ <b>而且好几发会同时在场</b>：一次"击发"有 55% 的概率不是 1 发、而是一簇 <b>2–4 发</b>
       （在 1.1 秒内先后炸开，位置各不相同），所以画面上的节奏是"有时一声、有时几下发在一起"，
       而不是整齐的一个接一个 —— 这样才对得上鸟叫本身忽大忽小、忽快忽慢的随机感。
       出现是半径/长度从 0 长出来、消失是描边细到 0，全程不用透明度。
       它<b>只跟 birds 有关</b>，<b>颜色全部由当前段落色转出来</b>（换段/切主题整组一起变）；
       <b>整体尺度仍由这一层的声音</b>决定（`targetGain` → 大小范围、`fade` → 时间范围）；
+      <b>续发的疏密也跟这一层的声音关联</b>：间隔按<b>素材自己每 2.5 秒的响度</b>分配 ——
+      响的一段相对多、轻的一段相对少，而<b>平均节奏不变</b>（同一份素材里只是重新分配）。
+      ★ 量的是<b>一整段</b>而不是某一刻：整条时间表在开场一次算完，所以不会"某一刻响一下就突然炸一片"，
+      而且相邻两次击发永远隔着至少 2.2 秒（密度 0.5–2 倍、间隔 2.2–9 秒，两头都有界）。
+      ★ 每次鸟叫还从素材的<b>不同位置</b>开始播 —— 否则每一段听到的都是素材开头那一截、响度曲线逐次相同。
       <b>落点铺满整块画面</b>（在"安全区"里均匀抽，四周只留约短边 12% 的余量，`pan` 只是让落点整体偏一点）；
       随机只在这个范围之内分配，不替代音乐决定的关系（判据见视觉规则 §15）。<br>
       <b>参考出处：</b>这个效果的形式借鉴自 <b>okazz</b> 的 p5.js sketch <b>「240809a」</b>
@@ -655,8 +660,38 @@ const MOODIST_TEXTURES = [
   },
 ];
 
-/* options.onStart(texture, time)：某一层**真的开始发声**时向外报告一次（视觉侧用它挂 birds 的涟漪）。
-   ★ 这是个纯通知，不参与任何增益/调度计算 —— 传不传都不影响声音（"音乐不动"）。 */
+/* 素材自己的**能量包络**（每 `ENERGY_HOP_S` 秒一格 RMS）—— 这是报给视觉侧的一条**事实**：
+   "这一层在这一段有多响"。视觉侧的涟漪密度就建立在它上面（见 burstDensity）。
+   ★ 为什么在这里算：只有音频侧手上有解码后的 buffer（视觉侧不应该去碰 player 的内部）。
+   ★ 为什么只报"每一格多响"、不报"该来几发"：把**映射**留在视觉侧 —— 和"只报告某层开始发声"
+     是同一条分层规则（音频报事实、视觉决定映射，见 §14.6 与 §15）。
+   ★ `ENERGY_HOP_S = 0.1` 只是**测量分辨率**，不是驱动窗：驱动窗由视觉侧再套一层 2.5 秒的滑动平均
+     （用户 2026-09："判断音量不是判断某一刻，而是一段"）。
+   ★ 成本实测（birds.mp3，115.12 秒 / 48kHz）：解码 268ms + 这里 5.7ms，放在加载时算完全没问题。
+   ★ 用哪条声道：只取第 0 条 —— 能量包络要的是"这一段大概多响"的形状，
+     单声道足够，也省一半时间（实测两条声道的相关性对本用途没有影响）。 */
+const ENERGY_HOP_S = 0.1;
+const computeLayerEnergy = buffer => {
+  const audioBuffer = buffer && typeof buffer.get === 'function' ? buffer.get() : buffer;
+  if (!audioBuffer || !audioBuffer.getChannelData) return null;   // 兜底：拿不到就退回"没有包络"
+  const data = audioBuffer.getChannelData(0);
+  const hop = Math.max(1, Math.round(audioBuffer.sampleRate * ENERGY_HOP_S));
+  const count = Math.max(1, Math.floor(data.length / hop));
+  const rms = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    let sum = 0;
+    const base = i * hop;
+    for (let k = 0; k < hop; k += 1) { const v = data[base + k]; sum += v * v; }
+    rms[i] = Math.sqrt(sum / hop);
+  }
+  return { hop: ENERGY_HOP_S, count, rms, duration: audioBuffer.duration };
+};
+
+/* options.onStart(texture, time, duration, startOffset)：某一层**真的开始发声**时向外报告一次
+   （视觉侧用它挂 birds 的涟漪）。
+   ★ 这是个纯通知，不参与任何增益/调度计算 —— 传不传都不影响声音（"音乐不动"）。
+   ★ 报四个事实：哪一层、什么时刻开始、这一响多长、以及**这一段是从素材的哪个位置开始播的**
+     （最后这项是涟漪密度的查表起点：密度跟的是素材自己的响度，所以必须知道播到了素材的哪里）。 */
 const createMoodistTextures = async (destination, rng, options = {}) => {
   const loaded = [];
   const eventIds = new Set();
@@ -682,7 +717,10 @@ const createMoodistTextures = async (destination, rng, options = {}) => {
         player.connect(filter);
         filter.connect(gain);
         gain.connect(panner);
-        loaded.push({ ...texture, player, filter, gain, panner, activeUntil: -Infinity });
+        /* 素材一加载好就把能量包络算出来（一次性，见 computeLayerEnergy）——
+           它是下面"从哪开始播"要用到的长度依据，也是视觉侧密度的依据 */
+        loaded.push({ ...texture, player, filter, gain, panner, activeUntil: -Infinity,
+          energy: computeLayerEnergy(player.buffer) });
       },
       onerror: err => {
         if (!finish()) return;
@@ -710,22 +748,38 @@ const createMoodistTextures = async (destination, rng, options = {}) => {
         time >= texture.activeUntil;
       if (canPlay && rng() < texture.probability) {
         const fade = Math.min(texture.fade, duration * 0.42);
-        texture.activeUntil = time + duration + fade;
+        /* ★★ 这一段从素材的**哪个位置**开始播（用户 2026-09 明确同意的一处音频改动）。
+           原来每次都是 `player.start(time)`，而 Tone.js 的 `Player.prototype._start` 里
+           `offset` 缺省取 `loopStart`（也就是 0）—— 于是 115 秒的素材，每一段鸟叫听到的
+           都是**开头那一截**，响度曲线逐次相同。随机起点之后每一段的"忽大忽小"才各不相同，
+           涟漪密度跟响度也就不会每一段都是同一条节奏。
+           ★ 环绕：起点最多取到 `素材时长 − 这一段的窗口`，所以**永不环绕** ——
+             否则查包络会在环绕处跳一下（素材 115 秒、窗口最长 30 秒，可选范围很宽）。
+           ★ 用**独立的一条流**（`options.startRng`）而不是这一层自己的 `rng`：
+             那样"哪一层什么时候出现、出现多久"这条既有序列**逐位不变**，
+             只有"从素材哪里开始"变了（改动面因此被限制在这一处）。
+           ★ 拿不到包络时 maxStart = 0 → 起点恒为 0，也就是退回旧行为。 */
+        const audibleWindow = duration + fade;
+        const bufferDuration = (texture.energy && texture.energy.duration) || 0;
+        const maxStart = Math.max(0, bufferDuration - audibleWindow);
+        const startOffset = options.startRng ? options.startRng() * maxStart : 0;
+        texture.activeUntil = time + audibleWindow;
         texture.gain.gain.cancelScheduledValues(time);
         texture.gain.gain.setValueAtTime(0, time);
         texture.gain.gain.linearRampToValueAtTime(texture.targetGain, time + fade);
         texture.gain.gain.setValueAtTime(texture.targetGain, time + Math.max(fade, duration - fade));
         texture.gain.gain.linearRampToValueAtTime(0, time + duration);
         try {
-          texture.player.start(time);
+          texture.player.start(time, startOffset);
           texture.player.stop(time + duration + fade);
-          /* 通知视觉侧"这一层开始发声了"，并把这一响的实际时长一起给它
-             （视觉要用它排出整段声音里的几发涟漪）。
+          /* 通知视觉侧"这一层开始发声了"，并把这一响的实际时长、以及**从素材哪里开始播**
+             一起给它（视觉要用它们排出整段声音里的几发涟漪、并查这一段的响度）。
              ★ 必须走 Tone.Draw：这个回调本身是**预排**的（lookAhead 会提前跑），
                只有 Draw 到达 time 那一刻才是真正听到声音的时刻（见"与音频的接口"一节）。
              ★ 视觉要在这一刻做 DOM 操作，所以 handler 里不要做重活（一发涟漪只有 9 个元素）。 */
-          if (options.onStart) Tone.Draw.schedule(() => options.onStart(texture, time, duration), time);
-          console.info('[Moodist] texture in:', texture.name, duration.toFixed(0) + 's');
+          if (options.onStart) Tone.Draw.schedule(() => options.onStart(texture, time, duration, startOffset), time);
+          console.info('[Moodist] texture in:', texture.name, duration.toFixed(0) + 's',
+            '@' + startOffset.toFixed(1) + 's');
         } catch (err) {
           console.warn('[Moodist] 播放失败:', texture.name, err);
           texture.activeUntil = time;
@@ -1683,7 +1737,7 @@ const easeInCubic = progress => progress * progress * progress;
  *   · **只读、不改图**：涟漪不参与节点/连线的力学，否则"同一段音乐画出同一张图"就破了；
  *   · **颜色是一套配色、不是单色**：每根线 / 每圈 / 每道痕各取一个色相偏移（在 ±`BURST_HUE_SPREAD` 内），
  *     整发是一族颜色，而且全部从本段落色**算出来** → 换段/切主题整组跟着变（见 updateBursts）；
- *   · **一段鸟叫里会来好几发**（开场立刻一发，之后按该层的节奏续发，见 onTextureStart）。
+ *   · **一段鸟叫里会来好几发**，间隔按**素材自己那一段的响度**分配（开场保底一发、间隔与密度两头有界，见 planBurstOffsets）。
  *
  * ⚠️ **尺寸一律以"短边"为单位**：`unit = min(视口宽, 视口高)`，逐帧现算，参数存的是**比例**。
  *   参考整篇都建立在 `minSide` 上；这样换视口 / 全屏时整发按同一比例缩放，不会有"圈跟着变、线没跟着变"
@@ -1771,11 +1825,39 @@ const BURST_CLUSTER_SPREAD_S = 1.1;   // 这一簇在 0–1.1 秒里散开
 const BURST_HUE_SPREAD = 42;
 const BURST_HUE_JITTER = 18;          // 每一发整体再偏一点（种子流），让连着几发不重样（±18°）
 /* 续发的节奏：间隔取"这一层的淡入时长 × RATIO"（它呼吸一次，画面就来一发），两头钳制，
-   再叠一点由种子决定的抖动（避免听起来/看起来像节拍器）。 */
+   再叠一点由种子决定的抖动（避免听起来/看起来像节拍器）。
+   ★ 这个基准间隔现在会被**段响度**调制（见下面 BURST_DENSITY_*），所以它只是"平均节奏"。 */
 const BURST_CADENCE_FADE_RATIO = 0.9;
 const BURST_CADENCE_MIN_S = 3;
 const BURST_CADENCE_MAX_S = 6;
 const BURST_CADENCE_JITTER = 0.22;
+/* ★★ 续发的**疏密跟着"这一段的响度"**（用户 2026-09："让发射和 birds 音量关联，音量大的时候相对多，
+   小的时候相对少"，紧接着又补了关键限定："判断音量不是判断某一刻，而是一段，不要某一刻音量大
+   就突然发好多"）。
+   做法：整条时间表在**开场一次性算完**（`planBurstOffsets`，纯函数），只依赖已解码的素材包络 ——
+   于是结构上根本不存在"某一刻响了一下 → 临时插几发"这条通路。四条要一起成立：
+     ① **量一段**：素材能量先按 `BURST_ENERGY_WINDOW_S`（2.5 秒）滑动平均，
+        取的是"这一段大概多响"，不是某一格（0.1 秒的测量分辨率**不是**驱动窗）；
+     ② **映射有界**：密度系数夹在 `BURST_DENSITY_MIN/MAX`（0.5×–2×），
+        所以间隔只会在"基准 ÷ 2"到"基准 ÷ 0.5"之间动；
+     ③ **间隔有硬下限** `BURST_INTERVAL_MIN_S`（2.2 秒） —— 于是"某一刻突然连发几发"这件事
+        可以被**机器证否**（验收：模拟 200 段鸟叫，相邻击发的最小间隔恒 ≥ 2.2 秒）；
+     ④ **同时性只由"簇"负责**（`BURST_CLUSTER_*`，由种子流决定）：响度只调**节奏**，
+        绝不去调簇的概率和成员数 —— 否则"响一下炸一片"立刻回来。
+   ★ 密度是**相对**的：参照取该层素材包络的**中位数**（= "这一层平时多响"），
+     并且整体做了归一化（`normalise`），使**整层的平均间隔与改动前完全一样** ——
+     所以这个功能是"把同样的发数重新分配"，不是"变多"（用户要的是相对多 / 相对少）。
+   ★ 量的是**素材自己**的响度，**不含**我们排的 5 秒淡入淡出：那一段是我们自己的包络，
+     拿它算密度就变成"跟我们的 fade 关联"而不是跟鸟叫关联，而且两端共 10 秒几乎会被清空。
+     开场那一发另有保底（`planBurstOffsets` 从 0 开始），所以开头不会空。 */
+const BURST_ENERGY_WINDOW_S = 2.5;      // 判断"这一段多响"的滑动窗（用户："不是判断某一刻，而是一段"）
+const BURST_DENSITY_DB_PER_OCTAVE = 9;  // 比中位响多少 dB 算"密度翻一倍"
+const BURST_DENSITY_MIN = 0.5;          // 密度下限 → 间隔最多拉到基准的 2 倍
+const BURST_DENSITY_MAX = 2;            // 密度上限 → 间隔最多缩到基准的一半
+const BURST_INTERVAL_MIN_S = 2.2;       // ★ 硬下限：任何情况下相邻两次击发都不会比这更近
+const BURST_INTERVAL_MAX_S = 9;         // 上限（"少也要有底线"）：不然最安静的一段只剩两发，
+                                        //   观感上像"这一段没有涟漪"，而不是"这一段安静"
+const BURST_MAX_CONCURRENT = 10;        // 同时在场最多几发：安全阀（实测 12 发 ≈ 1.13ms/帧）
 /* 一发涟漪至少要有这么大比例落在"还能听到这层"的时间窗里（最后一发因此不会整发都落在静音里） */
 const BURST_IN_WINDOW_RATIO = 0.5;
 /* ---- 调试：按键手动起爆（用户 2026-09 第六轮："测试发射保留吧，但不是鼠标点击，改成 s 键，
@@ -1835,6 +1917,58 @@ const shiftHue = (rgb, degrees) => {
 const burstGrowSeconds = texture => Math.max(BURST_GROW_MIN_S,
   Math.min(BURST_GROW_MAX_S, (texture.fade || 0) * 0.5));
 
+/* ---- 段响度 → 密度系数（纯函数、按 texture 缓存一次）----
+   输入是音频侧报来的**事实**（`texture.energy` = 素材每 0.1 秒一格的 RMS），
+   输出是"这一段该比平均节奏密多少 / 疏多少"。整条时间表只依赖它，所以：
+   同一份素材 + 同一套常量 → **同一张时间表**（可复现，不吃实时时钟、不吃 analyser）。
+   ① 先按 `BURST_ENERGY_WINDOW_S` 做滑动平均（前缀和 → O(n) 一遍）：**量的是段，不是时刻**；
+   ② 参照取全素材的**中位数** → 密度表达的是"比这一层平时响多少"（相对，不是绝对音量）；
+   ③ dB → 密度系数（每响 `BURST_DENSITY_DB_PER_OCTAVE` dB 翻一倍），夹在 MIN..MAX 之间；
+   ④ `normalise` = 让整层的平均间隔与改动前一致的因子（分母是 1/density 的均值）——
+      于是"响的时候多、轻的时候少"是**重新分配**，不改变总发数。 */
+const burstDensity = texture => {
+  if (!texture || !texture.energy) return null;
+  if (texture.burstDensityProfile) return texture.burstDensityProfile;
+  const { rms, hop, count } = texture.energy;
+  const win = Math.max(1, Math.round(BURST_ENERGY_WINDOW_S / hop));
+  const prefix = new Float64Array(count + 1);
+  for (let i = 0; i < count; i += 1) prefix[i + 1] = prefix[i] + rms[i];
+  const smooth = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    const from = Math.max(0, i - (win >> 1));
+    const to = Math.min(count, from + win);
+    smooth[i] = (prefix[to] - prefix[from]) / (to - from);
+  }
+  const sorted = Float32Array.from(smooth).sort();   // TypedArray 的 sort 默认按数值排
+  const median = sorted[sorted.length >> 1] || 1e-9;
+  const density = new Float32Array(count);
+  let inverseSum = 0;
+  for (let i = 0; i < count; i += 1) {
+    const dB = 20 * Math.log10((smooth[i] + 1e-9) / (median + 1e-9));
+    const value = Math.max(BURST_DENSITY_MIN, Math.min(BURST_DENSITY_MAX,
+      Math.pow(2, dB / BURST_DENSITY_DB_PER_OCTAVE)));
+    density[i] = value;
+    inverseSum += 1 / value;
+  }
+  const profile = { hop, count, density, median, normalise: count / Math.max(1e-9, inverseSum) };
+  texture.burstDensityProfile = profile;
+  return profile;
+};
+/* 查"素材第几秒那一段有多响"。素材没包络（加载路径变了 / 拿不到 buffer）时恒返回 1
+   —— 于是整条时间表退回改动前的固定节奏，不会因为缺数据而崩或乱。 */
+const burstDensityAt = (texture, secondsOfSource) => {
+  const profile = burstDensity(texture);
+  if (!profile) return 1;
+  const index = Math.round(secondsOfSource / profile.hop);
+  if (index <= 0) return profile.density[0];
+  if (index >= profile.count) return profile.density[profile.count - 1];
+  return profile.density[index];
+};
+const burstDensityNormalise = texture => {
+  const profile = burstDensity(texture);
+  return profile ? profile.normalise : 1;
+};
+
 const ensureBurstLayer = () => {
   if (burstLayer) return burstLayer;
   burstLayer = svgNode('g', { class: 'burst-layer' });
@@ -1847,8 +1981,12 @@ const ensureBurstLayer = () => {
    ★ **落点没有参数可传**：统一走下面那套安全区算法（用户 2026-09："位置按照已有的算法计算"）——
      所以调试发与真鸟叫的落点是同一套规则，调试看到的就是真鸟叫会看到的那一发。
    ⚠️ 这里存的全是**比例**（× 短边 / × 外圈半径 / × 该层扩张时长），逐帧再乘当前短边 ——
-      所以全屏切换、窗口缩放时整发按同一比例缩放，不会出现"圈跟着变、线没跟着变"。 */
+      所以全屏切换、窗口缩放时整发按同一比例缩放，不会出现"圈跟着变、线没跟着变"。
+   ★ 返回值：真的起了爆 → true；被并发上限挡下 → false（调试按键据此说明"这一下被跳过了"）。
+   ★ 并发上限是**安全阀**：即使密度拉满、簇又叠在一起，每帧的 DOM 改动也有确定的上界
+     （实测口径见 README：12 发同时在场 ≈ 1.13ms/帧、804 条改动/帧）。 */
 const spawnBurst = (texture, rng = burstRng) => {
+  if (bursts.length >= BURST_MAX_CONCURRENT) return false;
   const layer = ensureBurstLayer();
   ensureGraphAnimation();     // 视觉主循环必须活着（图还没建起来时也要能画这一发）
   const shortSide = Math.min(graphViewport.width, graphViewport.height);
@@ -1961,6 +2099,7 @@ const spawnBurst = (texture, rng = burstRng) => {
   }
 
   bursts.push({ parts, startedAt: performance.now(), fx, fy });
+  return true;
 };
 
 /* 逐帧推进。参数 time 与图上的其它逐帧更新同源（性能时钟），所以涟漪与点、线共用一套节拍。
@@ -2027,43 +2166,62 @@ const clearBursts = () => {
   if (burstLayer) burstLayer.replaceChildren();
 };
 
-/* 环境层"真的开始发声"时的入口。音频那边只负责报告事实（哪一层、什么时刻开始、这一响有多长），
-   "只有 birds 画涟漪"这条判断留在视觉侧（用户 2026-09："只在出现 birds 来一发，它只跟 birds 相关"）。
-   ★ 第二轮要求："不要只在开始的时候，在 birds 发声的过程时不时出现" ——
-     所以这里不是起爆一次，而是**按这一层的节奏排一串**：
-       · 开场立刻一发（鸟叫一响就有反应）；
-       · 之后每隔 `间隔` 再排一发，间隔 = 该层 `fade × BURST_CADENCE_FADE_RATIO`（钳到 3–6 秒）
-         —— "它呼吸一次，画面就来一发"；每发再叠 ±`BURST_CADENCE_JITTER` 的抖动（种子流），
-         免得像节拍器；
-       · 排到"这一响还能听到的时间窗"里为止（窗 = `duration + fade`，即淡入到淡出结束），
-         并保证每发至少有 `BURST_IN_WINDOW_RATIO` 的扩张落在窗内 —— 于是最后一发不会整发落在静音里。
-   ★ 第四轮要求："允许同时出现几个，而不是明显一个接一个的出现" ——
-     所以一次"击发"里有 `BURST_CLUSTER_CHANCE` 的概率**不是 1 发而是一簇 2–4 发**
-     （在 `BURST_CLUSTER_SPREAD_S` 秒内陆续炸开，各自位置不同；它们寿命 1–4 秒，因此必然同时可见）。
-     于是画面上的节奏是"有时一声、有时几下发在一起"，而不是整齐的队列 —— 这才是鸟叫的随机感。
-   ★ 这些起爆都用 `Tone.Draw.schedule(…, time + offset)` 排在**音频时刻**上，
-     所以视觉与"听到鸟叫"始终同源；停止播放时 `end()` 里的 `Tone.Draw.cancel(0)` 会把它们一起取消。 */
-const onTextureStart = (texture, time, duration) => {
-  if (!texture || texture.name !== 'birds') return;
+/* ---- 排"这一整段鸟叫里所有的击发时刻"（**纯函数**：不碰 DOM、不排程、不读时钟）----
+   只依赖四样东西：这一层的配置、这一响的时长、这一段从素材哪里开始播、以及一条随机流。
+   ★ 提成纯函数有两个好处：①`onTextureStart` 只剩"排到音频时刻上"这一件事；
+     ②验收可以直接调它 —— 不必开浏览器就能量"最小间隔 / 每段发数 / 最坏并发"。
+   ★ **整条时间表在开场一次性算完**：所以结构上不存在"某一刻响了一下 → 临时插几发"这条通路
+     （这正是用户要的："判断音量不是判断某一刻，而是一段，不要某一刻音量大就突然发好多"）。
+   ★ **簇（同时几发）的随机一点没变**：还是 55% 的概率再来 1–3 发、在 1.1 秒内散开；
+     响度只改**击发之间的间隔**，不碰簇的概率与成员数 —— 否则"响一下炸一片"就会回来。
+   ★ 随机数的**消耗顺序**与改动前一致（先掷簇、再掷成员、最后掷抖动），
+     所以同一个种子下"哪几次击发成簇"的形状不变，只有间隔被密度重新分配。 */
+const planBurstOffsets = (texture, duration, startOffset, rng) => {
   const grow = burstGrowSeconds(texture);
-  const window = Math.max(0, (duration || 0) + (texture.fade || 0));
+  const audibleWindow = Math.max(0, (duration || 0) + (texture.fade || 0));
   const cadence = Math.max(BURST_CADENCE_MIN_S,
     Math.min(BURST_CADENCE_MAX_S, (texture.fade || 0) * BURST_CADENCE_FADE_RATIO));
-  /* 先把这一整段鸟叫里所有的**击发时刻**算出来（含簇的成员），再逐个排到音频时刻上。
-     先算完再排的好处：簇的成员和它所属的那次击发一起确定，不会出现"排到一半被打断"。 */
+  const normalise = burstDensityNormalise(texture);
   const offsets = [];
-  let offset = 0;   // ★ 从 0 开始，所以**开场那一发也能成簇**（不是只有后续几发才会"几发一起"）
-  while (offset <= window - grow * BURST_IN_WINDOW_RATIO) {
+  const firings = [];
+  let offset = 0;   // ★ 从 0 开始：**开场保底一发**（不管这一段开头响不响），而且它也能成簇
+  while (offset <= audibleWindow - grow * BURST_IN_WINDOW_RATIO) {
+    firings.push(offset);   // 只记"击发"本身（簇的成员不算）—— 验收要量"相邻击发的最小间隔"
     offsets.push(offset);
-    if (burstRng() < BURST_CLUSTER_CHANCE) {
+    if (rng() < BURST_CLUSTER_CHANCE) {
       const extra = BURST_CLUSTER_EXTRA[0]
-        + Math.floor(burstRng() * (BURST_CLUSTER_EXTRA[1] - BURST_CLUSTER_EXTRA[0] + 1));
-      for (let i = 0; i < extra; i += 1) offsets.push(offset + burstRng() * BURST_CLUSTER_SPREAD_S);
+        + Math.floor(rng() * (BURST_CLUSTER_EXTRA[1] - BURST_CLUSTER_EXTRA[0] + 1));
+      for (let i = 0; i < extra; i += 1) offsets.push(offset + rng() * BURST_CLUSTER_SPREAD_S);
     }
-    offset += Math.max(BURST_CADENCE_MIN_S * 0.5, cadence * (1 + (burstRng() * 2 - 1) * BURST_CADENCE_JITTER));
+    /* 下一个击发的间隔 = 基准间隔 × 抖动 × 归一化 ÷ **这一段的密度**。
+       密度来自素材自己的响度（startOffset + offset = 此刻播到素材的第几秒），
+       两头都有界：密度夹在 0.5–2，间隔再夹在 2.2–9 秒 —— 所以"某一刻突然连发"不成立。 */
+    const density = burstDensityAt(texture, startOffset + offset);
+    const jitter = 1 + (rng() * 2 - 1) * BURST_CADENCE_JITTER;
+    offset += Math.max(BURST_INTERVAL_MIN_S,
+      Math.min(BURST_INTERVAL_MAX_S, cadence * jitter * normalise / density));
   }
+  return { firings, offsets };
+};
+
+/* 环境层"真的开始发声"时的入口。音频那边只负责报告事实
+   （哪一层、什么时刻开始、这一响有多长、**这一段从素材哪里开始播**），
+   "只有 birds 画涟漪"这条判断留在视觉侧（用户 2026-09："只在出现 birds 来一发，它只跟 birds 相关"）。
+   ★ 第二轮要求："不要只在开始的时候，在 birds 发声的过程时不时出现" ——
+     所以这里不是起爆一次，而是**按这一层的节奏排一串**，一直排到
+     "这一响还能听到的时间窗"里为止（窗 = duration + fade）。间隔的**基准**仍是
+     该层 fade × BURST_CADENCE_FADE_RATIO（钳到 3–6 秒），只是现在被段响度调制。
+   ★ 第四轮要求："允许同时出现几个，而不是明显一个接一个的出现" —— 见 planBurstOffsets 里的簇。
+   ★ 第六轮要求："让发射和 birds 音量关联，音量大的时候相对多，小的时候相对少"，
+     并限定"不是判断某一刻，而是一段" —— 所以间隔由 planBurstOffsets 按**段响度**分配，
+     而这件事**整体发生在这一刻**（时间表一次算完），没有任何逐刻反应。
+   ★ 这些起爆都用 Tone.Draw.schedule(…, time + offset) 排在**音频时刻**上，
+     所以视觉与"听到鸟叫"始终同源；停止播放时 end() 里的 Tone.Draw.cancel(0) 会把它们一起取消。 */
+const onTextureStart = (texture, time, duration, startOffset = 0) => {
+  if (!texture || texture.name !== 'birds') return;
+  const { offsets } = planBurstOffsets(texture, duration, startOffset, burstRng);
   offsets.forEach(at => {
-    /* 第一发就是"现在"（这个回调本身已经落在音频时刻 `time` 上），其余各排到自己的时刻 */
+    /* 第一发就是"现在"（这个回调本身已经落在音频时刻 time 上），其余各排到自己的时刻 */
     if (at === 0) spawnBurst(texture);
     else Tone.Draw.schedule(() => spawnBurst(texture), time + at);
   });
@@ -2093,9 +2251,11 @@ if (DEBUG_BURST_KEY) {
        ② 但"第 N 下"永远可复现 —— 要对比某一版改动，就按同样几下、看第同样的那一下；
        ③ 不消耗 `burstRng`，所以按与不按都不影响真鸟叫那几发的随机序列（调试不改变被调试对象）。 */
     const rng = makeRng((Math.imul(0x9e3779b1, debugBurstIndex) + 0x85ebca6b) >>> 0);
-    spawnBurst(texture, rng);
+    const spawned = spawnBurst(texture, rng);
     console.info(`[debug] 按 ${DEBUG_BURST_KEY} 起爆 #${debugBurstIndex}`,
-      `fx=${bursts[bursts.length - 1].fx.toFixed(3)} fy=${bursts[bursts.length - 1].fy.toFixed(3)}`);
+      spawned
+        ? `fx=${bursts[bursts.length - 1].fx.toFixed(3)} fy=${bursts[bursts.length - 1].fy.toFixed(3)}`
+        : `已达并发上限 BURST_MAX_CONCURRENT=${BURST_MAX_CONCURRENT}，这一下被跳过了`);
   });
 }
 
@@ -2565,6 +2725,10 @@ const activateEngine = async seed => {
      ⚠️ 必须与 textureRng 分开 —— 那条流决定"环境层什么时候出现、出现多久"，
      视觉去消耗它的话，加一个视觉功能就会改变音频调度（等于改了音乐，0.2 踩过这个坑）。 */
   burstRng = makeRng((seed ^ 0x85ebca6b) >>> 0);
+  /* 环境层"从素材的哪里开始播"用**又一条**独立流（见 createMoodistTextures 里的 startOffset）：
+     这样 textureRng 那条"哪一层什么时候出现、出现多久"的序列逐位不变 ——
+     音频侧唯一的改动被限制在"从素材哪里开始"，不去扰动既有的调度序列。 */
+  const textureStartRng = makeRng((seed ^ 0x27d4eb2f) >>> 0);
   /* 母带链：钢琴与环境层都汇到这里 —— 总音量只有一个来源（`MASTER_VOLUME_DB`），
      限幅放在最后一级，所以往上推音量不会削顶（见该常量的注释）。 */
   const masterGain = new Tone.Gain(Math.pow(10, MASTER_VOLUME_DB / 20));   // db → 线性（+6dB ≈ ×2.0）
@@ -2572,7 +2736,7 @@ const activateEngine = async seed => {
   masterGain.connect(masterLimiter);
   const [piano, moodistTextures] = await Promise.all([
     createPiano(masterGain),
-    createMoodistTextures(masterGain, textureRng, { onStart: onTextureStart }),
+    createMoodistTextures(masterGain, textureRng, { onStart: onTextureStart, startRng: textureStartRng }),
   ]);
 
   let currentSection = 0;

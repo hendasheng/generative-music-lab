@@ -7,7 +7,7 @@
 | 编号 | 名称 | 内容 | 运行方式 |
 | --- | --- | --- | --- |
 | 01 | [Ambient Pulse](exercises/01-ambient-pulse/) | C 自然小调、氛围合成、动机发展与呼吸型节奏 | 打开 `exercises/01-ambient-pulse/index.html` |
-| 02 | [Aisatsana Markov 0.4](exercises/02-aisatsana-markov/0.4/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture；birds 发声期间还有一层"旋转游走的线"涟漪（0.4 = 0.3 + 涟漪，形式借鉴 okazz 的 sketch，仅借动作、不搬代码） | 打开 `exercises/02-aisatsana-markov/0.4/index.html`；上一版是 `0.3/index.html`（没有涟漪的基线） |
+| 02 | [Aisatsana Markov 0.4](exercises/02-aisatsana-markov/0.4/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture；birds 发声期间还有一层"旋转游走的线"涟漪（0.4 = 0.3 + 涟漪，形式借鉴 okazz 的 sketch，仅借动作、不搬代码；涟漪的疏密跟着素材每一段的响度，不是某一刻） | 打开 `exercises/02-aisatsana-markov/0.4/index.html`；上一版是 `0.3/index.html`（没有涟漪的基线） |
 | 03 | [Phase Loops 0.2](exercises/03-phase-process/0.2/) | 独立音符循环、全屏圆环、触发轮廓与环境等高线 | 打开 `exercises/03-phase-process/0.2/index.html` |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
