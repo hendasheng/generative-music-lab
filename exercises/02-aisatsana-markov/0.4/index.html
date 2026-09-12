@@ -255,10 +255,10 @@
       许可 <b>CC BY-NC-SA</b>）—— 只借"旋转游走的拖尾线 + 减速外扩的涟漪圈 + 描边随生命变细"这三个<b>动作</b>，
       <b>没有复制它的任何一行代码</b>（元素数量、颜色、随机、尺寸全部按本项目的规则重写），
       所以本仓库不会被它的 SA 条款传染。<br>
-      <b>调试图方便：</b>在画面上<b>任意位置点一下，就在点击处来一发</b> ——
-      参数取的就是 birds 那一份（所以看到的就是真鸟叫时会看到的那一发），不用等鸟叫；
-      每点一下形态都不同（"第 N 下"可复现），而且不动用鸟叫那条随机流。见 <code>DEBUG_CLICK_BURST</code>。<br>
-      <b>操作：</b>点击画面隐藏 / 显示界面（同时在点击处起爆一发调试涟漪）；按 <code>f</code> 全屏、再按一次退出。<br>
+      <b>调试图方便：</b>按 <code>s</code> 键就手动来一发 —— 参数和落点都走真鸟叫那一套算法
+      （所以看到的就是真鸟叫时会看到的那一发），不用等；每按一下形态都不同（"第 N 下"可复现），
+      而且不动用鸟叫那条随机流。见 <code>DEBUG_BURST_KEY</code>。<br>
+      <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>s</code> 手动来一发调试涟漪；按 <code>f</code> 全屏、再按一次退出。<br>
       <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
       音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
       <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
@@ -623,7 +623,7 @@ const MOODIST_TEXTURES = [
     name: 'birds',
     url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/animals/birds.mp3',
     periodRange: [55, 115], durationRange: [12, 25], probability: 0.5,
-    filter: 3800, targetGain: 0.1, pan: 0.3, fade: 5, group: 'event', early: true,
+    filter: 3800, targetGain: 0.2, pan: 0.3, fade: 5, group: 'event', early: true,
   },
   {
     name: 'busy street',
@@ -895,12 +895,22 @@ const toggleFullscreen = () => {
   const pending = request.call(root);       // 可能返回 Promise（被拒绝时别在控制台留未捕获错误）
   if (pending && typeof pending.catch === 'function') pending.catch(() => {});
 };
+/* 焦点是不是在"能打字的地方"（键盘快捷键要先问这一句，否则用户打不出那个字母）。
+   ★★ 必须用 `composedPath()`，不能只看 `event.target`：种子输入框在 `exercise-controls`
+     这个 Web Component 的 **shadow root** 里，而 window 上的监听拿到的是被**重定向**过的 target
+     （`<exercise-controls>` 宿主，tagName 不是 INPUT）—— 只判 `event.target.tagName === 'INPUT'`
+     会漏掉它，结果就是"在种子框里打 s 会被吞掉、打 f 会切全屏"。
+     `composedPath()` 给出的是穿过 shadow 边界的**真实**路径，最内层才是真的焦点元素。 */
+const isTypingTarget = event => {
+  const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+  return path.some(node => node && (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA'
+    || node.isContentEditable));
+};
 window.addEventListener('keydown', event => {
   if (event.key !== 'f' && event.key !== 'F') return;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
-  const target = event.target;
   /* 在种子输入框里打字不要触发全屏 */
-  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+  if (isTypingTarget(event)) return;
   event.preventDefault();
   toggleFullscreen();
 });
@@ -1752,21 +1762,24 @@ const BURST_CADENCE_MAX_S = 6;
 const BURST_CADENCE_JITTER = 0.22;
 /* 一发涟漪至少要有这么大比例落在"还能听到这层"的时间窗里（最后一发因此不会整发都落在静音里） */
 const BURST_IN_WINDOW_RATIO = 0.5;
-/* ---- 调试：点击起爆（用户 2026-09："增加一个调试，鼠标点击的时候就在点击来一发，不然还得专门等着"）----
+/* ---- 调试：按键手动起爆（用户 2026-09 第六轮："测试发射保留吧，但不是鼠标点击，改成 s 键，
+   位置按照已有的算法计算"）----
    birds 每 55–115 秒才出现一次（一段里 4–7 发），要调涟漪的观感就得干等，所以给一个手动入口：
-   **在画面上点一下，就在点击的位置炸一发**。
+   **按 `s` 就炸一发**。★ 落点**走正常那套算法**（安全区均匀抽 + `pan` 偏置），
+   不再用鼠标位置 —— 这样调试看到的就是真鸟叫会看到的那一发，与点击位置无关。
    ★ 参数取 `MOODIST_TEXTURES` 里 birds 那一份（不是另写一组"调试用的数"）——
      否则调好的东西和真鸟叫看到的不一样，这个入口就没有意义了（调试必须与被调试对象同参）。
    ★ 它**不是**新的声音映射：`onTextureStart` 那条"只认 birds"的规则一个字没动，
      这只是调试注入口（页面说明里也写明）。
-   ★ 每点一下都换一条**独立的随机流**（由点击序号派生，见下面那个 handler）：
+   ★ 每按一下都换一条**独立的随机流**（由按键序号派生，见下面那个 handler）：
      ① 于是每一下的形态都不同（用户 2026-09："每一个都一摸一样" —— 第一版为了"方便对比"把调试发
         做成完全固定，方向错了：**形态本身的丰富度就是被调的对象**，固定下来就没法调它了）；
-     ② 但"第 N 下"永远可复现 —— 要对比某一版改动时，点同样几下、看第同样的那一下；
-     ③ 不消耗 `burstRng`，所以点与不点都不影响真鸟叫那几发的随机序列（调试行为不改变被调试对象）。
-   要关掉就把下面这个开关写成 false。 */
-const DEBUG_CLICK_BURST = true;
-let debugBurstIndex = 0;   // 调试点击的序号（用来派生"这一下"的随机流；见 DEBUG_CLICK_BURST）
+     ② 但"第 N 下"永远可复现 —— 要对比某一版改动时，按同样几下、看第同样的那一下；
+     ③ 不消耗 `burstRng`，所以按与不按都不影响真鸟叫那几发的随机序列（调试行为不改变被调试对象）。
+   ★ 要在种子输入框里打 `s` 不会误触发（和 `f` 全屏键同一套判断：焦点在输入框里就跳过）。
+   要关掉就把下面这个键设成空字符串。 */
+const DEBUG_BURST_KEY = 's';
+let debugBurstIndex = 0;   // 调试起爆的序号（用来派生"这一下"的随机流；见 DEBUG_BURST_KEY）
 
 const bursts = [];
 let burstLayer = null;
@@ -1814,11 +1827,12 @@ const ensureBurstLayer = () => {
 };
 
 /* 起爆。texture = 那一层环境音的配置（需要 targetGain / fade / pan 三个数）。
-   at  = 可选的 { fx, fy } 视口比例（0–1）：给了就用它当爆点（调试点击，见 DEBUG_CLICK_BURST）。
-   rng = 随机流；默认是演出种子派生的 `burstRng`，调试点击传一条**按点击序号派生**的流。
+   rng = 随机流；默认是演出种子派生的 `burstRng`，调试按键传一条**按按键序号派生**的流。
+   ★ **落点没有参数可传**：统一走下面那套安全区算法（用户 2026-09："位置按照已有的算法计算"）——
+     所以调试发与真鸟叫的落点是同一套规则，调试看到的就是真鸟叫会看到的那一发。
    ⚠️ 这里存的全是**比例**（× 短边 / × 外圈半径 / × 该层扩张时长），逐帧再乘当前短边 ——
       所以全屏切换、窗口缩放时整发按同一比例缩放，不会出现"圈跟着变、线没跟着变"。 */
-const spawnBurst = (texture, at, rng = burstRng) => {
+const spawnBurst = (texture, rng = burstRng) => {
   const layer = ensureBurstLayer();
   ensureGraphAnimation();     // 视觉主循环必须活着（图还没建起来时也要能画这一发）
   const shortSide = Math.min(graphViewport.width, graphViewport.height);
@@ -1838,9 +1852,8 @@ const spawnBurst = (texture, at, rng = burstRng) => {
   const marginY = Math.min(0.45, margin / graphViewport.height);
   const spanX = 1 - 2 * marginX, spanY = 1 - 2 * marginY;
   const panBias = (texture.pan || 0) * BURST_PAN_BIAS * spanX;
-  const fx = at ? at.fx
-    : marginX + Math.min(spanX, Math.max(0, rng() * spanX + panBias));
-  const fy = at ? at.fy : marginY + rng() * spanY;
+  const fx = marginX + Math.min(spanX, Math.max(0, rng() * spanX + panBias));
+  const fy = marginY + rng() * spanY;
   const hueBase = (rng() * 2 - 1) * BURST_HUE_JITTER;   // 这一发整体的色相偏移
   /* 每个元素的色相各取一份 —— "一发里有好几种颜色"靠这个，而且都是从本段落色转出来的 */
   const nextHue = () => hueBase + (rng() * 2 - 1) * BURST_HUE_SPREAD;
@@ -2040,38 +2053,33 @@ const onTextureStart = (texture, time, duration) => {
   });
 };
 
-/* 点击处 → 视口比例（0–1）。用 `getScreenCTM()` 的逆变换换算，而不是拿 `getBoundingClientRect()`
-   的比例去硬除：viewBox 与元素尺寸在极端窗口下会有细微差别（宽高被 `Math.max(320, …)` 钳过、
-   还有浏览器对 viewBox 的取整），而 CTM 是浏览器自己算的那一份，必然与它画出来的一致
-   （和 §12"量屏幕尺寸必须过 getScreenCTM"是同一条经验）。 */
-const burstRatioAtEvent = event => {
-  const ctm = markovMapEl.getScreenCTM();
-  if (!ctm) return null;
-  const local = new DOMPoint(event.clientX, event.clientY).matrixTransform(ctm.inverse());
-  return { fx: local.x / graphViewport.width, fy: local.y / graphViewport.height };
-};
-
-/* 调试：在点击处起爆（见 DEBUG_CLICK_BURST 的注释）。
-   ★ 这条监听与页面控件那一节"点击隐藏 / 显示界面"是**两条独立监听挂在同一个元素上**的
-     （点一下两件事都发生：HUD 照旧切换，同时炸一发），所以别把它并进那个 handler ——
-     那个管界面显隐、这条只管视觉调试，各自可以单独删掉而互不影响。
-   ★ 挂在 `.markov-stage` 上而不是 document 上：播放 / 种子 / 主题按钮都在 `.hud` 里，
-     而 `.hud` 是这个 stage 的**兄弟节点**，所以点控件不会冒泡到这里（不会一边点播放一边炸涟漪）。
-     会冒泡进来的是 `.visual-head` 与 `.legend`（它们是这个 stage 的子节点），那两处都是纯文字，无害。 */
-if (DEBUG_CLICK_BURST) {
-  visualEl.addEventListener('click', event => {
+/* 调试：按 `s` 手动起爆（见 DEBUG_BURST_KEY 的注释）。
+   ★ 用 **keydown** 而不是鼠标点击（用户 2026-09 第六轮："测试发射保留吧，但不是鼠标点击，改成 s 键"）：
+     点击本来已经被"隐藏 / 显示 HUD"占用了（点一下既切界面又炸一发，容易误触），
+     而键盘只多占一个字母，与 `f` 全屏是同一套约定 —— 所以这里照抄 `f` 那三行防护：
+     ① 带 Ctrl / Meta / Alt 的按法不拦（那是浏览器快捷键）；
+     ② 焦点在能打字的地方就跳过（用 `isTypingTarget`；★ 它必须走 `composedPath()` —— 种子输入框在
+        `exercise-controls` 的 shadow root 里，只判 `event.target` 会漏掉它，表现为"在种子框里打 s 被吞掉"）；
+     ③ `preventDefault()` 之后才动作，免得字母也被别的默认行为吃掉。
+   ★ 落点走 `spawnBurst` 内部那套安全区算法，所以每按一下位置都不同。 */
+if (DEBUG_BURST_KEY) {
+  window.addEventListener('keydown', event => {
+    if (event.key !== DEBUG_BURST_KEY && event.key !== DEBUG_BURST_KEY.toUpperCase()) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (isTypingTarget(event)) return;
     /* 取的是真 birds 那一份配置 —— 调试入口必须与被调试对象同参，否则调好的东西不是真鸟叫看到的那一发 */
     const texture = MOODIST_TEXTURES.find(item => item.name === 'birds');
-    const at = texture && burstRatioAtEvent(event);
-    if (!at) return;
+    if (!texture) return;
+    event.preventDefault();
     debugBurstIndex += 1;
-    /* 每点一下换一条**独立的**随机流（由点击序号派生）：
+    /* 每按一下换一条**独立的**随机流（由按键序号派生）：
        ① 每一下的形态都不同（用户 2026-09："每一个都一摸一样"）；
-       ② 但"第 N 下"永远可复现 —— 要对比某一版改动，就点同样几下、看第同样的那一下；
-       ③ 不消耗 `burstRng`，所以点与不点都不影响真鸟叫那几发的随机序列（调试不改变被调试对象）。 */
+       ② 但"第 N 下"永远可复现 —— 要对比某一版改动，就按同样几下、看第同样的那一下；
+       ③ 不消耗 `burstRng`，所以按与不按都不影响真鸟叫那几发的随机序列（调试不改变被调试对象）。 */
     const rng = makeRng((Math.imul(0x9e3779b1, debugBurstIndex) + 0x85ebca6b) >>> 0);
-    spawnBurst(texture, at, rng);
-    console.info(`[debug] 点击起爆 #${debugBurstIndex}`, `fx=${at.fx.toFixed(3)} fy=${at.fy.toFixed(3)}`);
+    spawnBurst(texture, rng);
+    console.info(`[debug] 按 ${DEBUG_BURST_KEY} 起爆 #${debugBurstIndex}`,
+      `fx=${bursts[bursts.length - 1].fx.toFixed(3)} fy=${bursts[bursts.length - 1].fy.toFixed(3)}`);
   });
 }
 
