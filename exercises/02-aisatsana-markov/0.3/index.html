@@ -25,43 +25,30 @@
      而是同一张图的底片：面板始终比底色亮一点、节点始终比底色灰一点、墨色始终反过来。 */
   :root {
     color-scheme:dark;
-    --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32; --section-color:#CD62EC; --accent2:#fafafa;
+    --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32; --accent2:#fafafa;
     --hairline:#2a2a2e;              /* 面板内的细分隔线（.status / .matrix） */
-    --stage-bg:#0d0d0f;              /* 画面底色 */
-    --graph-edge:#71717a;            /* 灰色转移线的墨色；明度另外由 JS 写元素 opacity（EDGE_OPACITY_MIN/MAX） */
-    --graph-node-idle:#3f3f46;       /* 收起的节点 */
-    --graph-node-present:#52525b;    /* 在场的节点 */
-    --graph-node-stroke:#71717a;     /* 在场节点的描边 */
-    --graph-label:#ffffff;           /* 音名 */
     --log-fg:#f4f4f5;
     --code-bg:#27272a; --code-fg:#e4e4e7;
     --control-primary:#fafafa; --control-primary-fg:#18181b;
     --control-secondary:#27272a; --control-secondary-fg:#fafafa;
     --control-input-bg:#0d0d0f; --control-input-fg:#fafafa; --control-input-border:#3f3f46;
     --control-focus:#a1a1aa;
+    /* ★ 画面上的颜色（--stage-bg / --graph-* / --section-color）**不在这里**：
+       它们集中在 JS 的 PALETTE 里，由 applyTheme() 推成 <html> 的内联变量。
+       内联样式优先级高于样式表，所以在这里写一份不但没用、还会让人以为"改了没反应"。
+       调色请看文件里那一段带 ★★ 的"调色板（画面）"注释。 */
   }
   html[data-theme="light"] {
     color-scheme:light;
-    --section-color:#8b5cf6;         /* 浅色主题的段落色仍是原来那四个（见 SECTION_COLORS_LIGHT） */
     --bg:#fafafa; --panel:#ffffff; --fg:#18181b; --dim:#52525b; --line:#d4d4d8;
     --hairline:#e4e4e7;
-    --stage-bg:#f4f4f5;
-    /* 反差由“纸”提供，不由“墨”提供：浅色的墨色**沿用深色的同一个灰**（#71717a），
-       于是连线的对比度与深色主题一致（实测 4.03:1 vs 4.02:1），最淡的概率线也一样
-       （0.16 不透明度混合后 1.13:1 vs 1.15:1）。
-       节点的灰度也按“对比度对齐”取值，而不是简单把色阶对调 ——
-       只对调色阶时节点几乎融进底色（实测 1.34:1，深色是 2.51:1），整张图会发虚。 */
-    --graph-edge:#71717a;
-    --graph-node-idle:#b3b3b8;       /* 对齐深色收起节点的 1.86:1 */
-    --graph-node-present:#9a9a9e;    /* 对齐深色在场节点的 2.51:1 */
-    --graph-node-stroke:#71717a;
-    --graph-label:#18181b;           /* 节点本身在浅色主题里偏暗，所以音名用深墨而不是白字 */
     --log-fg:#18181b;
     --code-bg:#e4e4e7; --code-fg:#3f3f46;
     --control-primary:#18181b; --control-primary-fg:#fafafa;
     --control-secondary:#e4e4e7; --control-secondary-fg:#18181b;
     --control-input-bg:#ffffff; --control-input-fg:#18181b; --control-input-border:#d4d4d8;
     --control-focus:#71717a;
+    /* 画面的浅色配色同样在 JS 的 PALETTE.light 里（含 §14.3 那条"反差由纸提供"的说明）。 */
   }
   * { box-sizing:border-box; }
   html, body { width:100%; height:100%; }
@@ -364,18 +351,54 @@ const SECTION_PHRASES = [
   [8, 9],          // D 结尾
 ];
 const SECTION_NAMES = ['A 安静', 'B 主题', 'C 发展', 'D 结尾'];
-/* 段落色 A/B/C/D：深色主题用 2026-09 用户给的那组高饱和色，浅色主题保持原来这四个
-   （用户明确选择："浅色主题保持现在这四色不动"）。
-   ★ 对应规则是**同色系一一替换**（用户："当前如果有蓝色，就用这组色值中的蓝色，其它也是一个意思"）：
-   原来的紫 / 绿 / 橙 / 粉按**色相最近**落到新色里的紫 / 绿 / 橙 / 粉 ——
-   实测色相距离 29° / 23° / 3° / 9°，而每个的"次近"都远得多（35° / 58° / 32° / 22°），所以对应没有歧义。
-   新色里的蓝 `#0248FD` 与红 `#FE0000` 在这个练习里**没有对应物**（原来的四色里既没有蓝、也没有纯红），
-   所以暂时没用上；要用得先决定给谁，不要随手安到某个元素上。 */
-const SECTION_COLORS_DARK = ['#CD62EC', '#03FE5F', '#F67602', '#ED8199'];
-const SECTION_COLORS_LIGHT = ['#8b5cf6', '#00c896', '#ff8a00', '#ff2876'];
-/* 当前主题的段落色。themeName / THEME_LIGHT 声明在下面的主题模块里，
-   但这个函数只在播放与切主题时被调用（那时整个脚本早就执行完了），所以顺序上没有问题。 */
-const sectionColors = () => (themeName === THEME_LIGHT ? SECTION_COLORS_LIGHT : SECTION_COLORS_DARK);
+
+/* ======================================================== 调色板（画面） ========================================================
+ * ★★ 画面上所有颜色都在这一块，两套主题各一份 —— 调色只动这里，不要再去 <style> 里找 ★★
+ *
+ * 用户 2026-09：“把非激活点 / 音符字 / 连线 / 背景色这些变量和段落色写到一块，我边看边调”。
+ * 于是画面相关的色值全部集中到这里（原先散在 <style> 的 :root 与 html[data-theme="light"] 两块里）。
+ *
+ * 为什么放在 JS 而不是 CSS：
+ *   · **段落色本来就必须在 JS** —— 节点的点亮染色是逐帧用 RGB 三元组插值算出来的（见 paintNode 的 mixRgb），
+ *     吃不了 CSS 变量；既然要"一块看、一块调"，画面其它颜色就一并搬过来；
+ *   · applyTheme() 会把这里的值**推成 <html> 上的 CSS 变量**，CSS 规则照旧用 `var(--stage-bg)`、
+ *     `var(--graph-edge)` 取值。★ CSS 那边**不再声明这几个变量**：内联样式优先级高于样式表，
+ *     留在那边改根本不生效，只会让人以为"改了没反应"。
+ * 页面 HUD 的配色（面板、正文、分割线、播放控件、行内 code）不是画面的一部分，仍在 <style> 的两个变量块里。
+ *
+ * 两套主题的关系见 视觉规则.md §14.3：**浅色不是把色阶对调** —— 纸亮了墨就得压深，
+ * 所以浅色的节点看着比深色的深，那是对齐对比度的结果（在场节点 2.55:1 vs 深色 2.51:1）。
+ * 两套主题的段落色互不影响，可以各挑一组；下面注释里的"紫/绿/橙/粉"只是角色名。
+ *
+ * 色值写 `#RRGGBB`（6 位十六进制）。写错不会白屏：applyTheme() 会跳过非法值、保留上一个合法颜色，
+ * 并在控制台点名是哪个键（方便边调边试）。改完刷新页面即可，不需要构建。
+ * ============================================================================================================================ */
+const PALETTE = {
+  dark: {
+    stageBg: '#0d0d0f',                                     // 画面底色（.markov-stage）
+    edge: '#71717a',                                        // 未激活的连线（灰色转移线）
+    nodeIdle: '#3f3f46',                                    // 非激活的点（收起时）
+    nodePresent: '#52525b',                                 // 在激活的点
+    nodeStroke: '#71717a',                                  // 在激活的点 · 描边
+    label: '#ffffff',                                       // 音符字（音名）
+    sections: ['#D332FF', '#8DFE03', '#FFCD04', '#FA2251'], // A 紫 / B 绿 / C 橙 / D 粉
+  },
+  light: {
+    stageBg: '#f4f4f5',
+    edge: '#71717a',                                        // 与深色共用同一个墨色：反差由纸提供（§14.3）
+    nodeIdle: '#b3b3b8',
+    nodePresent: '#9a9a9e',
+    nodeStroke: '#71717a',
+    label: '#18181b',                                       // 浅色的点偏暗，所以音符字用深墨
+    sections: ['#FF7328', '#164CFF', '#BBBBBB', '#2E2E2E'], // A / B / C / D
+  },
+};
+/* 换一整组色时的做法（2026-09 用户的要求）：**按色相最近一一对应**，不要凭感觉指派 ——
+   "当前如果有蓝色，就用这组色值中的蓝色，其它也是一个意思"。
+   当时把浅色的紫/绿/橙/粉换到深色那组，实测色相距离 29°/23°/3°/9°，各自"次近候选"都远得多
+   （35°/58°/32°/22°），所以对应没有歧义；那组里给不出对应物的蓝 #0248FD 与红 #FE0000 就没用上。
+   现在的值是手工调的，不一定要满足这个规则 —— 那只是当时换色的依据。 */
+const sectionColors = () => (themeName === THEME_LIGHT ? PALETTE.light.sections : PALETTE.dark.sections);
 const SECTION_TRANSITIONS = [
   [0.1, 0.75, 0.1, 0.05],   // A → 主要进主题
   [0.1, 0.2, 0.6, 0.1],     // B → 主要进发展
@@ -1338,9 +1361,10 @@ const THEME_ICONS = {
     + '<path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path>',
   [THEME_DARK]: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>',
 };
-const readCssColor = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+/* 手改调色板时很容易把色值打错（少一位、漏 #、写成 `rgb()`），所以这里不接受非法值：
+   非法就保留上一个合法颜色并在控制台点名，免得一个字符的笔误让整张图变成 NaN 或空白。 */
 const hexToRgb = hex => {
-  const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  const match = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
   if (!match) return null;
   const value = parseInt(match[1], 16);
   return [value >> 16 & 255, value >> 8 & 255, value & 255];
@@ -1349,11 +1373,28 @@ let themeName = THEME_DARK;
 const applyTheme = theme => {
   themeName = theme === THEME_LIGHT ? THEME_LIGHT : THEME_DARK;
   document.documentElement.dataset.theme = themeName;
-  /* 画布上的颜色跟着同一批变量走。节点每一帧都会重画（paintNode），所以这里改完立刻生效；
-     连线、音名、图例走的是 CSS 变量，不用管。 */
-  NODE_IDLE_FILL = hexToRgb(readCssColor('--graph-node-idle', '#3f3f46'));
-  NODE_PRESENT_FILL = hexToRgb(readCssColor('--graph-node-present', '#52525b'));
-  NODE_PRESENT_STROKE = hexToRgb(readCssColor('--graph-node-stroke', '#71717a'));
+  /* 把调色板里的画面色推成 <html> 上的 CSS 变量：CSS 规则（.chain-edge 的 stroke、.markov-stage 的
+     background、.node-label 的 fill……）继续用 var(--…) 取，所以颜色始终只有 PALETTE 一个来源。 */
+  const palette = PALETTE[themeName];
+  const rootStyle = document.documentElement.style;
+  const push = (key, cssName, value) => {
+    if (hexToRgb(value)) { rootStyle.setProperty(cssName, value); return; }
+    console.warn('[调色板] ' + themeName + '.' + key + ' 不是合法色值：' + JSON.stringify(value)
+      + '（应为 #RRGGBB），已沿用上一个合法颜色');
+  };
+  push('nodeIdle', '--graph-node-idle', palette.nodeIdle);
+  push('nodePresent', '--graph-node-present', palette.nodePresent);
+  push('nodeStroke', '--graph-node-stroke', palette.nodeStroke);
+  push('edge', '--graph-edge', palette.edge);
+  push('stageBg', '--stage-bg', palette.stageBg);
+  push('label', '--graph-label', palette.label);
+  /* 没播放时图例上那个点用的是 --section-color：先拿本主题的段落色 A 垫着（播放后由 tweenSectionColor 接管） */
+  push('sections[0]', '--section-color', (palette.sections || [])[0]);
+  /* 节点颜色是逐帧插值出来的，直接吃 RGB 数组（paintNode 每帧重画，所以这里改完立刻生效） */
+  const rgbOf = (key, previous) => hexToRgb(palette[key]) || previous;
+  NODE_IDLE_FILL = rgbOf('nodeIdle', NODE_IDLE_FILL);
+  NODE_PRESENT_FILL = rgbOf('nodePresent', NODE_PRESENT_FILL);
+  NODE_PRESENT_STROKE = rgbOf('nodeStroke', NODE_PRESENT_STROKE);
   if (!themeToggleEl) return;
   const next = themeName === THEME_LIGHT ? THEME_DARK : THEME_LIGHT;
   themeToggleEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">${THEME_ICONS[next]}</svg>`;
@@ -1602,12 +1643,17 @@ const ensurePhraseGraph = () => {
 };
 
 /* 段落色不用 CSS 过渡：--section-color 与 JS 里的 sectionColorRgb 一起逐帧插值，
-   整张图的当前色连续流动，而不是在句界跳过去。 */
+   整张图的当前色连续流动，而不是在句界跳过去。
+   色值来自 PALETTE[*].sections，手改时写错就跳过并报控制台（否则 `#NaN` 会让节点与连线一起坏掉）。 */
 const tweenSectionColor = target => {
+  const to = hexToRgb(target);
+  if (!to || !to.every(Number.isFinite)) {
+    console.warn('[调色板] 段落色不是合法色值：' + JSON.stringify(target) + '（应为 #RRGGBB），这一段保持上一个颜色');
+    return;
+  }
   if (colorMorphFrame !== null) cancelAnimationFrame(colorMorphFrame);
-  const current = visualEl.style.getPropertyValue('--section-color').trim() || sectionColors()[0];
-  const to = [1, 3, 5].map(index => parseInt(target.slice(index, index + 2), 16));
-  const from = [1, 3, 5].map(index => parseInt(current.slice(index, index + 2), 16));
+  const current = visualEl.style.getPropertyValue('--section-color').trim();
+  const from = hexToRgb(current) || hexToRgb(sectionColors()[0]);
   if (from.every((value, index) => value === to[index])) {
     visualEl.style.setProperty('--section-color', target);
     sectionColorRgb = to;
