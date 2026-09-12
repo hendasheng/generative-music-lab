@@ -31,14 +31,17 @@
   /* 灰色转移边：是否属于当前段落由 JS 用 dash 生长表达（从起点画到终点），不是淡入，
      所以这里不写 opacity 过渡，避免和逐帧写入的内联样式打架。
      ★ 明度（= 该转移的马尔可夫概率）也由 JS 写内联样式。
-     ★ stroke-width 由 JS 按 EDGE_STROKE_WIDTH 写进 path 属性（箭头尺寸依赖它），单一来源。 */
-  .chain-edge { fill:none; stroke:#71717a; stroke-opacity:.8;
-    transition:stroke 1.2s ease-out,stroke-opacity 1.2s ease-out; }
+     ★ stroke-width 由 JS 按 EDGE_STROKE_WIDTH 写进 path 属性（箭头尺寸依赖它），单一来源。
+     ★ 这里不写 stroke-opacity：实测描边的不透明度**不会**传到箭头上（箭头是 marker 的 fill，
+       只受元素 opacity 影响：描边 0.8 / 元素 1 时线是 0.80、箭头是 1.00），
+       于是线和箭头各按一套规则变暗、永远对不齐（用户看到的就是“线是实心的、箭头还半透明”）。
+       透明度只能有一个来源 —— 元素的 opacity —— 所以概率明度直接写进 EDGE_OPACITY_MIN/MAX
+       （已把旧的 0.8 折算进去，屏幕上线的明度不变）。 */
+  .chain-edge { fill:none; stroke:#71717a; transition:stroke 1.2s ease-out; }
   /* 行进到位后底边只换颜色：★ 绝不能同时改 stroke-width —— 箭头是 markerUnits="strokeWidth"，
      描边一变粗箭头就会跟着放大（0.3 早期版本就是这样让彩色箭头比灰箭头大了一倍多）。
      颜色用 0.12 秒快速切换（箭头要“到点亮起”），退色仍走基础规则的 1.2 秒。 */
-  .chain-edge.active { stroke:var(--section-color);
-    transition:stroke .12s ease-out,stroke-opacity 1.2s ease-out; }
+  .chain-edge.active { stroke:var(--section-color); transition:stroke .12s ease-out; }
   /* 激活的转移不用“整条变色”，而是让彩色沿曲线从起点长到终点：
      覆盖层用 stroke-dasharray = 全长、stroke-dashoffset 由全长推到 0，
      走完之前只有头段被揭示出来。进度由 JS 逐帧写入（时长按音程算，见 startEdgePulse）。
@@ -652,8 +655,8 @@ const dynamicEdgePath = (a, b) => {
   const cy = (a.y + b.y) / 2 + dx / length * bend;
   const startX = a.x + dx / length * (GRAPH_NODE_RADIUS + 2);
   const startY = a.y + dy / length * (GRAPH_NODE_RADIUS + 2);
-  const endX = b.x - dx / length * (GRAPH_NODE_RADIUS + 4 + ARROW_TAIL_INSET);
-  const endY = b.y - dy / length * (GRAPH_NODE_RADIUS + 4 + ARROW_TAIL_INSET);
+  const endX = b.x - dx / length * (GRAPH_NODE_RADIUS + ARROW_TAIL_OFFSET);
+  const endY = b.y - dy / length * (GRAPH_NODE_RADIUS + ARROW_TAIL_OFFSET);
   return `M ${startX} ${startY} Q ${cx} ${cy} ${endX} ${endY}`;
 };
 
@@ -782,9 +785,13 @@ const animateGraph = () => {
    `walkNote` 是从当前音的后继数组里等概率挑一个（重复项就是权重），
    所以 from→to 的概率 = 该转移的出现次数 ÷ 该音所有后继的总数。
    线性映射即可：素材里既有大量 p=1 的确定转移、也有 p≈0.07 的偶然转移，
-   实测明度因此铺开在 0.25~0.90（若改用开方，低概率会被抬到 0.39，对比反而变弱）。 */
-const EDGE_OPACITY_MIN = 0.2;       // 最不可能走的转移
-const EDGE_OPACITY_MAX = 0.9;       // 最常走的转移
+   实测明度因此铺开在 0.25~0.90（元素值；若改用开方，低概率会被抬到 0.39，对比反而变弱）。
+   ★ 这两个值已经把过去写死在 CSS 里的 stroke-opacity(.8) 折算进来了（0.2×0.8 / 0.9×0.8）：
+   描边的不透明度传不到箭头上，若继续用 stroke-opacity 就会“线亮箭头暗”。现在线宽 1.1 的灰线与
+   它末端的箭头共用“元素 opacity”这一个来源，两者渲染出来的明度逐帧相同。实际观感不变：
+   过去元素值 0.2~0.9 乘上 0.8 之后，屏幕上本来就是 0.16~0.72。 */
+const EDGE_OPACITY_MIN = 0.16;      // 最不可能走的转移
+const EDGE_OPACITY_MAX = 0.72;      // 最常走的转移
 const edgeOpacityFor = probability => EDGE_OPACITY_MIN
   + (EDGE_OPACITY_MAX - EDGE_OPACITY_MIN) * Math.max(0, Math.min(1, probability));
 
@@ -823,6 +830,7 @@ const updateEdgePresence = (edge, time) => {
   }
   if (edge.presence <= 0) {
     if (edge.arrowOn) { edge.arrowOn = false; path.removeAttribute('marker-end'); }
+    setPulseArrow(edge, false);
     path.style.opacity = '0';
     return;
   }
@@ -831,14 +839,29 @@ const updateEdgePresence = (edge, time) => {
     /* 画满之后不留 dash：节点一直在呼吸漂移，留着就得每帧重算路径长度 */
     path.removeAttribute('stroke-dasharray');
     path.removeAttribute('stroke-dashoffset');
-    if (!edge.arrowOn) { edge.arrowOn = true; path.setAttribute('marker-end', 'url(#arrowhead)'); }
+    if (!edge.arrowOn) { edge.arrowOn = true; path.setAttribute('marker-end', ARROW_MARKER); }
     return;
   }
   if (edge.arrowOn) { edge.arrowOn = false; path.removeAttribute('marker-end'); }
+  /* 生长/收回中的线不该有箭头 —— 但行进中“已经走过的那一段”末端是箭头的位置，
+     所以这里只摘底边自己的箭头，行进层的箭头由 updateEdgePulse 管（它也在生长中不挂）。 */
   const length = Math.max(1, path.getTotalLength());
   const remaining = length * (1 - edge.presence);
   path.setAttribute('stroke-dasharray', length + ' ' + length);
   path.setAttribute('stroke-dashoffset', String(edge.revealFromEnd ? -remaining : remaining));
+};
+
+/* 行进层的箭头开关（幂等）：**颜色走到终点后才挂上**。
+ * 为什么要给行进层也挂箭头：线其实是两层叠出来的 —— 灰底边（明度 = 概率）+ 行进层
+ * （不透明度 1，一直亮到下一条转移开始退色）。而箭头只挂在底边上，于是“线是实心的、
+ * 箭头还半透明”（用户反馈）。两层挂上同一几何的箭头之后，箭头与线的叠乘结果逐帧相同：
+ * 箭头 = 1−(1−底边)·(1−行进层)，与线完全一样。
+ * 行进中不能挂：marker 永远画在路径末端，dash 揭示不会挪动它，提前挂会“颜色还没到箭头先亮”。 */
+const setPulseArrow = (edge, on) => {
+  if (on === edge.pulseArrowOn) return;
+  edge.pulseArrowOn = on;
+  if (on) edge.pulsePath.setAttribute('marker-end', ARROW_MARKER_PULSE);
+  else edge.pulsePath.removeAttribute('marker-end');
 };
 
 /* 一条转移的“行进”：彩色沿曲线从起点揭示到终点，颜色走完的那一刻箭头也变彩色。
@@ -863,6 +886,7 @@ const updateEdgePulse = (edge, time) => {
       pulse.active = false;
       pulse.recolored = false;
       edge.path.classList.remove('active');
+      setPulseArrow(edge, false);
       path.style.opacity = '0';
       return;
     }
@@ -871,6 +895,7 @@ const updateEdgePulse = (edge, time) => {
   if (reveal >= 1 && !pulse.recolored) {
     pulse.recolored = true;
     edge.path.classList.add('active');   // 箭头此时亮起，尺寸与灰箭头完全相同
+    setPulseArrow(edge, true);           // 行进层也挂上同一支箭头：箭头与线的明度因此逐帧相等
   }
   path.setAttribute('stroke-dasharray', length + ' ' + length);
   path.setAttribute('stroke-dashoffset', length * (1 - reveal));
@@ -893,6 +918,7 @@ const startEdgePulse = (edge, intervalSeconds, time) => {
   if (edge.pulse.recolored) {   // 同一条重新走一遍：先把底边退回灰色，等颜色再次到达终点
     edge.pulse.recolored = false;
     edge.path.classList.remove('active');
+    setPulseArrow(edge, false);   // 颜色要重新走一遍，行进层的箭头先摘掉
   }
 };
 
@@ -1024,18 +1050,29 @@ const easeOutCubic = progress => 1 - Math.pow(1 - progress, 3);
    末段迅速淡掉 —— 而末段正好是它钻进宿主背后的时刻，于是观感是“被挡住了”。 */
 const easeInCubic = progress => progress * progress * progress;
 
-/* ---------- 连线与箭头的几何（箭头是挂在路径末端上的，改线尾必须同时补偿 marker） ----------
- * 用户反馈：箭头收尖处，连线的方头会露出来，看起来像“线超出了箭头”。
- * 原因是连线描边 1.1 宽，而箭头在收尖的最后一段比它还窄。
- * 做法：把线尾往回缩 ARROW_TAIL_INSET 用户单位，同时按同样的距离缩小 marker 的 refX ——
- * 参考点就是“路径末端在箭头坐标系里的位置”，所以 refX 缩小多少，箭头就往前挪多少，
- * 与线尾的回缩正好相抵：**箭头的位置一动不动，线尾却退进了箭头较宽的身体里**。
- * 这个补偿对两种浏览器实现（内容按描边缩放 / 不缩放）都成立，因为线尾都落在箭头 2~3 倍宽的位置。 */
+/* ---------- 连线与箭头的几何（参考点决定“路径末端落在箭头的哪个位置”） ----------
+ * 用户先后报过两个同源的毛病：①“线看起来超出了箭头”、②“线都长完了，箭头的三角还有点透明，
+ * 明明是一条完整的连接，却成了线 + 半透明的箭头”。
+ * 根源都在箭头的挂法上 —— marker 的 refX/refY 就是“路径末端在箭头坐标系里的位置”：
+ *   · 旧版 refX 让线尾伸进箭头身体里（那里箭头比线宽），线尾的方头会从收窄的锥面上露出来；
+ *     把线尾缩进箭头又制造了第二层问题：线尾与箭头重叠，两层**叠乘**，重叠处比线更实，
+ *     于是箭头整块与线不是一个明度（用户看到的就是这个差异）。
+ * 现在的做法：参考点取**箭头底边的中点**（refX = 0，refY = 箭头中线）：
+ *   · 线的描边正好终止在箭头最宽的那条底边上 —— 线尾绝不会露出箭头，也不会与箭头重叠叠乘，
+ *     线与箭头的明度因此处处相同（同一个 opacity 来源 + 不重叠的几何）；
+ *   · 箭头从路径末端朝目标节点延伸 ARROW_LENGTH，尖端固定在离节点边缘 ARROW_TIP_GAP 处，
+ *     与旧版实测位置一致（尖端 19.9px、底边 28.7px，都是“离目标节点圆心的距离”）。 */
 const EDGE_STROKE_WIDTH = 1.1;      // 灰色转移线的描边宽度（同时写进 path 属性，避免和 CSS 两处维护）
-const ARROW_WIDTH = 8;              // marker 视窗尺寸（也就是箭头长度）
-const ARROW_REF_X = 7;              // 原来的参考点：箭头尖端伸出路径末端 1 个单位
-const ARROW_TAIL_INSET = 3.2;       // 线尾回缩量（用户单位，约等于线宽的 3 倍，让线尾彻底藏进箭头）
-const ARROW_REF_X_INSET = ARROW_REF_X - ARROW_TAIL_INSET / EDGE_STROKE_WIDTH;   // ≈ 4.09
+const ARROW_WIDTH = 8;              // 原始 marker 视窗尺寸（× 描边宽度后就是箭头长度）
+const ARROW_LENGTH = ARROW_WIDTH * EDGE_STROKE_WIDTH;    // 8.8：箭头长度（用户单位）
+const ARROW_TIP_GAP = 2.9;          // 箭头尖端离目标节点边缘的距离
+const ARROW_TAIL_OFFSET = ARROW_TIP_GAP + ARROW_LENGTH;  // 11.7：路径末端（= 箭头底边）离节点边缘
+const ARROW_REF_X = 0;              // 参考点 = 底边中点：线尾巴正好停在箭头底边上
+/* 第二条箭头：彩色行进层的描边是 2.4，用 markerUnits="strokeWidth" 会让箭头放大 2.18 倍
+   （用户报过“彩色箭头比灰箭头大”），所以行进层用 userSpaceOnUse + 换算成绝对尺寸的同一几何。 */
+const ARROW_REF_X_PX = 0;           // 绝对尺寸版本的参考点，同样取底边中点
+const ARROW_MARKER = 'url(#arrowhead)';
+const ARROW_MARKER_PULSE = 'url(#arrowhead-pulse)';
 
 /* 节点外观全部逐帧写入：存在度决定半径、透明度与音名可见性，flash 决定“刚发声”的染色。
    透明度统一写内联样式：SVG 呈现属性会被 CSS 规则覆盖，写内联样式就不会出现
@@ -1082,11 +1119,23 @@ const ensurePhraseGraph = () => {
   const defs = svgNode('defs');
   const marker = svgNode('marker', {
     id: 'arrowhead', markerWidth: ARROW_WIDTH, markerHeight: ARROW_WIDTH,
-    refX: ARROW_REF_X_INSET, refY: ARROW_WIDTH / 2,
+    refX: ARROW_REF_X, refY: ARROW_WIDTH / 2,
     orient: 'auto', markerUnits: 'strokeWidth',
   });
   marker.appendChild(svgNode('path', { d: 'M0,0 L8,4 L0,8 Z', fill: 'context-stroke' }));
   defs.appendChild(marker);
+  /* 彩色行进层专用的同一支箭头：几何与上面完全一致，只是尺寸换算成绝对用户单位，
+     这样 2.4 的粗描边不会把它放大（见常量处的注释）。它只在颜色走到终点后才挂上。 */
+  const pulseMarker = svgNode('marker', {
+    id: 'arrowhead-pulse', markerWidth: ARROW_LENGTH, markerHeight: ARROW_LENGTH,
+    refX: ARROW_REF_X_PX, refY: ARROW_LENGTH / 2,
+    orient: 'auto', markerUnits: 'userSpaceOnUse',
+  });
+  pulseMarker.appendChild(svgNode('path', {
+    d: `M0,0 L${ARROW_LENGTH},${ARROW_LENGTH / 2} L0,${ARROW_LENGTH} Z`,
+    fill: 'context-stroke',
+  }));
+  defs.appendChild(pulseMarker);
   markovMapEl.appendChild(defs);
 
   /* 四层：藏身节点在最下，灰色转移边其次，彩色行进层再次，在场节点在最上。
@@ -1168,8 +1217,9 @@ const ensurePhraseGraph = () => {
     path.style.opacity = '0';
     edgeLayer.appendChild(path);
     /* 彩色行进层：与灰边同一条曲线，靠 dashoffset 从起点揭示到终点。
-       它自己不带 marker —— 箭头始终由灰底边承载，颜色到位时底边才换成段落色，
-       这样箭头尺寸与灰箭头完全一致（详见 updateEdgePulse 的注释）。 */
+       它用的是另一支绝对尺寸的箭头（#arrowhead-pulse，尺寸与灰箭头逐像素一致）：
+       颜色走到终点后才挂上 —— 这样箭头和线都是“底边 + 行进层”两层叠出来的，明度逐帧相同
+       （只挂底边时会变成“线实心、箭头半透明”，详见 setPulseArrow 的注释）。 */
     const pulsePath = svgNode('path', {
       id: edgeId(from, to) + '-pulse', d: dynamicEdgePath(a, b), class: 'chain-edge-pulse',
     });
@@ -1180,7 +1230,7 @@ const ensurePhraseGraph = () => {
       /* 连线弹簧的静止长度（铰链用）：初始化为环上的距离，视口变化时由 layoutGraph 重算 */
       rest: Math.hypot(b.home.x - a.home.x, b.home.y - a.home.y),
       presence: 0, presenceFrom: 0, presenceTarget: 0, presenceStartedAt: 0, presenceDuration: 0,
-      probability: 0, opacity: 0, arrowOn: false,
+      probability: 0, opacity: 0, arrowOn: false, pulseArrowOn: false,
       pulse: { active: false, startedAt: 0, duration: 0, fadeStartedAt: null, recolored: false },
     });
   });
@@ -1568,6 +1618,7 @@ const activateEngine = async seed => {
       edge.pulse.active = false;
       edge.pulse.recolored = false;
       edge.path.classList.remove('active');
+      setPulseArrow(edge, false);
       edge.pulsePath.style.opacity = '0';
     });
     previousVisualNote = null;
