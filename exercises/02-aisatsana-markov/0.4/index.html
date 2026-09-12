@@ -262,8 +262,14 @@
       所以本仓库不会被它的 SA 条款传染。<br>
       <b>调试图方便：</b>按 <code>s</code> 键就手动来一发 —— 参数和落点都走真鸟叫那一套算法
       （所以看到的就是真鸟叫时会看到的那一发），不用等；每按一下形态都不同（"第 N 下"可复现），
-      而且不动用鸟叫那条随机流。见 <code>DEBUG_BURST_KEY</code>。<br>
-      <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>s</code> 手动来一发调试涟漪；按 <code>f</code> 全屏、再按一次退出。<br>
+      而且不动用鸟叫那条随机流。见 <code>DEBUG_BURST_KEY</code>。
+      按 <code>b</code> 键则是让 <b>birds 这一层立刻真的响一声</b>（音频 + 涟漪一起走真实路径），
+      用来当场确认"到底听不听得到鸟叫、看不看得见涟漪"—— 因为按正常排程，birds 平均要 1.6 分钟才第一次出现、
+      之后约每 3 分钟一次（它要过"层数 &lt; 2""没有别的环境事件在响"两道门，再过 50% 的概率骰）。见 <code>DEBUG_TEXTURE_KEY</code>。<br>
+      <b>环境层的日志：</b>画面日志里会写<b>环境层就绪 6/6</b>、<b>环境层入：birds …</b>、
+      <b>环境层加载失败：…</b> —— 素材来自远程 CDN，以前某层加载失败在画面上完全没有痕迹
+      （那一层会整场缺席），现在一眼就能看见；失败还会自动重试 3 次（超时 25 秒）。<br>
+      <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>s</code> 手动来一发调试涟漪；按 <code>b</code> 手动让 birds 响一声；按 <code>f</code> 全屏、再按一次退出。<br>
       <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
       音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
       <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
@@ -696,6 +702,15 @@ const createMoodistTextures = async (destination, rng, options = {}) => {
   const loaded = [];
   const eventIds = new Set();
   const randomBetween = ([min, max]) => min + rng() * (max - min);
+  /* ---- 单层加载：超时 + 重试（★ 以前是"12 秒超时、失败就静默丢掉这一层"）----
+     教训（2026-09 用户："听了好久都没有鸟叫，也没有相应的触发了"）：环境层素材来自远程 CDN，
+     六层并行拉；任何一层失败在**画面上完全没有痕迹**（只有控制台一行 warning），而且没有重试 ——
+     一次网络抖动就能让那一层在整场演出里永远缺席，看起来就像"这个功能根本没做"。
+     所以：① 超时放宽到 25 秒；② 失败自动重试（最多 3 次尝试，退避 2s / 5s，每次都用全新节点）；
+     ③ 把"就绪 / 最终失败"通过 options.onNotice 报给视觉侧，画面上那行日志里就能看见。 */
+  const LOAD_ATTEMPTS = 3;
+  const LOAD_TIMEOUT_MS = 25000;
+  const LOAD_RETRY_DELAY_MS = [2000, 5000];
   const loadOne = texture => new Promise(resolve => {
     let settled = false;
     const finish = () => {
@@ -704,41 +719,120 @@ const createMoodistTextures = async (destination, rng, options = {}) => {
       resolve();
       return true;
     };
-    const gain = new Tone.Gain(0);
-    const filter = new Tone.Filter({ type: 'lowpass', frequency: texture.filter, Q: 0.5 });
-    const panner = new Tone.Panner(texture.pan).connect(destination);
-    const player = new Tone.Player({
-      url: texture.url,
-      loop: true,
-      fadeIn: texture.fade,
-      fadeOut: texture.fade,
-      onload: () => {
-        if (!finish()) return;
+    const attempt = attemptIndex => {
+      let attemptDone = false;
+      const gain = new Tone.Gain(0);
+      const filter = new Tone.Filter({ type: 'lowpass', frequency: texture.filter, Q: 0.5 });
+      const panner = new Tone.Panner(texture.pan).connect(destination);
+      let player = null;
+      let timer = null;
+      const disposeNodes = () => {
+        if (timer) clearTimeout(timer);
+        player.dispose(); filter.dispose(); gain.dispose(); panner.dispose();
+      };
+      const succeed = () => {
+        if (attemptDone || settled) return;
+        attemptDone = true;
+        clearTimeout(timer);
         player.connect(filter);
         filter.connect(gain);
         gain.connect(panner);
-        /* 素材一加载好就把能量包络算出来（一次性，见 computeLayerEnergy）——
-           它是下面"从哪开始播"要用到的长度依据，也是视觉侧密度的依据 */
-        loaded.push({ ...texture, player, filter, gain, panner, activeUntil: -Infinity,
-          energy: computeLayerEnergy(player.buffer) });
-      },
-      onerror: err => {
+        /* ★ 包络计算必须包 try：万一某个素材的 buffer 形态出乎意料，
+           在这里抛出去会让 loaded.push 不执行 → 那一层永远不出声（"静默丢层"最难查）。
+           拿不到包络就退回 null，效果是"密度恒为 1、起点恒为 0"，也就是改动前的行为。 */
+        let energy = null;
+        try { energy = computeLayerEnergy(player.buffer); } catch (err) { energy = null; }
         if (!finish()) return;
-        console.warn('[Moodist] 音效加载失败:', texture.name, err);
-        player.dispose(); filter.dispose(); gain.dispose(); panner.dispose();
-      },
-    });
-    setTimeout(() => {
-      if (settled || player.loaded) return;
-      if (!finish()) return;
-      console.warn('[Moodist] 音效加载超时:', texture.name);
-      player.dispose(); filter.dispose(); gain.dispose(); panner.dispose();
-    }, 12000);
+        loaded.push({ ...texture, player, filter, gain, panner, activeUntil: -Infinity, energy });
+        if (options.onNotice) options.onNotice(texture, 'loaded', null);
+      };
+      const fail = reason => {
+        if (attemptDone || settled) return;
+        attemptDone = true;
+        if (attemptIndex + 1 < LOAD_ATTEMPTS) {
+          console.warn('[Moodist] 加载失败，重试 ' + (attemptIndex + 2) + '/' + LOAD_ATTEMPTS + ':',
+            texture.name, reason);
+          disposeNodes();
+          setTimeout(() => attempt(attemptIndex + 1), LOAD_RETRY_DELAY_MS[attemptIndex] || 5000);
+          return;
+        }
+        if (!finish()) return;
+        console.warn('[Moodist] 音效加载失败:', texture.name, reason);
+        if (options.onNotice) options.onNotice(texture, 'loadFailed', reason);
+        disposeNodes();
+      };
+      player = new Tone.Player({
+        url: texture.url,
+        loop: true,
+        fadeIn: texture.fade,
+        fadeOut: texture.fade,
+        onload: succeed,
+        onerror: err => fail(err && err.message ? err.message : String(err)),
+      });
+      timer = setTimeout(() => {
+        if (player.loaded) return;
+        fail('超时 ' + LOAD_TIMEOUT_MS + 'ms');
+      }, LOAD_TIMEOUT_MS);
+    };
+    attempt(0);
   });
 
   await Promise.all(MOODIST_TEXTURES.map(loadOne));
+  /* 把"这一场到底有几层环境音活着"报出来：以前这件事只有控制台知道 */
+  if (options.onNotice) options.onNotice(null, 'ready', loaded.length + '/' + MOODIST_TEXTURES.length);
+
   const activeCountAt = time => loaded.filter(texture => texture.activeUntil > time).length;
   const activeEventCountAt = time => loaded.filter(texture => texture.group === 'event' && texture.activeUntil > time).length;
+
+  /* 这一段的起点最多能取到哪（素材时长 − 这一段的窗口）→ 所以**永不环绕** */
+  const maxStartFor = (texture, duration) => {
+    const fade = Math.min(texture.fade, duration * 0.42);
+    const bufferDuration = (texture.energy && texture.energy.duration) || 0;
+    return Math.max(0, bufferDuration - (duration + fade));
+  };
+
+  /* ★★ 这一段从素材的**哪个位置**开始播（用户 2026-09 明确同意的一处音频改动）。
+     原来每次都是 player.start(time)，而 Tone.js 的 Player.prototype._start 里
+     offset 缺省取 loopStart（也就是 0）—— 于是 115 秒的素材，每一段鸟叫听到的都是
+     **开头那一截**，响度曲线逐次相同。随机起点之后每一段的"忽大忽小"才各不相同。
+     ★ 用**独立的一条流**（options.startRng）而不是这一层自己的 rng：
+       那样"哪一层什么时候出现、出现多久"那条既有序列**逐位不变**。
+     ★ 拿不到包络、或没有起点流时返回 0 → 直接退回旧行为。 */
+  const drawStartOffset = (texture, duration) => {
+    const maxStart = maxStartFor(texture, duration);
+    return (options.startRng && maxStart > 0) ? options.startRng() * maxStart : 0;
+  };
+
+  /* ★ **唯一一处"让某一层真的开始发声"的实现**：排程器通过门禁后调它，调试入口（`b` 键）也调它 ——
+     两边因此天然同参（增益包络、start(time, offset)、onStart 通知完全一致）。
+     参数里**不含随机、不含门禁**：duration 与 startOffset 由调用方给，
+     这样排程器那条随机流的消耗顺序不会因为门禁结果、也不会因为这次重构而改变。 */
+  const startTextureEvent = (texture, time, duration, startOffset) => {
+    const fade = Math.min(texture.fade, duration * 0.42);
+    texture.activeUntil = time + duration + fade;
+    texture.gain.gain.cancelScheduledValues(time);
+    texture.gain.gain.setValueAtTime(0, time);
+    texture.gain.gain.linearRampToValueAtTime(texture.targetGain, time + fade);
+    texture.gain.gain.setValueAtTime(texture.targetGain, time + Math.max(fade, duration - fade));
+    texture.gain.gain.linearRampToValueAtTime(0, time + duration);
+    try {
+      texture.player.start(time, startOffset);
+      texture.player.stop(time + duration + fade);
+      /* 通知视觉侧"这一层开始发声了"，并把这一响的实际时长、以及**从素材哪里开始播**
+         一起给它（视觉要用它们排出整段声音里的几发涟漪、并查这一段的响度）。
+         ★ 必须走 Tone.Draw：这个回调本身是**预排**的（lookAhead 会提前跑），
+           只有 Draw 到达 time 那一刻才是真正听到声音的时刻（见"与音频的接口"一节）。 */
+      if (options.onStart) Tone.Draw.schedule(() => options.onStart(texture, time, duration, startOffset), time);
+      console.info('[Moodist] texture in:', texture.name, duration.toFixed(0) + 's',
+        '@' + startOffset.toFixed(1) + 's');
+      return true;
+    } catch (err) {
+      console.warn('[Moodist] 播放失败:', texture.name, err);
+      texture.activeUntil = time;
+      return false;
+    }
+  };
+
   const scheduleTexture = (texture, transportAt) => {
     const eventId = Tone.Transport.scheduleOnce(time => {
       eventIds.delete(eventId);
@@ -747,43 +841,7 @@ const createMoodistTextures = async (destination, rng, options = {}) => {
         (texture.group !== 'event' || activeEventCountAt(time) < 1) &&
         time >= texture.activeUntil;
       if (canPlay && rng() < texture.probability) {
-        const fade = Math.min(texture.fade, duration * 0.42);
-        /* ★★ 这一段从素材的**哪个位置**开始播（用户 2026-09 明确同意的一处音频改动）。
-           原来每次都是 `player.start(time)`，而 Tone.js 的 `Player.prototype._start` 里
-           `offset` 缺省取 `loopStart`（也就是 0）—— 于是 115 秒的素材，每一段鸟叫听到的
-           都是**开头那一截**，响度曲线逐次相同。随机起点之后每一段的"忽大忽小"才各不相同，
-           涟漪密度跟响度也就不会每一段都是同一条节奏。
-           ★ 环绕：起点最多取到 `素材时长 − 这一段的窗口`，所以**永不环绕** ——
-             否则查包络会在环绕处跳一下（素材 115 秒、窗口最长 30 秒，可选范围很宽）。
-           ★ 用**独立的一条流**（`options.startRng`）而不是这一层自己的 `rng`：
-             那样"哪一层什么时候出现、出现多久"这条既有序列**逐位不变**，
-             只有"从素材哪里开始"变了（改动面因此被限制在这一处）。
-           ★ 拿不到包络时 maxStart = 0 → 起点恒为 0，也就是退回旧行为。 */
-        const audibleWindow = duration + fade;
-        const bufferDuration = (texture.energy && texture.energy.duration) || 0;
-        const maxStart = Math.max(0, bufferDuration - audibleWindow);
-        const startOffset = options.startRng ? options.startRng() * maxStart : 0;
-        texture.activeUntil = time + audibleWindow;
-        texture.gain.gain.cancelScheduledValues(time);
-        texture.gain.gain.setValueAtTime(0, time);
-        texture.gain.gain.linearRampToValueAtTime(texture.targetGain, time + fade);
-        texture.gain.gain.setValueAtTime(texture.targetGain, time + Math.max(fade, duration - fade));
-        texture.gain.gain.linearRampToValueAtTime(0, time + duration);
-        try {
-          texture.player.start(time, startOffset);
-          texture.player.stop(time + duration + fade);
-          /* 通知视觉侧"这一层开始发声了"，并把这一响的实际时长、以及**从素材哪里开始播**
-             一起给它（视觉要用它们排出整段声音里的几发涟漪、并查这一段的响度）。
-             ★ 必须走 Tone.Draw：这个回调本身是**预排**的（lookAhead 会提前跑），
-               只有 Draw 到达 time 那一刻才是真正听到声音的时刻（见"与音频的接口"一节）。
-             ★ 视觉要在这一刻做 DOM 操作，所以 handler 里不要做重活（一发涟漪只有 9 个元素）。 */
-          if (options.onStart) Tone.Draw.schedule(() => options.onStart(texture, time, duration, startOffset), time);
-          console.info('[Moodist] texture in:', texture.name, duration.toFixed(0) + 's',
-            '@' + startOffset.toFixed(1) + 's');
-        } catch (err) {
-          console.warn('[Moodist] 播放失败:', texture.name, err);
-          texture.activeUntil = time;
-        }
+        startTextureEvent(texture, time, duration, drawStartOffset(texture, duration));
       }
       scheduleTexture(texture, transportAt + randomBetween(texture.periodRange));
     }, transportAt);
@@ -804,6 +862,20 @@ const createMoodistTextures = async (destination, rng, options = {}) => {
         try { texture.player.stop(time + 1.6); } catch (err) { /* 已停止则忽略 */ }
         texture.activeUntil = time;
       });
+    },
+    /* 调试入口（`b` 键）：让某一层**立刻**按真实路径发一声 —— 与真鸟叫共用 startTextureEvent。
+       ★ duration 与起点从**调用方传进来的流**里抽（按键序号派生），所以既不消耗演出那两条流，
+         也不改变"下一次真鸟叫"的时长与起点序列（调试不改变被调试对象，与 `s` 键同一条原则）。
+       ★ 它照常设置 activeUntil（此刻这一层真的在响），所以下一次排程会正常等它结束。 */
+    playNow: (name, eventRng) => {
+      const texture = loaded.find(item => item.name === name);
+      if (!texture) return null;
+      const range = texture.durationRange;
+      const duration = eventRng ? range[0] + eventRng() * (range[1] - range[0]) : (range[0] + range[1]) / 2;
+      const maxStart = maxStartFor(texture, duration);
+      const startOffset = (eventRng && maxStart > 0) ? eventRng() * maxStart : 0;
+      const started = startTextureEvent(texture, Tone.now() + 0.06, duration, startOffset);
+      return started ? { duration, startOffset } : null;
     },
     dispose: () => loaded.forEach(texture => {
       texture.player.dispose(); texture.filter.dispose(); texture.gain.dispose(); texture.panner.dispose();
@@ -1878,6 +1950,20 @@ const BURST_IN_WINDOW_RATIO = 0.5;
    要关掉就把下面这个键设成空字符串。 */
 const DEBUG_BURST_KEY = 's';
 let debugBurstIndex = 0;   // 调试起爆的序号（用来派生"这一下"的随机流；见 DEBUG_BURST_KEY）
+/* ---- 调试：按 `b` 手动让 birds 层**按真实路径发一声**（音频 + 涟漪一起）----
+   与 `s` 键的分工：`s` 只放**视觉**那一发（`spawnBurst`），`b` 连**音频**一起走完 ——
+   它是"到底听不听得到鸟叫、看不看得见涟漪"这个问题的直答工具：不用等几分钟，也不用开控制台。
+   为什么需要它：birds 每 55–115 秒才有一次机会，每次还要过"层数 < 2 / 没有别的 event 层在响"
+   两个门、再过 50% 的概率骰（实测平均 1.6 分钟第一次、之后约 3 分钟一次），
+   在真机上"等它出现"很不可靠（用户 2026-09："听了好久都没有鸟叫，也没有相应的触发了"）。
+   ★ 走的是 createMoodistTextures 里**唯一**的播放实现（`startTextureEvent`）：
+     增益包络、`start(time, offset)`、`onStart` 通知、素材起点规则与真鸟叫完全一致（同参原则）。
+   ★ 用按按键序号派生的独立流抽"这一声多长 / 从素材哪里开始" → 每下可复现，
+     而且**不消耗演出那两条流**，所以在它之后真鸟叫的时长与起点序列一点不变。
+   ★ 它照常设 `activeUntil`（此刻这一层真的在响），所以下一次排程会正常等它结束。
+   要关掉就把下面这个键设成空字符串。 */
+const DEBUG_TEXTURE_KEY = 'b';
+let debugTextureIndex = 0;
 
 const bursts = [];
 let burstLayer = null;
@@ -2256,6 +2342,30 @@ if (DEBUG_BURST_KEY) {
       spawned
         ? `fx=${bursts[bursts.length - 1].fx.toFixed(3)} fy=${bursts[bursts.length - 1].fy.toFixed(3)}`
         : `已达并发上限 BURST_MAX_CONCURRENT=${BURST_MAX_CONCURRENT}，这一下被跳过了`);
+  });
+}
+
+/* 调试：按 `b` 让 birds 层立刻走一遍**真实**的发声路径（见 DEBUG_TEXTURE_KEY 的注释）。
+   ★ 独立监听（不并进 `s` 的 handler，也不并进 click / 全屏那两条）—— 各自可以单独删掉。
+   ★ 防护与 `f` / `s` 完全一致：带修饰键放过、焦点在能打字的地方跳过（`isTypingTarget` 走
+     `composedPath()`，否则 shadow DOM 里的种子输入框拦不住）、决定动作之后才 `preventDefault()`。 */
+if (DEBUG_TEXTURE_KEY) {
+  window.addEventListener('keydown', event => {
+    if (event.key !== DEBUG_TEXTURE_KEY && event.key !== DEBUG_TEXTURE_KEY.toUpperCase()) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (isTypingTarget(event)) return;
+    event.preventDefault();
+    if (!activeMoodist) {
+      console.info(`[debug] 还没有在播放 —— 先按播放，再按 ${DEBUG_TEXTURE_KEY}`);
+      return;
+    }
+    debugTextureIndex += 1;
+    /* 每按一下换一条独立流（按序号派生）：每下不同，但"第 N 下"永远可复现 */
+    const rng = makeRng((Math.imul(0x9e3779b1, debugTextureIndex) + 0x27d4eb2f) >>> 0);
+    const info = activeMoodist.playNow('birds', rng);
+    console.info(`[debug] 按 ${DEBUG_TEXTURE_KEY} 手动发声 #${debugTextureIndex}`,
+      info ? `birds ${info.duration.toFixed(1)}s @素材 ${info.startOffset.toFixed(1)}s`
+        : 'birds 这一层没加载上（看画面上那行"环境层"日志）');
   });
 }
 
@@ -2710,6 +2820,9 @@ const showVisualNote = (phraseId, note, audioTime) => {
 /* ---------- ⑤ 引擎：activate(seed) → { deactivate, schedule, end } ----------
  * 对照 aisatsana：activate 加载素材并训练链，schedule 沿 Transport 安排乐句 */
 let engine = null;
+/* 当前这一场的环境层模块（createMoodistTextures 的返回值）—— 只给调试入口（`b` 键）用：
+   playNow() 会走与真鸟叫完全相同的那条发声路径。停止/换一版时置回 null。 */
+let activeMoodist = null;
 let currentSeed = null;
 
 const activateEngine = async seed => {
@@ -2734,12 +2847,38 @@ const activateEngine = async seed => {
   const masterGain = new Tone.Gain(Math.pow(10, MASTER_VOLUME_DB / 20));   // db → 线性（+6dB ≈ ×2.0）
   const masterLimiter = new Tone.Limiter(-1).connect(Tone.Destination);
   masterGain.connect(masterLimiter);
+  /* ★ 环境层的"事实"也要写进**画面上的日志**：加载失败、开始发声这两件事以前只在控制台里，
+     画面上完全看不出来 —— 用户 2026-09 报"听了好久都没有鸟叫，也没有相应的触发了"，
+     而这两种原因（那一层根本没加载上 / 加载上了但被钢琴盖住）在画面上长得一模一样。
+     ⚠️ `currentSection` 必须**声明在这之前**：下面这个 await 期间就会触发通知，
+        而日志行要按当前段落色着色 —— 声明在后面会踩 TDZ（见"声明顺序"那条教训）。 */
+  let currentSection = 0;
+  const onAmbientNotice = (texture, kind, detail) => {
+    if (kind === 'ready') { log('环境层就绪 ' + detail, currentSection); return; }
+    if (kind === 'loadFailed') {
+      log('环境层加载失败：' + texture.name + '（' + detail + '）', currentSection);
+      return;
+    }
+    /* 'loaded' 不逐条刷屏：就绪那一行已经报了总数 */
+  };
+  /* 环境层每次**真的开始发声**都留一行：这就是"鸟叫到底来没来"的可视答案。
+     包一层而不是直接传 onTextureStart —— 后者是顶层函数，看不到 currentSection。 */
+  const onAmbientStart = (texture, time, duration, startOffset) => {
+    log('环境层入：' + texture.name + ' ' + duration.toFixed(0) + 's（素材 '
+      + startOffset.toFixed(0) + 's 起）', currentSection);
+    onTextureStart(texture, time, duration, startOffset);
+  };
   const [piano, moodistTextures] = await Promise.all([
     createPiano(masterGain),
-    createMoodistTextures(masterGain, textureRng, { onStart: onTextureStart, startRng: textureStartRng }),
+    createMoodistTextures(masterGain, textureRng, {
+      onStart: onAmbientStart,
+      startRng: textureStartRng,
+      onNotice: onAmbientNotice,
+    }),
   ]);
+  activeMoodist = moodistTextures;
 
-  let currentSection = 0;
+  /* currentSection 已经声明在上面（环境层通知要按当前段落色写日志）；这里只留其余状态 */
   let lastSection = 0;
   let phraseCount = 0;
   let densityMemory = 1;
@@ -2918,6 +3057,7 @@ const activateEngine = async seed => {
 
   const deactivate = () => {
     end();
+    activeMoodist = null;      // 调试入口（`b`）不能再去操作已经 dispose 的层
     piano.dispose();
     moodistTextures.dispose();
     masterGain.dispose();
