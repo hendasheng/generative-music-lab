@@ -955,6 +955,50 @@ let lastLogAt = null;
 /* 日志行距的尺度：名义间隔（= 一句的长度）对应 `LOG_GAP_SCALE` 个行高，最长不超过 `LOG_GAP_MAX_SCALE` 个 */
 const LOG_GAP_SCALE = 1.5;
 const LOG_GAP_MAX_SCALE = 3;
+/* ---- 行内音符按**时间**铺开（用户 2026-09："真正的需求指的是音符间的距离，而不是乐句的行距"）----
+   一句里的音名不再等距排列，而是**字距 ∝ 这个音与上一个音的时间差**，于是这一行读起来像一小段
+"文字钢琴卷"：疏的地方拉开、密的地方挤在一起，rall/留白一眼就能看出来。
+   ★ 为什么用空格而不是绝对定位：日志本来就是一整片等宽文本（`white-space:pre-wrap`、可选中），
+     用空格能保住这个性质；代价是分辨率只有一个字符宽（13px Consolas ≈ 7.8px）。
+   ★ 尺度取 `LOG_NOTE_CHARS_PER_SECOND(10)`：素材的**基本步长**（`STEP_DURATION_S` 0.3 秒）
+     正好 = 3 个字符 = "C5 E5" 之间那**一个空格** → **默认密度与改动前完全一样**，
+     只有比基本步长更疏的地方才拉开（0.6 秒 → 4 个空格、0.9 秒 → 7 个空格）。
+   ★ 同一拍上的和弦（时间差 0）至少留 `LOG_NOTE_MIN_GAP` 个空格，否则会糊成一团。
+   ★ 一行放不下时（窄屏 / 长句）按可用宽度**整体压缩**：相对疏密不变，只是整行变紧。 */
+const LOG_NOTE_CHARS_PER_SECOND = 10;
+const LOG_NOTE_MIN_GAP = 1;
+let logCharWidth = 0;
+/* 量一次"一个等宽字符有多宽"（同一个视口里字体不会变，量一次就够） */
+const measureLogCharWidth = () => {
+  if (logCharWidth) return logCharWidth;
+  const probe = document.createElement('span');
+  probe.style.position = 'absolute';
+  probe.style.visibility = 'hidden';
+  probe.style.whiteSpace = 'pre';
+  probe.textContent = '0'.repeat(50);
+  logContentEl.appendChild(probe);
+  logCharWidth = (probe.getBoundingClientRect().width / 50) || 7.8;
+  probe.remove();
+  return logCharWidth;
+};
+const noteTrackText = (events, availableChars) => {
+  if (!events.length) return '余响';
+  const first = events[0].audioTime;
+  const span = Math.max(0, events[events.length - 1].audioTime - first);
+  const noteChars = events.reduce((sum, event) => sum + event.note.length, 0);
+  const rawChars = span * LOG_NOTE_CHARS_PER_SECOND + noteChars;
+  const charsPerSecond = LOG_NOTE_CHARS_PER_SECOND
+    * ((availableChars > 0 && rawChars > availableChars) ? availableChars / rawChars : 1);
+  let out = '';
+  let cursor = 0;          // 下一个音该落在这一行的第几个字符（相对行首）
+  events.forEach((event, index) => {
+    const target = Math.round((event.audioTime - first) * charsPerSecond);
+    const gap = index === 0 ? 0 : Math.max(LOG_NOTE_MIN_GAP, target - cursor);
+    out += ' '.repeat(gap) + event.note;
+    cursor += gap + event.note.length;
+  });
+  return out;
+};
 const log = (msg, section, atSeconds) => {
   const rgb = hexToRgb(sectionColors()[section]) || [255, 255, 255];
   const line = document.createElement('div');
@@ -3032,7 +3076,13 @@ const activateEngine = async seed => {
         '</b> · 演奏 <b>' + variant.name +
         '</b> · 音符 ' + playedNotes.length + '/' + rawNoteCount +
         ' · 种子 ' + currentSeed;
-      const logLine = playedNotes.length + '/' + rawNoteCount + ' ← ' + (playedNotes.join(' ') || '余响');
+      /* 前缀（`11/19 ← `）先占掉一些字符，剩下的宽度才是音符可以铺开的地方 */
+      const logPrefix = playedNotes.length + '/' + rawNoteCount + ' ← ';
+      const noteTrack = playedEvents.length
+        ? noteTrackText(playedEvents, Math.floor(logContentEl.clientWidth / measureLogCharWidth())
+          - logPrefix.length - 1)
+        : '余响';
+      const logLine = logPrefix + noteTrack;
       const visualStartTime = playedEvents.length
         ? Math.min(...playedEvents.map(event => event.audioTime)) - 0.01
         : phraseTime + 1 + variant.late;
