@@ -263,6 +263,9 @@
       音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
       <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
       （首次约 50MB，之后走浏览器缓存）；加载失败自动回退 FM 合成钢琴，不会卡死。<br>
+      <b>总音量：</b>钢琴与环境层汇到<b>同一条母带链</b>（<code>总增益 → 限幅 −1dB → 输出</code>），
+      所以要整体调响只改代码里那一个 <code>MASTER_VOLUME_DB</code>（dB）；限幅在最后一级，往上推不会削顶。
+      要单独调某一层，改它自己的增益（钢琴 <code>volume</code>、环境层各自的 <code>targetGain</code>）。<br>
       <b>版权说明：</b>aisatsana 原曲谱面（Aphex Twin）不直接搬运，本练习使用同风格的<b>自写</b>极简琶音素材演示机制；采样库为 CC0 许可。
     </div>
   </details>
@@ -539,6 +542,19 @@ const PIANO_NOTES = ['A2', 'C#3', 'F3', 'A3', 'C#4', 'F4', 'A4', 'C#5', 'F5', 'A
 const sampleFile = (note, ext) => note.toLowerCase().replace('#', 'sharp') + ext;
 const JS_DELIVR_BASE = 'https://cdn.jsdelivr.net/gh/generative-music/samples-alex-bainter@master/samples/vsco2-piano-mf/';
 
+/* ---- 总音量（母带链）----
+   用户 2026-09 第七轮："总音量有什么控制吗，怎么感觉音量还是偏小"。
+   原来**没有总音量**：钢琴自己带一个 `Limiter(-1)` 再直连 Destination，环境层连限幅都没有 ——
+   想整体调响只能分别改钢琴 `volume` 和各层 `targetGain`，而且推过 −1 dB 就会削顶（DAC 硬切）。
+   现在改成**一条母带链**：`钢琴 + 环境层 → masterGain → Limiter(-1) → Destination`。
+   ★ 调总音量只改下面这一个数（dB；0 = 与改造前等响）：限幅在**最后一级**，
+     所以往上推不会削顶 —— 只是峰值会被压住（换来更实的响度、动态略收）。
+   ★ 为什么把钢琴那个 Limiter 搬到这一级：两个来源共用同一个天花板，"一个旋钮管全部"才成立。
+   ★ 想要"某一部分更响"而不是整体更响，就去改它自己的增益：钢琴是 `volume: 12`（Sampler，dB），
+     环境层是 `MOODIST_TEXTURES` 里各自的 `targetGain`（**线性** 0–1，0.1 ≈ −20 dB，很小的值）。
+   ★ 注意：再往上推（> +12 dB）得到的多半是压缩而不是更响 —— 那时该回头调各层相对的平衡。 */
+const MASTER_VOLUME_DB = 6;
+
 const wrapPiano = (piano, fxNodes) => ({
   triggerAttack: (n, t, v) => piano.triggerAttack(n, t, v),
   releaseAll: t => piano.releaseAll(t),
@@ -560,11 +576,12 @@ const createSampledPiano = async (destination, baseUrl, ext, timeoutMs) => {
   const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
   await reverb.generate();
   const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
-  const limiter = new Tone.Limiter(-1).connect(destination);   // ★ 母带限幅：补偿后防削波
-  compressor.connect(limiter);
+  /* ★ 限幅搬到**母带链**上（见 MASTER_VOLUME_DB 的注释）：钢琴与环境层共用同一个天花板，
+     "总音量"才真的是一个旋钮。所以这里只连到 destination（= 母带 Gain）。 */
+  compressor.connect(destination);
   piano.connect(reverb);
   reverb.connect(compressor);
-  return wrapPiano(piano, [reverb, compressor, limiter]);
+  return wrapPiano(piano, [reverb, compressor]);
 };
 
 const createFallbackPiano = async destination => {
@@ -579,11 +596,10 @@ const createFallbackPiano = async destination => {
   const reverb = new Tone.Reverb({ decay: 6, wet: 0.35 });
   await reverb.generate();
   const compressor = new Tone.Compressor({ threshold: -18, ratio: 3, attack: 0.02, release: 0.3 });
-  const limiter = new Tone.Limiter(-1).connect(destination);
-  compressor.connect(limiter);
+  compressor.connect(destination);   // ★ 限幅在母带链上，见 MASTER_VOLUME_DB 的注释
   piano.connect(reverb);
   reverb.connect(compressor);
-  return wrapPiano(piano, [reverb, compressor, limiter]);
+  return wrapPiano(piano, [reverb, compressor]);
 };
 
 const createPiano = async destination => {
@@ -2549,9 +2565,14 @@ const activateEngine = async seed => {
      ⚠️ 必须与 textureRng 分开 —— 那条流决定"环境层什么时候出现、出现多久"，
      视觉去消耗它的话，加一个视觉功能就会改变音频调度（等于改了音乐，0.2 踩过这个坑）。 */
   burstRng = makeRng((seed ^ 0x85ebca6b) >>> 0);
+  /* 母带链：钢琴与环境层都汇到这里 —— 总音量只有一个来源（`MASTER_VOLUME_DB`），
+     限幅放在最后一级，所以往上推音量不会削顶（见该常量的注释）。 */
+  const masterGain = new Tone.Gain(Math.pow(10, MASTER_VOLUME_DB / 20));   // db → 线性（+6dB ≈ ×2.0）
+  const masterLimiter = new Tone.Limiter(-1).connect(Tone.Destination);
+  masterGain.connect(masterLimiter);
   const [piano, moodistTextures] = await Promise.all([
-    createPiano(Tone.Destination),
-    createMoodistTextures(Tone.Destination, textureRng, { onStart: onTextureStart }),
+    createPiano(masterGain),
+    createMoodistTextures(masterGain, textureRng, { onStart: onTextureStart }),
   ]);
 
   let currentSection = 0;
@@ -2735,6 +2756,8 @@ const activateEngine = async seed => {
     end();
     piano.dispose();
     moodistTextures.dispose();
+    masterGain.dispose();
+    masterLimiter.dispose();
   };
 
   return { deactivate, schedule, end };

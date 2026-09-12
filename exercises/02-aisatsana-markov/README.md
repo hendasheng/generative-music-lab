@@ -24,6 +24,14 @@
 
 运行当前版本请打开 [`0.4/index.html`](0.4/index.html)；历史版本入口是 [`0.3/index.html`](0.3/index.html)、[`0.2/index.html`](0.2/index.html) 与 [`0.1/index.html`](0.1/index.html)。页面通过 CDN 加载 Tone.js、钢琴采样与环境音，因此首次运行需要联网。
 
+**总音量**（0.4 新增，用户 2026-09："总音量有什么控制吗，怎么感觉音量还是偏小"）：以前**没有**总音量 ——
+钢琴自己带一个 `Limiter(-1)` 再直连 `Destination`，环境层连限幅都没有，想整体调响只能分别改
+钢琴 `volume` 和各层 `targetGain`，而且推过 −1 dB 就会削顶。现在是一条**母带链**：
+`钢琴 + 环境层 → masterGain → Limiter(-1) → Destination`，总音量只有一个来源 **`MASTER_VOLUME_DB`**（默认 +6 dB），
+而且**限幅在最后一级**，所以往上推不会削顶（峰值被压住、换来更实的响度）。
+要"某一部分更响"而不是整体更响，就去改它自己的增益：钢琴 `volume: 12`（Sampler，dB）、
+环境层各层的 `targetGain`（**线性** 0–1，`0.1` ≈ −20 dB，本来就是很小的值）。
+
 **钢琴采样**：`vsco2-piano-mf`（VSCO2 免费钢琴库，CC0）经 jsDelivr GitHub 镜像远程加载——首次约 50MB（之后走浏览器缓存），加载失败/超时自动回退 FM 合成钢琴，不会卡死。官方 CDN `samples.alexbainter.com` 对直连返回 403（有访问控制），故不走它。0.2 与 0.3 还会远程加载 Moodist 环境音效，单个音效失败或超时会静默跳过。也可在仓库根目录运行 `python -m http.server 8000` 后访问 `http://localhost:8000/exercises/02-aisatsana-markov/0.3/`。
 
 ## 0.4 视觉：birds 环境层的"涟漪"（只加视觉，音频未改）
