@@ -104,13 +104,15 @@
   /* 节点的存在度、半径、颜色由 JS 逐帧写入（见 paintNode）：节点会在“藏身层”和
      “在场层”之间搬动，而 DOM 搬动会重启动 CSS 过渡，所以节点不用 CSS 过渡。 */
   .chain-node { stroke-width:1; }
-  .node-label { fill:var(--graph-label); font:600 12px Consolas,monospace; text-anchor:middle; dominant-baseline:middle; pointer-events:none; }
+  /* 音名的颜色由 JS 每帧写内联（深浅墨按点上的实际颜色自动挑，见 labelInkFor），这里不写 fill：
+     写死一种颜色就会在"点被段落色染成亮黄/亮绿"的时候糊掉。 */
+  .node-label { font:600 12px Consolas,monospace; text-anchor:middle; dominant-baseline:middle; pointer-events:none; }
   .legend { position:absolute; z-index:3; left:50%; bottom:18px; display:flex; gap:18px; color:var(--dim); font-size:11px; transform:translateX(-50%); transition:opacity .2s ease; }
   body.hud-hidden .hud,
   body.hud-hidden .visual-head,
   body.hud-hidden .legend { opacity:0; pointer-events:none; }
   .key { display:inline-block; width:8px; height:8px; margin-right:6px; border-radius:50%; vertical-align:1px; }
-  .key.source { background:var(--graph-node-present); border:1px solid var(--graph-node-stroke); }
+  .key.source { background:var(--section-color); opacity:var(--node-tint,0.6); }
   .key.played { background:var(--section-color); }
   .log { position:absolute; z-index:1; inset:110px 5vw 54px; display:flex; flex-direction:column; justify-content:flex-end; overflow:hidden; color:var(--log-fg); font:13px/1.775 Consolas,monospace; text-align:left; opacity:.8; pointer-events:none; }
   .log-content { flex:0 0 auto; width:100%; white-space:pre-wrap; will-change:transform; }
@@ -173,7 +175,7 @@
       <div class="visual-title" id="visualTitle">等待第一条乐句</div>
       <div class="visual-meta" id="visualMeta">32 steps</div>
     </div>
-    <div class="legend"><span><i class="key source"></i>本段落可到达状态</span><span><i class="key played"></i>当前状态与刚发生的转移</span><span>连线越亮 = 该转移在马尔可夫链里概率越高</span></div>
+    <div class="legend"><span><i class="key source"></i>本段落可到达状态</span><span><i class="key played"></i>刚发声的音与刚发生的转移</span><span>连线越亮 = 该转移在马尔可夫链里概率越高</span></div>
   </div>
 
   <header class="hud intro-hud">
@@ -375,24 +377,32 @@ const SECTION_NAMES = ['A 安静', 'B 主题', 'C 发展', 'D 结尾'];
  * ============================================================================================================================ */
 const PALETTE = {
   dark: {
-    stageBg: '#0d0d0f',                                     // 画面底色（.markov-stage）
+    stageBg: '#0d0d0f',                                     // 背景色（画面底，.markov-stage）
     edge: '#71717a',                                        // 未激活的连线（灰色转移线）
-    nodeIdle: '#3f3f46',                                    // 非激活的点（收起时）
-    nodePresent: '#52525b',                                 // 在激活的点
-    nodeStroke: '#71717a',                                  // 在激活的点 · 描边
-    label: '#ffffff',                                       // 音符字（音名）
+    nodeBase: '#52525b',                                    // 点的"中性色"：段落色往它里面混，也是淡入/退场途中经过的颜色
+    nodeTint: 0.6,                                          // 在场的点里"本段落色"占多少：0 = 纯中性灰，1 = 满段落色
     sections: ['#D332FF', '#8DFE03', '#FFCD04', '#FA2251'], // A 紫 / B 绿 / C 橙 / D 粉
   },
   light: {
     stageBg: '#f4f4f5',
     edge: '#71717a',                                        // 与深色共用同一个墨色：反差由纸提供（§14.3）
-    nodeIdle: '#b3b3b8',
-    nodePresent: '#9a9a9e',
-    nodeStroke: '#71717a',
-    label: '#18181b',                                       // 浅色的点偏暗，所以音符字用深墨
-    sections: ['#FF7328', '#164CFF', '#BBBBBB', '#2E2E2E'], // A / B / C / D
+    nodeBase: '#9a9a9e',
+    nodeTint: 0.6,
+    sections: ['#FFC228', '#2558FF', '#FF741E', '#161616'], // A / B / C / D
   },
 };
+/* 点的颜色只有**一条**规则：`中性色 ⇄ 本段落色` 的混合 ——
+ *   在场的点（平时） = mix(nodeBase, 段落色, nodeTint)
+ *   刚发声的点       = mix(nodeBase, 段落色, 1)     ← flash 把剩下的 (1 − nodeTint) 走完
+ *   淡入 / 退场途中   = 再按在场度往 nodeBase 回落
+ * 所以**没有"在场点专用色"**。用户 2026-09 的两句反馈正是冲着旧结构来的：
+ *   · "在激活的点应该是当前乐句颜色啊，为什么也有单独的配色" —— 旧版在场的点是纯灰（`nodePresent`），
+ *     只有刚响的一瞬间才染色，于是整圈看上去跟本句的颜色没关系；现在平时就带段落色。
+ *   · "两边 nodeIdle 都没有作用" —— 对：收起的点透明度是 0、根本看不见（靠宿主遮住），
+ *     那个色只在淡入/退场途中短暂经过，所以设成什么颜色都看不出来。现在它并进 `nodeBase`
+ *     （既是混合的锚点、也是过渡色），这个键不再是"白设"的。旧观感可以把 `nodeTint` 调成 0 复原。
+ * ★ 音名的颜色**不在调色板里**：由点染出来的实际颜色自动挑深墨 / 浅墨（见 labelInkFor）——
+ *   点被段落色染过之后，固定用白字会在黄、绿这类亮段上糊掉。 */
 /* 换一整组色时的做法（2026-09 用户的要求）：**按色相最近一一对应**，不要凭感觉指派 ——
    "当前如果有蓝色，就用这组色值中的蓝色，其它也是一个意思"。
    当时把浅色的紫/绿/橙/粉换到深色那组，实测色相距离 29°/23°/3°/9°，各自"次近候选"都远得多
@@ -1329,12 +1339,40 @@ const HEAD_ARROW_BACK = 12;
 /* 高亮退场用同一个时长（反向生长回去），所以这里不再需要单独的退色时长：
    旧版有个 EDGE_SWEEP_FADE_S = 1.2，用于"被下一条取代后按透明度退色"，已随几何化改造删除。 */
 const FIRST_NOTE_INTERVAL_S = 0.5;  // 第一个音没有“上一个音”可参照，用这个兜底
-/* 节点颜色是**逐帧用 RGB 三元组插值**算出来的（见 paintNode 的 mixRgb），没法直接吃 CSS 变量，
-   所以这三个值由 applyTheme() 从 CSS 变量里读进来（用 let 就是为了切主题时能重赋值）。
-   下面的数字只是深色主题的初始值，真正的来源是 :root / html[data-theme="light"]。 */
-let NODE_IDLE_FILL = [63, 63, 70];          // #3f3f46 收起
-let NODE_PRESENT_FILL = [82, 82, 91];       // #52525b 在场
-let NODE_PRESENT_STROKE = [113, 113, 122];  // #71717a 在场描边
+/* ---------- 颜色工具 ----------
+ * ★ 放在这里（而不是更下面）是有原因的：`applyTheme()` 在脚本中段就会被调用一次，
+ *   而它会用到 `mixRgb`；这两个工具函数要是声明在它后面，就会踩 TDZ
+ *   （实测报 "Cannot access 'mixRgb' before initialization" 并且整页视觉都不建起来，
+ *   与 0.3 早期 "edge.rest 在边创建之前算" 那次是同一类顺序坑）。 */
+const mixRgb = (from, to, amount) => from.map((value, index) => Math.round(value + (to[index] - value) * amount));
+const rgbToHex = rgb => '#' + rgb.map(value => value.toString(16).padStart(2, '0')).join('');
+/* 点的颜色是**逐帧用 RGB 三元组插值**算出来的（见 paintNode 的 mixRgb），没法直接吃 CSS 变量，
+   所以这两个值由 applyTheme() 从 PALETTE 读进来（用 let 就是为了切主题时能重赋值）。 */
+let NODE_BASE = [82, 82, 91];      // #52525b：段落色往它里面混，也是过渡途中经过的颜色
+let NODE_TINT = 0.6;               // 在场的点里段落色占多少（见 PALETTE 上方的说明）
+/* 音名的墨色：点上有段落色之后，白字在亮段（黄/绿）上会糊，所以按点的实际颜色自动挑一个 ——
+   两个候选写在下面，跟着点上颜色的变化（换段时逐帧）重新挑。 */
+const LABEL_INK_LIGHT = [255, 255, 255];
+const LABEL_INK_DARK = [24, 24, 27];
+let nodeLabelInk = LABEL_INK_LIGHT;
+const relativeLuminance = rgb => {
+  const channel = value => {
+    const c = value / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+};
+const contrastRatio = (a, b) => {
+  const la = relativeLuminance(a), lb = relativeLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+};
+/* 挑的是"点平时（不带 flash）的颜色"的墨，而不是逐帧那一个 ——
+   否则同一段里 flash 让点变亮时墨色会跟着翻，标题字会在半途闪一下。 */
+const labelInkFor = fill => (contrastRatio(fill, LABEL_INK_LIGHT) >= contrastRatio(fill, LABEL_INK_DARK)
+  ? LABEL_INK_LIGHT : LABEL_INK_DARK);
+const restingNodeFill = () => mixRgb(NODE_BASE, sectionColorRgb, NODE_TINT);
+/* 段落色一变（换段插值、切主题）就重新挑一次音名墨色，跟着走但不会因为 flash 来回翻 */
+const refreshNodeLabelInk = () => { nodeLabelInk = labelInkFor(restingNodeFill()); };
 const SECTION_COLOR_MORPH_S = 2.4;  // 段落色渐变时长
 let graphBuilt = false;
 let colorMorphFrame = null;
@@ -1382,19 +1420,21 @@ const applyTheme = theme => {
     console.warn('[调色板] ' + themeName + '.' + key + ' 不是合法色值：' + JSON.stringify(value)
       + '（应为 #RRGGBB），已沿用上一个合法颜色');
   };
-  push('nodeIdle', '--graph-node-idle', palette.nodeIdle);
-  push('nodePresent', '--graph-node-present', palette.nodePresent);
-  push('nodeStroke', '--graph-node-stroke', palette.nodeStroke);
+  /* 画面色推成 <html> 上的 CSS 变量：CSS 规则（.chain-edge 的 stroke、.markov-stage 的 background、
+     .key.source 的底色……）继续用 var(--…) 取，所以颜色始终只有 PALETTE 一个来源。
+     点本身不在 CSS 里画（它的颜色逐帧算），所以没有对应的 --graph-node-* 变量了。 */
   push('edge', '--graph-edge', palette.edge);
   push('stageBg', '--stage-bg', palette.stageBg);
-  push('label', '--graph-label', palette.label);
   /* 没播放时图例上那个点用的是 --section-color：先拿本主题的段落色 A 垫着（播放后由 tweenSectionColor 接管） */
   push('sections[0]', '--section-color', (palette.sections || [])[0]);
-  /* 节点颜色是逐帧插值出来的，直接吃 RGB 数组（paintNode 每帧重画，所以这里改完立刻生效） */
-  const rgbOf = (key, previous) => hexToRgb(palette[key]) || previous;
-  NODE_IDLE_FILL = rgbOf('nodeIdle', NODE_IDLE_FILL);
-  NODE_PRESENT_FILL = rgbOf('nodePresent', NODE_PRESENT_FILL);
-  NODE_PRESENT_STROKE = rgbOf('nodeStroke', NODE_PRESENT_STROKE);
+  /* 图例里"可到达状态"那个点 = 段落色减淡，淡到什么程度必须和点上的 nodeTint 是同一个数 ——
+     所以把它作为变量推出去，CSS 里用 opacity:var(--node-tint) 取，避免同一个数字写两处。 */
+  const tint = Number(palette.nodeTint);
+  NODE_TINT = Number.isFinite(tint) ? Math.max(0, Math.min(1, tint)) : NODE_TINT;
+  rootStyle.setProperty('--node-tint', String(NODE_TINT));
+  /* 点颜色是逐帧插值出来的，直接吃 RGB 数组（paintNode 每帧重画，所以这里改完立刻生效） */
+  NODE_BASE = hexToRgb(palette.nodeBase) || NODE_BASE;
+  refreshNodeLabelInk();
   if (!themeToggleEl) return;
   const next = themeName === THEME_LIGHT ? THEME_DARK : THEME_LIGHT;
   themeToggleEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">${THEME_ICONS[next]}</svg>`;
@@ -1417,9 +1457,6 @@ if (themeToggleEl) {
 }
 applyTheme(document.documentElement.dataset.theme);
 
-
-const mixRgb = (from, to, amount) => from.map((value, index) => Math.round(value + (to[index] - value) * amount));
-const rgbToHex = rgb => '#' + rgb.map(value => value.toString(16).padStart(2, '0')).join('');
 /* 弹出用的缓动：起步速度约为平均的 5.7 倍（很猛），临到落点单次过冲约 13% 再收回，
    而且过冲只发生一次 —— 这是“弹一下”的手感。 */
 const WAKE_BACK = 2.0;
@@ -1462,21 +1499,28 @@ const ARROW_REF_X_PX = 0;           // 绝对尺寸版本的参考点，同样�
 const ARROW_MARKER = 'url(#arrowhead)';
 const ARROW_MARKER_PULSE = 'url(#arrowhead-pulse)';
 
-/* 节点外观全部逐帧写入：存在度决定半径、透明度与音名可见性，flash 决定“刚发声”的染色。
+/* 节点外观全部逐帧写入：存在度决定半径、透明度与音名可见性，颜色是"中性色 ⇄ 本段落色"的混合
+   （规则见 PALETTE 上方的说明），flash 决定"刚发声"多走完剩下的那一段。
+   ★ 点**不画描边**（用户 2026-09："音符点不要描边"），所以这里写死 stroke:none；
+     形状完全靠填充色与底色/连线的关系分出来。
    透明度统一写内联样式：SVG 呈现属性会被 CSS 规则覆盖，写内联样式就不会出现
-   “属性看着对、画面却不可见”的情况（0.3 早期版本的行进层就踩过这个坑）。 */
+   "属性看着对、画面却不可见"的情况（0.3 早期版本的行进层就踩过这个坑）。 */
 const paintNode = node => {
   const presence = Math.max(0, Math.min(1, node.presence));
-  const idleFill = mixRgb(NODE_IDLE_FILL, NODE_PRESENT_FILL, presence);
-  const idleStroke = mixRgb(NODE_IDLE_FILL, NODE_PRESENT_STROKE, presence);
+  const flash = Math.max(0, Math.min(1, node.flash));
+  /* 在场（presence=1）时是 mix(base, 段落色, tint + (1−tint)·flash)：
+     flash=0 就是平时那个"带段落色的点"，flash=1 就是满段落色。
+     淡入 / 退场（presence<1）再整体往中性色回落，于是过渡途中不会突然换色。 */
+  const tinted = mixRgb(NODE_BASE, sectionColorRgb, NODE_TINT + (1 - NODE_TINT) * flash);
   node.circle.setAttribute('cx', node.x);
   node.circle.setAttribute('cy', node.y);
   node.circle.setAttribute('r', HIDDEN_NODE_RADIUS + (GRAPH_NODE_RADIUS - HIDDEN_NODE_RADIUS) * presence);
-  node.circle.setAttribute('fill', rgbToHex(mixRgb(idleFill, sectionColorRgb, node.flash)));
-  node.circle.setAttribute('stroke', rgbToHex(mixRgb(idleStroke, sectionColorRgb, node.flash)));
+  node.circle.setAttribute('fill', rgbToHex(mixRgb(NODE_BASE, tinted, presence)));
+  node.circle.setAttribute('stroke', 'none');
   node.circle.style.opacity = (HIDDEN_NODE_OPACITY + (1 - HIDDEN_NODE_OPACITY) * presence).toFixed(3);
   node.label.setAttribute('x', node.x);
   node.label.setAttribute('y', node.y + 1);
+  node.label.style.fill = rgbToHex(nodeLabelInk);
   node.label.style.opacity = (presence * presence).toFixed(3);
 };
 
@@ -1657,6 +1701,7 @@ const tweenSectionColor = target => {
   if (from.every((value, index) => value === to[index])) {
     visualEl.style.setProperty('--section-color', target);
     sectionColorRgb = to;
+    refreshNodeLabelInk();
     return;
   }
   const startedAt = performance.now();
@@ -1665,6 +1710,7 @@ const tweenSectionColor = target => {
     const eased = progress * progress * (3 - 2 * progress);
     sectionColorRgb = from.map((value, index) => Math.round(value + (to[index] - value) * eased));
     visualEl.style.setProperty('--section-color', rgbToHex(sectionColorRgb));
+    refreshNodeLabelInk();          // 音名墨色跟着段落色走（点被染色后白字会在亮段上糊）
     colorMorphFrame = progress < 1 ? requestAnimationFrame(step) : null;
   };
   colorMorphFrame = requestAnimationFrame(step);
