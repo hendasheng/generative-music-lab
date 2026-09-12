@@ -950,7 +950,12 @@ const updateGraphViewBox = (rescaleNodes = false) => {
    旧版存的是 `{ msg, color }`，于是切主题后老行永远留在旧主题的配色里
    （用户 2026-09："打印的乐句颜色没跟上吧"）。 */
 const logLines = [];
-const log = (msg, section) => {
+/* 上一次写日志的**音频时刻**（用来把行距做成"这一次演奏与上一次之间的间隔"，见下面 log 的注释） */
+let lastLogAt = null;
+/* 日志行距的尺度：名义间隔（= 一句的长度）对应 `LOG_GAP_SCALE` 个行高，最长不超过 `LOG_GAP_MAX_SCALE` 个 */
+const LOG_GAP_SCALE = 1.5;
+const LOG_GAP_MAX_SCALE = 3;
+const log = (msg, section, atSeconds) => {
   const rgb = hexToRgb(sectionColors()[section]) || [255, 255, 255];
   const line = document.createElement('div');
   line.className = 'log-line';
@@ -962,7 +967,24 @@ const log = (msg, section) => {
     logLines.shift();
     logContentEl.firstElementChild.remove();
   }
-  const pushDistance = line.getBoundingClientRect().height;
+  /* ---- 行距 = 这两次演奏之间的**真实间隔**（用户 2026-09："页面中的乐句文本，文本间的间隔就是演奏的
+     间隔，而不是现在这样完全均匀的"）。以前每行固定占一个行高，所以哪怕两句之间隔了很久也长得等距 ——
+     而每一句**真正开始发声的时刻**本来就是动的：句内第一个音落在第几步会变，演奏版本还会整体延后
+     （`late` 0 / 0 / 0.6 / 2.4 秒）。现在把"上一行 → 这一行"的时间差换算成上间距。
+     ★ 用**音频时刻**算，不用帧到达时刻：`Tone.Draw` 的回调会被帧率/后台节流影响，
+       用帧时间会让间隔忽长忽短（假信号）；音频时刻是这段演奏自己的时间轴。
+     ★ 尺度：把"名义间隔"（= 一句的长度 `PHRASE_DURATION_S`）映射成 `LOG_GAP_SCALE` 个行高，
+       于是**平均行距和改动前差不多**，只有快/慢的地方才拉开或收紧；再夹在
+       [一个行高, `LOG_GAP_MAX_SCALE` 个行高] —— 下限保证文字不重叠，上限避免长静默吃掉整屏。 */
+  const textHeight = line.getBoundingClientRect().height;   // 此刻还没加上间距，量到的就是"文字本身"的高度
+  const gapSeconds = (typeof atSeconds === 'number' && lastLogAt !== null)
+    ? Math.max(0, atSeconds - lastLogAt)
+    : PHRASE_DURATION_S;                                    // 第一行 / 拿不到时刻：按名义间隔排
+  if (typeof atSeconds === 'number') lastLogAt = atSeconds;
+  const wantedHeight = gapSeconds * (LOG_GAP_SCALE * textHeight / PHRASE_DURATION_S);
+  const lineHeight = Math.max(textHeight, Math.min(LOG_GAP_MAX_SCALE * textHeight, wantedHeight));
+  const pushDistance = lineHeight;
+  line.style.paddingTop = Math.max(0, lineHeight - textHeight).toFixed(1) + 'px';
   logContentEl.style.transition = 'none';
   logContentEl.style.transform = `translateY(${pushDistance}px)`;
   void logContentEl.offsetHeight;
@@ -3041,7 +3063,7 @@ const activateEngine = async seed => {
         visualPhraseId += 1;
         phraseVisualId = visualPhraseId;
         setStatus(statusHtml);
-        log(logLine, section);
+        log(logLine, section, visualStartTime);
         swapVisualText(
           SECTION_NAMES[section] + ' · 乐句 ' + String.fromCharCode(65 + phraseIndex),
           variant.name + ' · ' + playedEvents.length + '/' + rawNoteCount
