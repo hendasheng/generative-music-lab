@@ -25,7 +25,7 @@
      而是同一张图的底片：面板始终比底色亮一点、节点始终比底色灰一点、墨色始终反过来。 */
   :root {
     color-scheme:dark;
-    --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32; --accent2:#fafafa;
+    --bg:#09090b; --panel:#18181b; --fg:#fafafa; --dim:#a1a1aa; --line:#2d2d32;
     --hairline:#2a2a2e;              /* 面板内的细分隔线（.status / .matrix） */
     --log-fg:#f4f4f5;
     --code-bg:#27272a; --code-fg:#e4e4e7;
@@ -784,7 +784,6 @@ let graphMotion = {
   hiddenLayer: null,
   nodeLayer: null,
   ringPhase: 0,                    // 环的朝向：由本句首音的槽位算出（见 applyPhraseVisual），不是随机数
-  ringScale: 1,                    // 环的半径倍率（固定 1；每点的半径差异来自本句活跃度，见 layoutGraph）
   activity: new Map(),             // 本句里每个音高的活跃度（发声次数 ÷ 本句最高次数，0~1）
 };
 let graphAnimationFrame = null;
@@ -1523,8 +1522,8 @@ const RING_FILL_X = 0.36;      // 环的半宽 ÷ 视口半宽
 const RING_FILL_Y = 0.32;      // 环的半高 ÷ 视口半高
 const RING_MIN_RADIUS = 80;    // 极小窗口的止损（免得 14 个点挤成一团）
 const layoutGraph = () => {
-  const radiusX = Math.max(RING_MIN_RADIUS, graphViewport.width * RING_FILL_X) * graphMotion.ringScale;
-  const radiusY = Math.max(RING_MIN_RADIUS, graphViewport.height * RING_FILL_Y) * graphMotion.ringScale;
+  const radiusX = Math.max(RING_MIN_RADIUS, graphViewport.width * RING_FILL_X);
+  const radiusY = Math.max(RING_MIN_RADIUS, graphViewport.height * RING_FILL_Y);
   graphMotion.nodes.forEach((node, index) => {
     const angle = index / Math.max(1, graphMotion.nodes.length) * Math.PI * 2 - Math.PI / 2 + graphMotion.ringPhase;
     /* 半径 = 槽位的一点固定抖动 × 本句活跃度（见 RING_ACTIVITY_PULL 的说明）：
@@ -1742,7 +1741,6 @@ const applyPhraseVisual = (section, morphSeconds, phraseShape) => {
   const nodes = graphMotion.nodes;
   const indexOfNote = new Map(nodes.map((node, index) => [node.note, index]));
   const slotCount = Math.max(1, nodes.length);
-  graphMotion.ringScale = 1;
   if (phraseShape && phraseShape.firstNote !== null && indexOfNote.has(phraseShape.firstNote)) {
     /* 朝向：目标是"把本句首音的槽位摆到正上方"（相位 = −槽位角），
        但**每句最多转 RING_ORIENT_STEP**（半个槽位），沿环上最短的一侧靠过去 ——
