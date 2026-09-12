@@ -931,23 +931,23 @@ const syncEdgeArrow = edge => {
 /* 骑行箭头：把"一小段曲线"的终点放在正在移动的头部，让 marker 跟着头部走、
    并按 **曲线在该处的切线** 定方向（用户要求：不能固定在结尾朝向）。
    dir = +1 表示头部沿曲线正向移动（起点端 → 终点端），−1 表示反向。
-   ★ 路径末端取 head − 8.8·dir：参考点在箭头底边中点（refX = 0），所以路径末端就是箭头底边、
-     尖端在路径末端之外 ARROW_LENGTH = 8.8 处 —— 这样**尖端正好落在头部**，
-     整支箭头压在已经上色的那一段上，明度和它骑的那段线一致。
-   ★ 取样 4 个点覆盖头部前约 HEAD_ARROW_BACK 个用户单位：够长到让切线稳定，
-     又短到能跟住曲线本身的弯曲（所以方向来自"曲线在这里的切线"，不是整条线的朝向）。 */
+   ★ **路径末端就放在头部上**：参考点是箭头底边中点（refX = 0），所以箭头**底边正好压在线的端点上**，
+     与静止时"线尾停在箭头底边上"的关系完全一致 ——
+     ① 线头（连同 2.4 宽描边的圆头）都藏在箭头较宽的身体里，不会从箭头旁边露出来（用户报过"线的端点会超出箭头"）；
+     ② 颜色到位时这支箭头的位置与"停在终点的那支"逐点重合，交接时不会出现"箭头突然往前弹一下"。
+     （早期版本把**尖端**放在头部上，于是线头露出 1 段、交接时位置差一个箭头长度 —— 两个毛病都来自这里。）
+   ★ 取样 4 个点覆盖头部前 HEAD_ARROW_BACK 个用户单位：够长到切线稳定，
+     又短到能跟住曲线本身的弯曲（所以方向来自"曲线在这里的切线"，不是整条线的朝向）。
+     ⚠️ 取样顺序必须**从后往前排到头部**：marker 朝向取自末端那一小段，写反会正好掉头 180°。 */
 const HEAD_ARROW_BACK = 12;
 const updateHeadArrow = (edge, head, dir, length) => {
   const headPath = edge.headPath;
   const clampAt = at => Math.max(0, Math.min(length, at));
-  const tipAt = clampAt(head - dir * ARROW_LENGTH);
-  const backAt = clampAt(head - dir * (ARROW_LENGTH + HEAD_ARROW_BACK));
+  const endAt = clampAt(head);
+  const backAt = clampAt(head - dir * HEAD_ARROW_BACK);
   const points = [];
-  /* ★ 取样必须从"后面"往"头部"排：marker 的朝向取自**路径末端那一小段的方向**，
-     所以最后一个点要落在箭头的尖端位置、倒数第二个点在它后面 ——
-     顺序写反的话箭头会正好掉头 180°（实测 dotWithTangent = −1）。 */
   for (let i = 0; i <= 3; i += 1) {
-    const p = edge.pulsePath.getPointAtLength(clampAt(backAt + (tipAt - backAt) * (i / 3)));
+    const p = edge.pulsePath.getPointAtLength(clampAt(backAt + (endAt - backAt) * (i / 3)));
     points.push(`${p.x.toFixed(2)} ${p.y.toFixed(2)}`);
   }
   headPath.setAttribute('d', 'M ' + points.join(' L '));
