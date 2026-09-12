@@ -101,7 +101,7 @@
   /* 节点的存在度、半径、颜色由 JS 逐帧写入（见 paintNode）：节点会在“藏身层”和
      “在场层”之间搬动，而 DOM 搬动会重启动 CSS 过渡，所以节点不用 CSS 过渡。 */
   .chain-node { stroke-width:1; }
-  /* 音名的字色由 JS 每帧写内联（在 PALETTE 的两个候选里按点本来的颜色自动挑，见 labelInkFor），
+  /* 音名的字色由 JS 每帧写内联（取 PALETTE 里那一个 `labelInk`，压不出对比度时自动退回安全墨色，见 refreshNodeLabelInk），
      这里不写 fill：写死一种颜色就会在"把 nodeBase 换成亮色"的时候糊掉。 */
   .node-label { font:600 12px Consolas,monospace; text-anchor:middle; dominant-baseline:middle; pointer-events:none; }
   .legend { position:absolute; z-index:3; left:50%; bottom:18px; display:flex; gap:18px; color:var(--dim); font-size:11px; transform:translateX(-50%); transition:opacity .2s ease; }
@@ -376,12 +376,11 @@ const PALETTE = {
   dark: {
     stageBg: '#0d0d0f',                                     // 背景色（画面底，.markov-stage）
     edge: '#71717a',                                        // 未激活的连线（灰色转移线）
-    nodeBase: '#52525b',                                    // 乐句点**本来的颜色**（平时就长这样）
+    nodeBase: '#414149',                                    // 乐句点**本来的颜色**（平时就长这样）
     edgeFadeFrom: 1,                                        // 连线渐变：**起点端**的墨浓度
     edgeFadeTo: 0.3,                                        // 连线渐变：**终点端**的墨浓度（谁亮谁暗 = 方向）
-    labelInkLight: '#ffffff',                               // 音名的字色 · 浅墨（候选一，见下面的说明）
-    labelInkDark: '#18181b',                                // 音名的字色 · 深墨（候选二）
-    sections: ['#D332FF', '#8DFE03', '#FFCD04', '#FA2251'], // A 紫 / B 绿 / C 橙 / D 粉 = 被激活时的颜色
+    labelInk: '#ffffff',                                    // 音名的字色（压在 nodeBase 上要看得清）
+    sections: ['#624DFF', '#8DFE03', '#FF7904', '#FA2251'], // A 紫 / B 绿 / C 橙 / D 粉 = 被激活时的颜色
   },
   light: {
     stageBg: '#f4f4f5',
@@ -389,8 +388,7 @@ const PALETTE = {
     nodeBase: '#C2C2C2',
     edgeFadeFrom: 1,
     edgeFadeTo: 0.3,
-    labelInkLight: '#ffffff',
-    labelInkDark: '#A0A0A7',
+    labelInk: '#18181b',
     sections: ['#FFC228', '#2558FF', '#FF741E', '#45C674'], // A / B / C / D
   },
 };
@@ -405,9 +403,11 @@ const PALETTE = {
  * ★ 曾经把这段读成"平时也该带一点段落色"，加过 `nodeTint`（`mix(nodeBase, 段落色, tint)`）——
  *   结果整圈都变成段落色、看不出"本来的颜色"了，用户直接指出："现在全部都成乐句颜色了"。
  *   不要再往这个方向改：平时的点必须是它自己的颜色。
- * ★ 音名的字色是 `labelInkLight` / `labelInkDark` **两个候选**，代码按 `nodeBase` 的明暗
- *   自动挑对比度更高的那个（`labelInkFor`）—— 所以把 `nodeBase` 换成亮色时字不会糊。
- *   想强制只用一种，把两个候选写成同一个色值即可（那样自动挑选就等于没挑）。
+ * ★ 音名的字色就是 `labelInk` **一个键**：曾经做成"浅墨/深墨两个候选 + 自动挑对比度高的"，
+ *   结果被读成"浅色主题的字色 / 深色主题的字色"，两边各填了一组同明度的值，
+ *   于是两套主题里音名都糊在点上（实测深色 `#18181b` 压 `#414149` = 1.8:1、
+ *   浅色 `#ffffff` 压 `#C2C2C2` = 1.6:1）。**键名要说清"它是什么"，不能靠猜**；
+ *   现在是一个明确的字色，只有对比度低于 3:1 时才自动退回白/深墨并报警。
  * ★ **常规连线不画箭头**，方向由 `edgeFadeFrom` / `edgeFadeTo` 这对浓度值表达：
  *   每条线是一个以自己弦为轴的线性渐变，从起点端（`edgeFadeFrom`）过渡到终点端（`edgeFadeTo`）。
  *   默认"起点亮、终点淡"，于是终点端那截"箭头位"正好被渐隐吃掉、不会显得线被截断；
@@ -1370,13 +1370,17 @@ const rgbToHex = rgb => '#' + rgb.map(value => value.toString(16).padStart(2, '0
 /* 点的颜色是**逐帧用 RGB 三元组插值**算出来的（见 paintNode 的 mixRgb），没法直接吃 CSS 变量，
    所以这个值由 applyTheme() 从 PALETTE 读进来（用 let 就是为了切主题时能重赋值）。 */
 let NODE_BASE = [82, 82, 91];      // #52525b：乐句点本来的颜色（平时就长这样）
-/* 音名的字色有**两个候选**（在 PALETTE 里：`labelInkLight` / `labelInkDark`），
-   由 applyTheme() 读进来，再按**点本来的颜色**自动挑对比度更高的那个（labelInkFor）——
-   所以它不是"一个固定色"，而是"深浅两个候选 + 一个自动选择"；
-   想让字色固定，把两个候选写成同一个色值就行。平时那个颜色不随段落变，所以不用跟着换段重挑。 */
-let LABEL_INK_LIGHT = [255, 255, 255];
-let LABEL_INK_DARK = [24, 24, 27];
-let nodeLabelInk = LABEL_INK_LIGHT;
+/* 音名的字色：**一个键 `PALETTE[*].labelInk`**（用户要求字色也在调色板里）。
+   ★ 曾经做成"两个候选（浅墨/深墨）+ 自动挑对比度高的那个"，结果用户把两个键读成了
+     "浅色主题的字色 / 深色主题的字色"，两边各填了一组同明度的值 —— 于是两套主题里
+     音名都糊在点上（实测深色 #18181b 压 #414149 = 1.8:1、浅色 #ffffff 压 #C2C2C2 = 1.6:1）。
+     名字必须说清"这是什么"，不能靠猜；现在就是一个明确的字色。
+   ★ 容错：如果这个字色压在点本来的颜色上对比度太低（< LABEL_INK_MIN_CONTRAST），
+     就退回"白墨/深墨"里更清楚的那个，并在控制台点名（既不会糊，也不会静默地替用户做决定）。 */
+const LABEL_INK_FALLBACK_LIGHT = [255, 255, 255];
+const LABEL_INK_FALLBACK_DARK = [24, 24, 27];
+const LABEL_INK_MIN_CONTRAST = 3;
+let nodeLabelInk = LABEL_INK_FALLBACK_LIGHT;
 const relativeLuminance = rgb => {
   const channel = value => {
     const c = value / 255;
@@ -1388,15 +1392,28 @@ const contrastRatio = (a, b) => {
   const la = relativeLuminance(a), lb = relativeLuminance(b);
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 };
-const labelInkFor = fill => (contrastRatio(fill, LABEL_INK_LIGHT) >= contrastRatio(fill, LABEL_INK_DARK)
-  ? LABEL_INK_LIGHT : LABEL_INK_DARK);
-/* 只有 `nodeBase` 变了才需要重挑（换主题、手改调色板）—— 段落色怎么变都不影响它 */
-const refreshNodeLabelInk = () => { nodeLabelInk = labelInkFor(NODE_BASE); };
+/* 点本来的颜色变了（换主题、手改调色板）才需要重算一次；段落色怎么变都不影响字色 */
+const refreshNodeLabelInk = () => {
+  const wanted = nodeLabelInk;
+  if (contrastRatio(NODE_BASE, wanted) >= LABEL_INK_MIN_CONTRAST) return;
+  const fallback = contrastRatio(NODE_BASE, LABEL_INK_FALLBACK_LIGHT) >= contrastRatio(NODE_BASE, LABEL_INK_FALLBACK_DARK)
+    ? LABEL_INK_FALLBACK_LIGHT : LABEL_INK_FALLBACK_DARK;
+  console.warn('[调色板] labelInk ' + rgbToHex(wanted) + ' 压在 nodeBase ' + rgbToHex(NODE_BASE)
+    + ' 上只有 ' + contrastRatio(NODE_BASE, wanted).toFixed(2) + ':1，音名会看不清；已临时改用 '
+    + rgbToHex(fallback) + '（' + contrastRatio(NODE_BASE, fallback).toFixed(2) + ':1）');
+  nodeLabelInk = fallback;
+};
 const SECTION_COLOR_MORPH_S = 2.4;  // 段落色渐变时长
 let graphBuilt = false;
 let colorMorphFrame = null;
 let visualTextTimer = null;
 let sectionColorRgb = [205, 98, 236];   // = 深色主题的段落色 A（#CD62EC），与 CSS 里的默认值一致
+/* 当前画面上是哪个段落（0=A…3=D），由 applyPhraseVisual 写。
+   ★ 这是**顶层**状态：主题按钮要用它把"当前段落的颜色"接到新主题上。
+     ⚠️ 不要在那句里用 `currentSection` —— 那个名字在顶层不存在（两处 `let currentSection` 分别在
+     段落链工厂与 activateEngine 内部），引用它会抛 ReferenceError；而它正好是 handler 的最后一句，
+     于是表现成"主题切了、段落色没跟着切"（用户 2026-09 报的"只有背景变"）。 */
+let currentVisualSection = 0;
 
 /* ---------- 主题：深色 / 浅色（HUD 右上角的按钮） ----------
  * 用户 2026-09：“准备调整配色，先在 HUD 里加 light/dark 按钮”。
@@ -1471,9 +1488,8 @@ const applyTheme = theme => {
   applyEdgeInk(palette);
   /* 点颜色是逐帧插值出来的，直接吃 RGB 数组（paintNode 每帧重画，所以这里改完立刻生效） */
   NODE_BASE = hexToRgb(palette.nodeBase) || NODE_BASE;
-  /* 音名的深浅两个候选，然后按 nodeBase 重挑一次（点本来的颜色变了，字色可能也要换） */
-  LABEL_INK_LIGHT = hexToRgb(palette.labelInkLight) || LABEL_INK_LIGHT;
-  LABEL_INK_DARK = hexToRgb(palette.labelInkDark) || LABEL_INK_DARK;
+  /* 音名字色：读进来 → 如果压在 nodeBase 上太糊就报警并退回安全的白/深墨（见 refreshNodeLabelInk） */
+  nodeLabelInk = hexToRgb(palette.labelInk) || nodeLabelInk;
   refreshNodeLabelInk();
   if (!themeToggleEl) return;
   const next = themeName === THEME_LIGHT ? THEME_DARK : THEME_LIGHT;
@@ -1490,9 +1506,18 @@ if (themeToggleEl) {
     /* 段落色也分主题，所以要重新指向"当前段落在新主题里的那个色"：
        走和换段完全一样的插值（SECTION_COLOR_MORPH_S 秒），
        因为"颜色永远不跳变"这条规则对主题切换同样成立。
-       这里不写进 applyTheme() 里是因为 applyTheme 在脚本中段就会被调用一次，
-       而 tweenSectionColor / currentSection 那时还没声明（会踩 TDZ）。 */
-    tweenSectionColor(sectionColors()[currentSection]);
+       ★ 用顶层状态 `currentVisualSection`（applyPhraseVisual 写的），**不要用 `currentSection`** ——
+         这个名字在顶层不存在（那两处 `let currentSection` 分别在段落链工厂与 activateEngine 内部），
+         引用它会抛 `ReferenceError`，而它正是这个 handler 的最后一句 ——
+         于是"主题切了、段落色没跟着切"（用户 2026-09 报的"只有背景变"就是这个：
+         段落色管着刚发声的点、彩色连线、图例彩点与日志文字，它们会一直停在旧主题的颜色上）。
+       ★ 这里必须真正跑完：所以包一层 try 并显式报错，免得以后再出类似问题又变成"静默半切换"。 */
+    try {
+      tweenSectionColor(sectionColors()[currentVisualSection]);
+    } catch (error) {
+      console.warn('[主题] 切换后没能把当前段落色接到新主题上：', error);
+      tweenSectionColor(sectionColors()[0]);
+    }
   });
 }
 applyTheme(document.documentElement.dataset.theme);
@@ -1800,6 +1825,7 @@ const applyPhraseVisual = (section, morphSeconds, phraseShape) => {
       sectionEdgeCounts.set(key, (sectionEdgeCounts.get(key) || 0) + 1);
     });
   });
+  currentVisualSection = section;   // 顶层状态：主题按钮靠它把"当前段落的颜色"接到新主题上
   tweenSectionColor(sectionColors()[section]);
   /* 先按**这一句的音乐**重算环的朝向、每个点的半径，再重算所有“家”位置：
      这样连“本来就是乐句点”的那些点也会移动，整体都有跨度（用户反馈：否则只有非激活点在动）。
