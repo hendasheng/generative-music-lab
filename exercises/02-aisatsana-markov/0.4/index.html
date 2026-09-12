@@ -235,10 +235,15 @@
       （3 圈同心环 + 6 根短放射线，减速外扩、描边细到 0 才消失）；
       一段鸟叫里来好几发（开场一发，之后约每 4–6 秒一发，跟着这一层的淡入快慢走）。
       它<b>只跟 birds 有关</b>：<b>三圈各取一个色相、跟随当前段落色</b>（换段/切主题整组一起变），
-      <b>大小与击发节奏都和这一层的声音</b>挂钩。形式借鉴自 okazz 的
+      <b>大小与击发节奏都和这一层的声音</b>挂钩。<br>
+      <b>调试图方便：</b>在画面上<b>任意位置点一下，就在点击处炸一发</b> ——
+      参数取的就是 birds 那一份（所以看到的就是真鸟叫时会看到的那一发），不用等鸟叫；
+      点出来的这一发<b>固定不动用随机流</b>（每次点都一样，方便改一个常量再点一次做对比），
+      所以点与不点都不影响真鸟叫那几发。见 <code>DEBUG_CLICK_BURST</code>。<br>
+      形式借鉴自 okazz 的
       <code>240809a</code>（<a href="https://openprocessing.org/sketch/2326097" target="_blank" rel="noreferrer">openprocessing</a>，CC BY-NC-SA），
       只借思路、未使用其代码。<br>
-      <b>操作：</b>点击画面隐藏 / 显示界面；按 <code>f</code> 全屏、再按一次退出。<br>
+      <b>操作：</b>点击画面隐藏 / 显示界面（同时在点击处起爆一发调试涟漪）；按 <code>f</code> 全屏、再按一次退出。<br>
       <b>与 01 的对照：</b>01 是"从零生成"（和弦进行 + 动机发展）；这里是"<b>记忆 + 重排</b>"——
       音符 100% 来自素材，但顺序被概率重组，听感像"同一首曲子的不同演奏"。<br>
       <b>钢琴音色：</b>真实采样 <code>vsco2-piano-mf</code>（VSCO2 免费钢琴库，CC0），经 jsDelivr GitHub 镜像远程加载
@@ -1654,6 +1659,18 @@ const BURST_CADENCE_MAX_S = 6;
 const BURST_CADENCE_JITTER = 0.22;
 /* 一发涟漪至少要有这么大比例落在"还能听到这层"的时间窗里（最后一发因此不会整发都落在静音里） */
 const BURST_IN_WINDOW_RATIO = 0.5;
+/* ---- 调试：点击起爆（用户 2026-09："增加一个调试，鼠标点击的时候就在点击来一发，不然还得专门等着"）----
+   birds 每 55–115 秒才出现一次（一段里 4–7 发），要调涟漪的观感就得干等，所以给一个手动入口：
+   **在画面上点一下，就在点击的位置炸一发**。
+   ★ 参数取 `MOODIST_TEXTURES` 里 birds 那一份（不是另写一组"调试用的数"）——
+     否则调好的东西和真鸟叫看到的不一样，这个入口就没有意义了（调试必须与被调试对象同参）。
+   ★ 它**不是**新的声音映射：`onTextureStart` 那条"只认 birds"的规则一个字没动，
+     这只是调试注入口（页面说明里也写明）。
+   ★ 点击起爆**不消耗 `burstRng`**（色相偏移取 0、放射角取 0）：一来每次点都一样，
+     方便"改一个常量 → 点一次 → 对比"；二来点与不点都不影响真鸟叫那几发的随机序列 ——
+     调试行为不该改变被调试对象（和"视觉侧不消耗 textureRng"是同一条原则，只是输入换成了鼠标）。
+   要关掉就把下面这个开关写成 false。 */
+const DEBUG_CLICK_BURST = true;
 
 const bursts = [];
 let burstLayer = null;
@@ -1701,16 +1718,21 @@ const ensureBurstLayer = () => {
 };
 
 /* 起爆。texture = 那一层环境音的配置（只需要 targetGain / fade / pan 三个数）。
+   at = 可选的 { fx, fy } 视口比例（0–1）：给了就用它当爆点，也就是**调试点击那一发**（见 DEBUG_CLICK_BURST）；
+   不给就按这一层的 `pan` 与种子抖动算位置（真鸟叫走的就是这条路）。
    ⚠️ 位置与半径都按**视口比例**存（fx/fy + 设计单位半径），逐帧再乘当前视口 —— 这样它在全屏切换、
       窗口缩放时仍然待在同一个相对位置、按同一比例缩放（和 §12 的"设计单位"是一回事）。 */
-const spawnBurst = texture => {
+const spawnBurst = (texture, at) => {
   const layer = ensureBurstLayer();
   ensureGraphAnimation();     // 视觉主循环必须活着（图还没建起来时也要能画这一发）
   const gain = Math.max(0, Math.min(1, (texture.targetGain || 0) / BURST_GAIN_REFERENCE));
   const grow = burstGrowSeconds(texture);
-  const fx = 0.5 + (texture.pan || 0) * BURST_PAN_SPREAD;
-  const fy = 0.5 + (burstRng() * 2 - 1) * BURST_Y_JITTER;
-  const hueBase = (burstRng() * 2 - 1) * BURST_HUE_JITTER;   // 这一发整体的色相偏移
+  /* 点击起爆的位置就是点击处，而且**不动用随机流**（见 DEBUG_CLICK_BURST：每次点都一模一样，
+     也不影响真鸟叫那几发）——所以下面四处 `at ? … : burstRng()` 里的三元是有意写成这样的：
+     随机数只在"真鸟叫"那条路上被消耗。 */
+  const fx = at ? at.fx : 0.5 + (texture.pan || 0) * BURST_PAN_SPREAD;
+  const fy = at ? at.fy : 0.5 + (burstRng() * 2 - 1) * BURST_Y_JITTER;
+  const hueBase = at ? 0 : (burstRng() * 2 - 1) * BURST_HUE_JITTER;   // 这一发整体的色相偏移
   const parts = [];
   for (let i = 0; i < BURST_RING_COUNT; i += 1) {
     const ring = svgNode('circle', { class: 'burst-ring', cx: 0, cy: 0, r: 0 });
@@ -1730,7 +1752,7 @@ const spawnBurst = texture => {
     });
   }
   const spokeLife = grow * BURST_SPOKE_LIFE_RATIO;
-  const baseAngle = burstRng() * Math.PI * 2;
+  const baseAngle = at ? 0 : burstRng() * Math.PI * 2;
   /* 放射线：起爆那一下的颜色取"本段落色与第一圈之间"的中间色相 —— 这样它和两圈都不是同一个色，
      整发凑起来就是一套配色（三圈 3 色 + 放射线 1 色），而不是单色。 */
   const spokeHue = hueBase * 0.5 + (BURST_RING_HUE_SHIFT[0] || 0) * 0.5;
@@ -1742,7 +1764,7 @@ const spawnBurst = texture => {
     parts.push({
       el: spoke, shape: 'spoke', t0: 0, life: spokeLife, stroke0: BURST_SPOKE_STROKE,
       hueShift: spokeHue,
-      angle: baseAngle + i / BURST_SPOKE_COUNT * Math.PI * 2 + (burstRng() - 0.5) * 0.22,
+      angle: baseAngle + i / BURST_SPOKE_COUNT * Math.PI * 2 + (at ? 0 : (burstRng() - 0.5) * 0.22),
       length: (BURST_RADIUS_MIN + (BURST_RADIUS_MAX - BURST_RADIUS_MIN) * gain) * 1.22,
     });
   }
@@ -1815,6 +1837,35 @@ const onTextureStart = (texture, time, duration) => {
     offset += Math.max(BURST_CADENCE_MIN_S * 0.5, cadence * (1 + (burstRng() * 2 - 1) * BURST_CADENCE_JITTER));
   }
 };
+
+/* 点击处 → 视口比例（0–1）。用 `getScreenCTM()` 的逆变换换算，而不是拿 `getBoundingClientRect()`
+   的比例去硬除：viewBox 与元素尺寸在极端窗口下会有细微差别（宽高被 `Math.max(320, …)` 钳过、
+   还有浏览器对 viewBox 的取整），而 CTM 是浏览器自己算的那一份，必然与它画出来的一致
+   （和 §12"量屏幕尺寸必须过 getScreenCTM"是同一条经验）。 */
+const burstRatioAtEvent = event => {
+  const ctm = markovMapEl.getScreenCTM();
+  if (!ctm) return null;
+  const local = new DOMPoint(event.clientX, event.clientY).matrixTransform(ctm.inverse());
+  return { fx: local.x / graphViewport.width, fy: local.y / graphViewport.height };
+};
+
+/* 调试：在点击处起爆（见 DEBUG_CLICK_BURST 的注释）。
+   ★ 这条监听与页面控件那一节"点击隐藏 / 显示界面"是**两条独立监听挂在同一个元素上**的
+     （点一下两件事都发生：HUD 照旧切换，同时炸一发），所以别把它并进那个 handler ——
+     那个管界面显隐、这条只管视觉调试，各自可以单独删掉而互不影响。
+   ★ 挂在 `.markov-stage` 上而不是 document 上：播放 / 种子 / 主题按钮都在 `.hud` 里，
+     而 `.hud` 是这个 stage 的**兄弟节点**，所以点控件不会冒泡到这里（不会一边点播放一边炸涟漪）。
+     会冒泡进来的是 `.visual-head` 与 `.legend`（它们是这个 stage 的子节点），那两处都是纯文字，无害。 */
+if (DEBUG_CLICK_BURST) {
+  visualEl.addEventListener('click', event => {
+    /* 取的是真 birds 那一份配置 —— 调试入口必须与被调试对象同参，否则调好的东西不是真鸟叫看到的那一发 */
+    const texture = MOODIST_TEXTURES.find(item => item.name === 'birds');
+    const at = texture && burstRatioAtEvent(event);
+    if (!at) return;
+    spawnBurst(texture, at);
+    console.info('[debug] 点击起爆', `fx=${at.fx.toFixed(3)} fy=${at.fy.toFixed(3)}`);
+  });
+}
 
 /* ---------- 连线与箭头的几何（参考点决定“路径末端落在箭头的哪个位置”） ----------
  * 用户先后报过两个同源的毛病：①“线看起来超出了箭头”、②“线都长完了，箭头的三角还有点透明，
