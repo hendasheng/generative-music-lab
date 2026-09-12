@@ -30,14 +30,15 @@
      段落的更替不会产生任何瞬时跳变。CSS 时长与 JS 里的 GRAPH_*_S 需保持一致。 */
   /* 灰色转移边：是否属于当前段落由 JS 用 dash 生长表达（从起点画到终点），不是淡入，
      所以这里不写 opacity 过渡，避免和逐帧写入的内联样式打架。
-     ★ 明度（= 该转移的马尔可夫概率）也由 JS 写内联样式。 */
-  .chain-edge { fill:none; stroke:#71717a; stroke-width:1.1; stroke-opacity:.8;
-    transition:stroke 1.2s ease-out,stroke-opacity 1.2s ease-out,stroke-width 1.2s ease-out; }
+     ★ 明度（= 该转移的马尔可夫概率）也由 JS 写内联样式。
+     ★ stroke-width 由 JS 按 EDGE_STROKE_WIDTH 写进 path 属性（箭头尺寸依赖它），单一来源。 */
+  .chain-edge { fill:none; stroke:#71717a; stroke-opacity:.8;
+    transition:stroke 1.2s ease-out,stroke-opacity 1.2s ease-out; }
   /* 行进到位后底边只换颜色：★ 绝不能同时改 stroke-width —— 箭头是 markerUnits="strokeWidth"，
      描边一变粗箭头就会跟着放大（0.3 早期版本就是这样让彩色箭头比灰箭头大了一倍多）。
      颜色用 0.12 秒快速切换（箭头要“到点亮起”），退色仍走基础规则的 1.2 秒。 */
   .chain-edge.active { stroke:var(--section-color);
-    transition:stroke .12s ease-out,stroke-opacity 1.2s ease-out,stroke-width 1.2s ease-out; }
+    transition:stroke .12s ease-out,stroke-opacity 1.2s ease-out; }
   /* 激活的转移不用“整条变色”，而是让彩色沿曲线从起点长到终点：
      覆盖层用 stroke-dasharray = 全长、stroke-dashoffset 由全长推到 0，
      走完之前只有头段被揭示出来。进度由 JS 逐帧写入（时长按音程算，见 startEdgePulse）。
@@ -131,7 +132,8 @@
       <b>每个点速度不同</b>，而且允许飞到首音之后才落位。
       <b>连线也一起生长</b>：一端刚变成乐句点的转移<b>朝那个新点</b>长过去（新点在起点端就从另一端长过来）；
       两端本来就是在场的乐句点时，连线只是跟着点移动，不重新生长。
-      整段结构变化都发生在“上一个音 → 本句首音”这个<b>实际间隔</b>里、正好在首音收尾，
+      整段结构变化<b>在首音那一刻开始</b>，时长基准是<b>本句内部第一个音程</b>（首音 → 第二个音）：
+      于是变换跟着音乐发生（旧版落在“上一句尾音 → 本句首音”的空白里，那段区间没有新音，观感很干）。
       所以不会出现“一条还没长完、另一条已经开始”。
       转移被激活时不是整条变色，而是<b>彩色沿曲线从起点走到终点，到达终点时箭头才亮起</b>；
       <b>同一个音程同时决定三件事</b>：彩色行进走多久、这个点从亮到暗用多久、箭头何时亮 ——
@@ -650,8 +652,8 @@ const dynamicEdgePath = (a, b) => {
   const cy = (a.y + b.y) / 2 + dx / length * bend;
   const startX = a.x + dx / length * (GRAPH_NODE_RADIUS + 2);
   const startY = a.y + dy / length * (GRAPH_NODE_RADIUS + 2);
-  const endX = b.x - dx / length * (GRAPH_NODE_RADIUS + 4);
-  const endY = b.y - dy / length * (GRAPH_NODE_RADIUS + 4);
+  const endX = b.x - dx / length * (GRAPH_NODE_RADIUS + 4 + ARROW_TAIL_INSET);
+  const endY = b.y - dy / length * (GRAPH_NODE_RADIUS + 4 + ARROW_TAIL_INSET);
   return `M ${startX} ${startY} Q ${cx} ${cy} ${endX} ${endY}`;
 };
 
@@ -789,8 +791,8 @@ const edgeOpacityFor = probability => EDGE_OPACITY_MIN
 const setEdgePresence = (edge, present, time, change, durationSeconds) => {
   const target = present ? 1 : 0;
   if (edge.presenceTarget === target) return;   // 幂等：重复应用同一段落不会再长一遍
-  /* 时长与音符间隔挂钩：本段落的结构变化整个发生在“上一个音 → 本句首音”这个间隔里，
-     所以每条线都会在首音（也就是第一次发声）之前走完，不会和后续的行进叠在一起。 */
+  /* 时长与音符间隔挂钩：整段结构变化的时长基准是**本句内部第一个音程**（首音 → 第二个音），
+     而且重组从首音那一刻开始 —— 于是变换是跟着音乐发生的，而不是跑在无音的空白里。 */
   const duration = durationSeconds || (target ? EDGE_GROW_S : EDGE_RETRACT_S);
   edge.presenceFrom = edge.presence;
   edge.presenceTarget = target;
@@ -969,8 +971,9 @@ const PRESENCE_FALL = 0.4;
    时长不是常数，而是**这段结构变化所占据的音符间隔**（见 GRAPH_MORPH_*）：
    用户指出固定时长会“一条还没长完，另一条已经开始了”——生长必须与音符间隔关联，
    这样每一条线都会在下一次发声之前走完。反向生长同理（用户明确要求）。 */
-const MORPH_MIN_S = 0.32;               // 间隔至少这么长（否则比一次弹出还短）
-const MORPH_MAX_S = 1.6;                // 也不提前太多开始重组
+const MORPH_MIN_S = 0.32;               // 时长基准（本句内部第一个音程）的钳制下限
+const MORPH_MAX_S = 1.6;                // 上限：再长就该怀疑是异常数据了
+const MORPH_LEAD_S = 0.05;              // 重组相对首音的提前量（避免视觉比听感晚一帧）
 const EDGE_GROW_S = 0.7;                // 兜底值：只有在拿不到间隔时才用
 const EDGE_RETRACT_S = 0.6;             // 兜底值，同上
 /* 推挤与漂移：只用来避免节点叠在一起、并让环有呼吸。
@@ -1021,6 +1024,19 @@ const easeOutCubic = progress => 1 - Math.pow(1 - progress, 3);
    末段迅速淡掉 —— 而末段正好是它钻进宿主背后的时刻，于是观感是“被挡住了”。 */
 const easeInCubic = progress => progress * progress * progress;
 
+/* ---------- 连线与箭头的几何（箭头是挂在路径末端上的，改线尾必须同时补偿 marker） ----------
+ * 用户反馈：箭头收尖处，连线的方头会露出来，看起来像“线超出了箭头”。
+ * 原因是连线描边 1.1 宽，而箭头在收尖的最后一段比它还窄。
+ * 做法：把线尾往回缩 ARROW_TAIL_INSET 用户单位，同时按同样的距离缩小 marker 的 refX ——
+ * 参考点就是“路径末端在箭头坐标系里的位置”，所以 refX 缩小多少，箭头就往前挪多少，
+ * 与线尾的回缩正好相抵：**箭头的位置一动不动，线尾却退进了箭头较宽的身体里**。
+ * 这个补偿对两种浏览器实现（内容按描边缩放 / 不缩放）都成立，因为线尾都落在箭头 2~3 倍宽的位置。 */
+const EDGE_STROKE_WIDTH = 1.1;      // 灰色转移线的描边宽度（同时写进 path 属性，避免和 CSS 两处维护）
+const ARROW_WIDTH = 8;              // marker 视窗尺寸（也就是箭头长度）
+const ARROW_REF_X = 7;              // 原来的参考点：箭头尖端伸出路径末端 1 个单位
+const ARROW_TAIL_INSET = 3.2;       // 线尾回缩量（用户单位，约等于线宽的 3 倍，让线尾彻底藏进箭头）
+const ARROW_REF_X_INSET = ARROW_REF_X - ARROW_TAIL_INSET / EDGE_STROKE_WIDTH;   // ≈ 4.09
+
 /* 节点外观全部逐帧写入：存在度决定半径、透明度与音名可见性，flash 决定“刚发声”的染色。
    透明度统一写内联样式：SVG 呈现属性会被 CSS 规则覆盖，写内联样式就不会出现
    “属性看着对、画面却不可见”的情况（0.3 早期版本的行进层就踩过这个坑）。 */
@@ -1065,7 +1081,8 @@ const ensurePhraseGraph = () => {
 
   const defs = svgNode('defs');
   const marker = svgNode('marker', {
-    id: 'arrowhead', markerWidth: 8, markerHeight: 8, refX: 7, refY: 4,
+    id: 'arrowhead', markerWidth: ARROW_WIDTH, markerHeight: ARROW_WIDTH,
+    refX: ARROW_REF_X_INSET, refY: ARROW_WIDTH / 2,
     orient: 'auto', markerUnits: 'strokeWidth',
   });
   marker.appendChild(svgNode('path', { d: 'M0,0 L8,4 L0,8 Z', fill: 'context-stroke' }));
@@ -1145,6 +1162,7 @@ const ensurePhraseGraph = () => {
     if (!a || !b) return;
     const path = svgNode('path', {
       id: edgeId(from, to), d: dynamicEdgePath(a, b), class: 'chain-edge',
+      'stroke-width': EDGE_STROKE_WIDTH,
     });
     /* 初始不可见：透明度由 JS 写内联样式，箭头也在生长完成后才挂上 */
     path.style.opacity = '0';
@@ -1210,7 +1228,7 @@ const assignHosts = () => {
 };
 
 /* 换句 = 一次重组：不重建、不清空，只调存在度、藏身关系、环位微扰与颜色目标。
-   morphSeconds = 这次重组能占用的时长（“上一个音 → 本句首音”的间隔，已钳制）；
+   morphSeconds = 时长基准，等于**本句内部第一个音程**（首音 → 第二个音，已钳制）；
    ringShift = 本次换句的环形相位 / 半径微扰，让所有点都有跨度。 */
 const applyPhraseVisual = (section, morphSeconds, ringShift) => {
   ensurePhraseGraph();
@@ -1372,7 +1390,6 @@ const showVisualNote = (phraseId, note, audioTime) => {
  * 对照 aisatsana：activate 加载素材并训练链，schedule 沿 Transport 安排乐句 */
 let engine = null;
 let currentSeed = null;
-let lastScheduledNoteTime = null;   // 上一个乐句最后一个音的发声时刻，用来算这次重组能占用多长
 
 const activateEngine = async seed => {
   const rng = makeRng(seed);
@@ -1497,18 +1514,18 @@ const activateEngine = async seed => {
       const visualStartTime = playedEvents.length
         ? Math.min(...playedEvents.map(event => event.audioTime)) - 0.01
         : phraseTime + 1 + variant.late;
-      /* 重组占用的时长 = “上一个乐句的最后一个音 → 本句首音”的实际间隔（已钳制）。
-         重组就在这段间隔里发生（连线的生长/反向生长都用它当时长），于是全部在首音之前完成，
-         不会出现“一条还在长、另一条已经开始”。首音之前没有上一个音时用兜底值。 */
+      /* 重组在**本句首音那一刻**开始，时长基准是**本句内部第一个音程**（首音 → 第二个音）。
+         早先的版本用“上一个乐句的最后一个音 → 本句首音”这个间隔当窗口，但那段区间按定义
+         里面没有任何新音，于是整段变换都跑在没有声音的地方，观感很干（用户反馈）。
+         现在跟着新句自己的密度走：密句里变换短、疏句里长，且与首音同刻开始。
+         只有一个音（拿不到内部音程）时用 `STEP_DURATION_S` 兜底。 */
       const firstNoteTime = visualStartTime + 0.01;
-      const noteGap = lastScheduledNoteTime === null ? MORPH_MAX_S : firstNoteTime - lastScheduledNoteTime;
-      const morphSeconds = Math.max(MORPH_MIN_S, Math.min(MORPH_MAX_S, noteGap));
-      lastScheduledNoteTime = playedEvents.length
-        ? Math.max(...playedEvents.map(event => event.audioTime))
-        : lastScheduledNoteTime;
+      const internalInterval = playedEvents.length >= 2
+        ? playedEvents[1].audioTime - playedEvents[0].audioTime
+        : STEP_DURATION_S;
+      const morphSeconds = Math.max(MORPH_MIN_S, Math.min(MORPH_MAX_S, internalInterval));
       let phraseVisualId = null;
-      /* 重组从“首音前 morphSeconds”开始，正好在首音那一刻收尾。
-         环形相位/半径的微扰用**独立随机源**，不消耗钢琴与 texture 的那条随机流，
+      /* 环形相位/半径的微扰用**独立随机源**，不消耗钢琴与 texture 的那条随机流，
          所以同一个种子产生的音符序列不会因为视觉而改变（见 AGENTS.md 的同类教训）。
          用 Tone.now() 兜底，保证首句的目标时刻落在过去时也立刻发生。 */
       const ringShift = {
@@ -1517,7 +1534,7 @@ const activateEngine = async seed => {
       };
       Tone.Draw.schedule(() => {
         applyPhraseVisual(section, morphSeconds, ringShift);
-      }, Math.max(Tone.now(), firstNoteTime - morphSeconds));
+      }, Math.max(Tone.now(), firstNoteTime - MORPH_LEAD_S));
       Tone.Draw.schedule(() => {
         visualPhraseId += 1;
         phraseVisualId = visualPhraseId;
