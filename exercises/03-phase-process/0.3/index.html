@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:,">
+<title>03 · Phase Loops 0.3</title>
+<style>
+  :root {
+    --bg:#09090b; --stage:#0d0d0f; --panel:#18181b; --cell:#111114; --fg:#fafafa; --dim:#a1a1aa;
+    --accent:#ff8a00; --accent2:#00c896; --line:#2d2d32; --warn:#ff7f96;
+  }
+  * { box-sizing:border-box; }
+  html, body { width:100%; height:100%; }
+  body { margin:0; overflow:hidden; background:var(--bg); color:var(--fg); font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  .wrap { position:relative; width:100%; height:100%; }
+  h1 { font-size:24px; font-weight:650; letter-spacing:-.035em; margin:0 0 5px; }
+  h1 small { color:var(--dim); font:500 13px/1 Consolas,monospace; vertical-align:4px; }
+  .sub { color:var(--dim); font-size:12px; line-height:1.5; }
+  .hud { position:fixed; z-index:10; background:var(--panel); border:1px solid var(--line); border-radius:7px; transition:opacity .2s ease; }
+  .intro-hud { top:20px; left:20px; max-width:390px; padding:14px 16px; }
+  .controls-hud { top:20px; right:20px; width:310px; padding:14px; }
+  .status { margin-top:12px; padding-top:10px; border-top:1px solid #2a2a2e; color:var(--dim); font-size:11px; line-height:1.5; }
+  .status b { color:var(--fg); }
+  .orbit-stage { position:fixed; z-index:1; inset:0; display:flex; align-items:center; justify-content:center; overflow:hidden; background:var(--stage); }
+  .orbit-stage { touch-action:none; cursor:grab; background:#242426; }
+  .orbit-stage:active { cursor:grabbing; }
+  .orbit-stage canvas { display:block; width:100%; height:100%; }
+  .info-hud { left:20px; bottom:20px; width:min(620px,calc(100vw - 40px)); max-height:68vh; padding:10px 13px; overflow:auto; color:var(--dim); }
+  .info-hud:not([open]) { width:auto; }
+  .info-hud summary { color:var(--fg); font-size:12px; font-weight:600; cursor:pointer; user-select:none; }
+  .info-body { margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+  .loops { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:7px; margin-top:12px; }
+  .loop { background:var(--cell); border:1px solid #29292e; border-radius:5px; padding:9px 10px; }
+  .loop.drone { border-color:#255e53; }
+  .loop.active, .loop.drone.active { border-color:var(--loop-color,var(--accent)); }
+  .loop-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:6px; }
+  .note { color:var(--loop-color,var(--fg)); font-weight:700; letter-spacing:.04em; }
+  .count { color:var(--dim); font-family:Consolas,"Courier New",monospace; font-size:12px; }
+  .meta { color:var(--dim); font-family:Consolas,"Courier New",monospace; font-size:12px; line-height:1.7; }
+  .log { margin-top:10px; padding-top:9px; max-height:110px; overflow-y:auto; border-top:1px solid var(--line); color:var(--dim); font:11px/1.6 Consolas,"Courier New",monospace; white-space:pre-wrap; }
+  .hint { font-size:12.5px; color:var(--dim); line-height:2; }
+  .hint b { color:var(--fg); }
+  code { background:#27272a; padding:1px 6px; border-radius:3px; font-size:12px; color:#e4e4e7; }
+  .visual-head { position:fixed; z-index:3; right:20px; bottom:16px; display:flex; align-items:baseline; gap:8px; color:var(--dim); opacity:.55; transition:opacity .2s ease; }
+  .visual-title { font-size:11px; font-weight:500; }
+  .visual-meta { font:10px Consolas,monospace; }
+  body.hud-hidden .hud, body.hud-hidden .visual-head { opacity:0; pointer-events:none; }
+  exercise-controls { --exercise-control-radius:4px; --exercise-control-primary:#fafafa; --exercise-control-primary-fg:#18181b; --exercise-control-secondary:#27272a; --exercise-control-border:#3f3f46; }
+  @media (max-width:700px) {
+    .intro-hud { top:16px; left:16px; right:16px; max-width:none; }
+    .intro-hud .sub { display:none; }
+    .controls-hud { top:88px; left:16px; right:16px; width:auto; }
+    .info-hud { left:16px; bottom:16px; width:calc(100vw - 32px); max-height:54vh; }
+    .visual-head { right:16px; bottom:18px; }
+    .visual-title { display:none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="orbit-stage" id="orbitStage">
+  </div>
+  <header class="hud intro-hud">
+    <h1>03 · Phase Loops <small>0.3</small></h1>
+    <div class="sub">独立周期持续错位，让音符的相遇关系生成旋律与和声。</div>
+  </header>
+  <section class="hud controls-hud">
+    <exercise-controls id="transportControls"></exercise-controls>
+    <div class="status" id="status">点击播放开始。每层环带是一条循环，前端经过固定竖线时发声。</div>
+  </section>
+  <details class="hud info-hud">
+    <summary>▶ 机制与循环</summary>
+    <div class="info-body">
+      <div class="hint">
+      <b>机制：</b>固定音符集合不变，但每个音都有自己的周期、时值和初始相位。由于周期彼此错开，任何两个音的先后顺序和重叠关系都会慢慢改变。<br>
+      <b>灵感：</b>Tero Parviainen 的 <code>JavaScript Systems Music</code> 中，Music for Airports 的核心是多个不同长度的单音 tape loop；这里先沿用 02 的采样钢琴，方便比较两种生成机制。
+      </div>
+      <div class="loops" id="loops"></div>
+      <div class="log" id="log"></div>
+    </div>
+  </details>
+  <div class="visual-head">
+    <span class="visual-title">PHASE RELATIONSHIPS</span>
+    <span class="visual-meta">拖动视角 · 滚轮缩放 · R 复位 · F 全屏</span>
+  </div>
+</div>
+
+<script src="../../../shared/exercise-controls.js"></script>
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+const $ = id => document.getElementById(id);
+const statusEl = $('status');
+const loopsEl = $('loops');
+const logEl = $('log');
+const orbitStageEl = $('orbitStage');
+const setStatus = html => { statusEl.innerHTML = html; };
+const log = msg => { logEl.textContent += msg + '\n'; logEl.scrollTop = logEl.scrollHeight; };
+const colorFor = loop => loop.isDrone ? '#00c896' : '#ff8a00';
+let stage = null;
+const stageReady = import('./stage.js').then(({ createStage }) => {
+  stage = createStage(orbitStageEl);
+  // Idle preview uses fixed base parameters; it does not consume the performance RNG.
+  stage.setLoops([...NOTE_SET, ...DRONE_SET.map(item => ({ ...item, isDrone: true }))].map((item, index) => ({
+    ...item, index, period: item.basePeriod, duration: item.baseDur,
+    visibleFireAt: item.basePeriod * ((index * 0.61803398875 + 0.23) % 1),
+  })));
+  return stage;
+}).catch(error => {
+  setStatus('无法初始化 3D 场景，请检查网络和浏览器 WebGL 支持后刷新。');
+  console.error(error);
+  return null;
+});
+
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i += 1) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h;
+};
+
+const NOTE_SET = [
+  { note: 'F3', role: 'root', basePeriod: 17.5, baseDur: 6.5 },
+  { note: 'C4', role: 'fifth', basePeriod: 19.25, baseDur: 5.5 },
+  { note: 'Ab4', role: 'minor', basePeriod: 23, baseDur: 7.25 },
+  { note: 'Bb4', role: 'color', basePeriod: 13.75, baseDur: 3.8 },
+  { note: 'Eb5', role: 'seventh', basePeriod: 11.5, baseDur: 3.2 },
+  { note: 'G5', role: 'light', basePeriod: 9.75, baseDur: 2.4 },
+  { note: 'C5', role: 'anchor', basePeriod: 15.25, baseDur: 4.4 },
+];
+
+const DRONE_SET = [
+  { note: 'F2', role: 'low root', basePeriod: 41, baseDur: 18 },
+  { note: 'C3', role: 'low fifth', basePeriod: 53, baseDur: 22 },
+  { note: 'Ab2', role: 'low minor', basePeriod: 67, baseDur: 20 },
+];
+
+const makeMasterChain = () => {
+  const compressor = new Tone.Compressor({ threshold: -18, ratio: 2.2, attack: 0.04, release: 0.55 });
+  const highpass = new Tone.Filter({ type: 'highpass', frequency: 35 });
+  const limiter = new Tone.Limiter(-1).connect(Tone.Destination);
+  const masterGain = new Tone.Gain(0).connect(limiter);
+  compressor.connect(highpass);
+  highpass.connect(masterGain);
+  return { compressor, highpass, limiter, masterGain };
+};
+
+const createDroneVoice = destination => {
+  const synth = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'sine' },
+    envelope: { attack: 4, decay: 1, sustain: 0.78, release: 8 },
+    volume: -13,
+  });
+  const filter = new Tone.Filter({ type: 'lowpass', frequency: 360, Q: 0.5 });
+  const gain = new Tone.Gain(0.8).connect(destination);
+  const breath = new Tone.LFO({ frequency: 0.035, min: 0.62, max: 1 }).connect(gain.gain).start();
+  synth.connect(filter);
+  filter.connect(gain);
+  return {
+    trigger: (note, dur, time, velocity) => synth.triggerAttackRelease(note, dur, time, velocity),
+    releaseAll: time => synth.releaseAll(time),
+    dispose: () => { synth.dispose(); filter.dispose(); gain.dispose(); breath.dispose(); },
+  };
+};
+
+const MOODIST_TEXTURES = [
+  {
+    name: 'brown noise',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/noise/brown-noise.wav',
+    periodRange: [75, 130],
+    durationRange: [35, 70],
+    probability: 0.85,
+    filter: 420,
+    targetGain: 0.1,
+    pan: -0.22,
+    fade: 8,
+  },
+  {
+    name: 'wind in trees',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/nature/wind-in-trees.mp3',
+    periodRange: [55, 110],
+    durationRange: [25, 55],
+    probability: 0.7,
+    filter: 1800,
+    targetGain: 0.085,
+    pan: 0.28,
+    fade: 7,
+  },
+  {
+    name: 'birds',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/animals/birds.mp3',
+    periodRange: [46, 105],
+    durationRange: [14, 30],
+    probability: 0.72,
+    filter: 4200,
+    targetGain: 0.03,
+    pan: 0.34,
+    fade: 4.5,
+    group: 'event',
+    early: true,
+  },
+  {
+    name: 'busy street',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/busy-street.mp3',
+    periodRange: [62, 135],
+    durationRange: [20, 46],
+    probability: 0.65,
+    filter: 2200,
+    targetGain: 0.2,
+    pan: -0.08,
+    fade: 6,
+    group: 'event',
+    early: true,
+  },
+  {
+    name: 'crowd',
+    url: 'https://raw.githubusercontent.com/remvze/moodist/main/public/sounds/urban/crowd.mp3',
+    periodRange: [74, 155],
+    durationRange: [24, 54],
+    probability: 0.58,
+    filter: 2400,
+    targetGain: 0.4,
+    pan: 0.08,
+    fade: 7,
+    group: 'event',
+    early: true,
+  },
+];
+
+const createMoodistTextures = async (destination, rng) => {
+  const loaded = [];
+  const eventIds = new Set();
+  const randomBetween = ([min, max]) => min + rng() * (max - min);
+  const loadOne = texture => new Promise(resolve => {
+    const gain = new Tone.Gain(0);
+    const filter = new Tone.Filter({ type: 'lowpass', frequency: texture.filter, Q: 0.5 });
+    const panner = new Tone.Panner(texture.pan).connect(destination);
+    const player = new Tone.Player({
+      url: texture.url,
+      loop: true,
+      // 淡入淡出统一由下游 Gain 调度，避免 Player 的长淡入再次压低测试声音。
+      fadeIn: 0,
+      fadeOut: 0,
+      onload: () => {
+        player.connect(filter);
+        filter.connect(gain);
+        gain.connect(panner);
+        loaded.push({
+          ...texture,
+          player, filter, gain, panner,
+          activeUntil: -Infinity,
+          visualIndex: MOODIST_TEXTURES.indexOf(texture),
+        });
+        resolve();
+      },
+      onerror: err => {
+        console.warn('[Moodist] 音效加载失败:', texture.name, err);
+        player.dispose();
+        filter.dispose();
+        gain.dispose();
+        panner.dispose();
+        resolve();
+      },
+    });
+    setTimeout(() => {
+      if (player.loaded) return;
+      console.warn('[Moodist] 音效加载超时:', texture.name);
+      player.dispose();
+      filter.dispose();
+      gain.dispose();
+      panner.dispose();
+      resolve();
+    }, 12000);
+  });
+
+  await Promise.all(MOODIST_TEXTURES.map(loadOne));
+  loaded.sort((a, b) => a.visualIndex - b.visualIndex);
+  const activeCountAt = time => loaded.filter(texture => texture.activeUntil > time).length;
+  const activeEventCountAt = time => loaded.filter(texture => texture.group === 'event' && texture.activeUntil > time).length;
+  const playTexture = (texture, time, duration, fade) => {
+    texture.activeUntil = time + duration + fade;
+    texture.gain.gain.cancelScheduledValues(time);
+    texture.gain.gain.setValueAtTime(0, time);
+    texture.gain.gain.linearRampToValueAtTime(texture.targetGain, time + fade);
+    texture.gain.gain.setValueAtTime(texture.targetGain, time + Math.max(fade, duration - fade));
+    texture.gain.gain.linearRampToValueAtTime(0, time + duration);
+    texture.player.start(time);
+    texture.player.stop(time + duration + fade);
+  };
+  const scheduleTexture = (texture, at) => {
+    const eventId = Tone.Transport.scheduleOnce(time => {
+      eventIds.delete(eventId);
+      const duration = randomBetween(texture.durationRange);
+      const underTextureLimit = activeCountAt(time) < 4;
+      const underEventLimit = texture.group !== 'event' || activeEventCountAt(time) < 2;
+      const shouldPlay = rng() < texture.probability && underTextureLimit && underEventLimit && time >= texture.activeUntil;
+      if (shouldPlay) {
+        const fade = Math.min(texture.fade, duration * 0.42);
+        try {
+          playTexture(texture, time, duration, fade);
+          Tone.Draw.schedule(() => log('Moodist texture in: ' + texture.name + ' · ' + duration.toFixed(0) + 's'), time);
+        } catch (err) {
+          console.warn('[Moodist] 播放失败:', texture.name, err);
+          texture.activeUntil = time;
+        }
+      }
+      scheduleTexture(texture, time + randomBetween(texture.periodRange));
+    }, at);
+    eventIds.add(eventId);
+  };
+
+  return {
+    start: time => {
+      loaded.forEach(texture => {
+        const firstRange = texture.early ? [3, 10] : [4, 24];
+        scheduleTexture(texture, time + randomBetween(firstRange));
+      });
+      if (loaded.length) log('Moodist texture pool: ' + loaded.map(texture => texture.name).join(', '));
+    },
+    stop: time => {
+      eventIds.forEach(eventId => Tone.Transport.clear(eventId));
+      eventIds.clear();
+      loaded.forEach(texture => {
+        texture.gain.gain.cancelScheduledValues(time);
+        texture.gain.gain.linearRampToValueAtTime(0, time + 1.5);
+        try { texture.player.stop(time + 1.6); } catch (err) { /* 已停止则忽略 */ }
+        texture.activeUntil = time;
+      });
+    },
+    dispose: () => {
+      loaded.forEach(texture => {
+        texture.player.dispose();
+        texture.filter.dispose();
+        texture.gain.dispose();
+        texture.panner.dispose();
+      });
+    },
+  };
+};
+
+const PIANO_NOTES = ['A2', 'C#3', 'F3', 'A3', 'C#4', 'F4', 'A4', 'C#5', 'F5', 'A5', 'C#6', 'F6'];
+const JS_DELIVR_BASE = 'https://cdn.jsdelivr.net/gh/generative-music/samples-alex-bainter@master/samples/vsco2-piano-mf/';
+const sampleFile = (note, ext) => note.toLowerCase().replace('#', 'sharp') + ext;
+
+const wrapPiano = (piano, fxNodes) => ({
+  trigger: (note, dur, time, velocity) => piano.triggerAttackRelease(note, dur, time, velocity),
+  releaseAll: time => piano.releaseAll(time),
+  dispose: () => {
+    piano.dispose();
+    fxNodes.forEach(node => node.dispose());
+  },
+});
+
+const createSampledPiano = async (destination, timeoutMs) => {
+  const piano = await new Promise((resolve, reject) => {
+    const sampler = new Tone.Sampler({
+      urls: Object.fromEntries(PIANO_NOTES.map(note => [note, sampleFile(note, '.wav')])),
+      baseUrl: JS_DELIVR_BASE,
+      release: 3.5,
+      volume: 12,
+      onload: () => resolve(sampler),
+      onerror: err => reject(err),
+    });
+    setTimeout(() => reject(new Error('加载超时（' + timeoutMs / 1000 + 's）')), timeoutMs);
+  });
+  const reverb = new Tone.Reverb({ decay: 10, wet: 0.38 });
+  await reverb.generate();
+  piano.connect(reverb);
+  reverb.connect(destination);
+  return wrapPiano(piano, [reverb]);
+};
+
+const createFallbackPiano = async destination => {
+  const piano = new Tone.PolySynth(Tone.FMSynth, {
+    harmonicity: 3,
+    modulationIndex: 8,
+    oscillator: { type: 'sine' },
+    modulation: { type: 'triangle' },
+    envelope: { attack: 0.005, decay: 1.2, sustain: 0, release: 2.8 },
+    modulationEnvelope: { attack: 0.005, decay: 0.4, sustain: 0, release: 0.8 },
+    volume: 6,
+  });
+  const reverb = new Tone.Reverb({ decay: 8, wet: 0.34 });
+  await reverb.generate();
+  piano.connect(reverb);
+  reverb.connect(destination);
+  return wrapPiano(piano, [reverb]);
+};
+
+const createPiano = async destination => {
+  try {
+    const piano = await createSampledPiano(destination, 45000);
+    console.info('[钢琴] 使用 02 同款真实采样 vsco2-piano-mf（jsDelivr）');
+    return piano;
+  } catch (err) {
+    console.warn('[钢琴] 采样加载失败，回退 FM 合成:', err.message);
+    setStatus('采样加载失败（' + err.message + '），已回退合成钢琴');
+    return createFallbackPiano(destination);
+  }
+};
+
+let engine = null;
+let currentSeed = null;
+let engineTransition = false;
+const transportControls = $('transportControls');
+
+const activateEngine = async seed => {
+  if (!await stageReady) throw new Error('3D 场景尚未就绪');
+  const rng = makeRng(seed);
+  const { compressor, highpass, limiter, masterGain } = makeMasterChain();
+  const piano = await createPiano(compressor);
+  const droneVoice = createDroneVoice(compressor);
+  const moodistTextures = await createMoodistTextures(compressor, rng);
+
+  const loops = NOTE_SET.map((item, index) => {
+    const periodJitter = 0.94 + rng() * 0.14;
+    const durJitter = 0.86 + rng() * 0.28;
+    const period = item.basePeriod * periodJitter;
+    const duration = Math.min(period * 0.72, item.baseDur * durJitter);
+    const phase = rng() * period;
+    const nextIn = (period - phase) % period;
+    const velocity = 0.7 + rng() * 0.3;
+    return {
+      ...item,
+      index,
+      period,
+      duration,
+      phase,
+      nextIn,
+      velocity,
+      eventId: null,
+      triggers: 0,
+      scheduledFireAt: nextIn,
+      visibleFireAt: nextIn,
+    };
+  });
+
+  const droneLoops = DRONE_SET.map((item, index) => {
+    const period = item.basePeriod * (0.96 + rng() * 0.1);
+    const duration = Math.min(period * 0.62, item.baseDur * (0.9 + rng() * 0.18));
+    const phase = rng() * period;
+    const nextIn = (period - phase) % period;
+    const velocity = 0.34 + rng() * 0.18;
+    return {
+      ...item,
+      index: loops.length + index,
+      period,
+      duration,
+      phase,
+      nextIn,
+      velocity,
+      eventId: null,
+      triggers: 0,
+      scheduledFireAt: nextIn,
+      visibleFireAt: nextIn,
+      isDrone: true,
+    };
+  });
+  const allLoops = loops.concat(droneLoops);
+
+  let scheduled = false;
+
+  const renderLoopList = () => {
+    loopsEl.innerHTML = '';
+    allLoops.forEach(loop => {
+      const card = document.createElement('div');
+      card.className = 'loop' + (loop.isDrone ? ' drone' : '');
+      card.id = 'loop-' + loop.index;
+      card.style.setProperty('--loop-color', colorFor(loop));
+      card.innerHTML =
+        '<div class="loop-head">' +
+          '<span class="note">' + loop.note + '</span>' +
+          '<span class="count" id="count-' + loop.index + '">0</span>' +
+        '</div>' +
+        '<div class="meta">' +
+          (loop.isDrone ? 'drone' : 'piano') + ' · period ' + loop.period.toFixed(2) + 's<br>' +
+          'duration ' + loop.duration.toFixed(2) + 's<br>' +
+          'phase ' + loop.phase.toFixed(2) + 's · velocity ' + loop.velocity.toFixed(2) +
+        '</div>';
+      loopsEl.appendChild(card);
+    });
+  };
+
+  const scheduleLoop = (loop, trigger) => {
+    const fireAt = loop.scheduledFireAt;
+    loop.eventId = Tone.Transport.scheduleOnce(time => {
+      trigger(loop, time);
+      loop.scheduledFireAt = fireAt + loop.period;
+      Tone.Draw.schedule(() => {
+        if (!scheduled) return;
+        loop.triggers += 1;
+        loop.lastVisualFireAt = fireAt;
+        const count = $('count-' + loop.index);
+        if (count) count.textContent = String(loop.triggers);
+        loop.visibleFireAt = fireAt + loop.period;
+        setStatus(
+          '播放中 · ' + (loop.isDrone ? 'Drone' : '钢琴') + ' <b>' + loop.note +
+          '</b> · 周期 <b>' + loop.period.toFixed(2) + 's</b> · 时值 <b>' +
+          loop.duration.toFixed(2) + 's</b> · 种子 ' + currentSeed
+        );
+        log((loop.isDrone ? 'drone ' : '') + loop.note + '  period=' +
+            loop.period.toFixed(2) + 's  dur=' + loop.duration.toFixed(2) + 's');
+      }, time);
+      scheduleLoop(loop, trigger);
+    }, fireAt);
+  };
+
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    stage.setLoops(allLoops);
+    renderLoopList();
+    log('seed ' + seed + ' · independent note loops');
+    loops.forEach(loop => scheduleLoop(loop, (item, time) => {
+      piano.trigger(item.note, item.duration, time, item.velocity);
+    }));
+    droneLoops.forEach(loop => scheduleLoop(loop, (item, time) => {
+      droneVoice.trigger(item.note, item.duration, time, item.velocity);
+    }));
+    moodistTextures.start(Tone.now() + 0.05);
+    // Transport.seconds uses Context.now() (includes lookAhead). Render the audible clock.
+    stage.start(() => Tone.Transport.getSecondsAtTime(Tone.immediate()));
+  };
+
+  const fadeIn = () => masterGain.gain.linearRampToValueAtTime(1, Tone.now() + 1.2);
+  const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.8);
+
+  const end = () => {
+    stage.stop();
+    scheduled = false;
+    allLoops.forEach(loop => {
+      if (loop.eventId !== null) Tone.Transport.clear(loop.eventId);
+      loop.eventId = null;
+    });
+    piano.releaseAll(Tone.now() + 0.1);
+    droneVoice.releaseAll(Tone.now() + 0.1);
+    moodistTextures.stop(Tone.now());
+    Tone.Transport.stop();
+    Tone.Transport.cancel();
+  };
+
+  const deactivate = () => {
+    end();
+    piano.dispose();
+    droneVoice.dispose();
+    moodistTextures.dispose();
+    [compressor, highpass, limiter, masterGain].forEach(node => node.dispose());
+  };
+
+  return { deactivate, schedule, end, fadeIn, fadeOut };
+};
+
+const playCurrent = async () => {
+  if (engineTransition) return;
+  transportControls.setBusy(true);
+  try {
+    await Tone.start();
+    if (!engine) {
+      const text = transportControls.seedValue;
+      currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      setStatus('正在构建引擎（种子 ' + currentSeed + '）...');
+      engine = await activateEngine(currentSeed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    engine.fadeIn();
+    transportControls.setPlaying(true);
+  } catch (err) {
+    console.error(err);
+    transportControls.setPlaying(false);
+    setStatus('播放失败：' + err.message);
+  } finally {
+    transportControls.setBusy(false);
+  }
+};
+
+transportControls.addEventListener('exercise-play', playCurrent);
+
+transportControls.addEventListener('exercise-stop', () => {
+  if (!engine || engineTransition) return;
+  const oldEngine = engine;
+  engineTransition = true;
+  transportControls.setBusy(true);
+  oldEngine.fadeOut();
+  setTimeout(() => {
+    oldEngine.deactivate();
+    if (engine === oldEngine) engine = null;
+    engineTransition = false;
+    transportControls.setPlaying(false);
+    transportControls.setBusy(false);
+    setStatus('已停止');
+  }, 900);
+});
+
+transportControls.addEventListener('exercise-regenerate', async () => {
+  if (engineTransition) return;
+  transportControls.setBusy(true);
+  if (engine) {
+    const oldEngine = engine;
+    engineTransition = true;
+    oldEngine.fadeOut();
+    await new Promise(resolve => setTimeout(resolve, 900));
+    oldEngine.deactivate();
+    if (engine === oldEngine) engine = null;
+    engineTransition = false;
+  }
+  transportControls.clearSeed();
+  transportControls.setPlaying(false);
+  transportControls.setBusy(false);
+  playCurrent();
+});
+
+window.addEventListener('pagehide', event => {
+  if (!event.persisted) { engine?.deactivate(); stage?.dispose(); }
+});
+
+window.exercise = {
+  activate: activateEngine,
+};
+</script>
+</body>
+</html>
