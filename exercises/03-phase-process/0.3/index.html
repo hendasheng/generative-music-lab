@@ -151,6 +151,10 @@ const DRONE_SET = [
   { note: 'Ab2', role: 'low minor', basePeriod: 67, baseDur: 20 },
 ];
 
+// Overall level after compression, before the final limiter. 0 dB restores the old level.
+const MASTER_VOLUME_DB = 6;
+const MASTER_VOLUME_GAIN = Math.pow(10, MASTER_VOLUME_DB / 20);
+
 const makeMasterChain = () => {
   const compressor = new Tone.Compressor({ threshold: -18, ratio: 2.2, attack: 0.04, release: 0.55 });
   const highpass = new Tone.Filter({ type: 'highpass', frequency: 35 });
@@ -538,7 +542,7 @@ const activateEngine = async seed => {
     stage.start(() => Tone.Transport.getSecondsAtTime(Tone.immediate()));
   };
 
-  const fadeIn = () => masterGain.gain.linearRampToValueAtTime(1, Tone.now() + 1.2);
+  const fadeIn = () => masterGain.gain.linearRampToValueAtTime(MASTER_VOLUME_GAIN, Tone.now() + 1.2);
   const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.8);
 
   const end = () => {

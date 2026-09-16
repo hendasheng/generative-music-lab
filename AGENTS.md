@@ -27,6 +27,10 @@
 - 当前没有构建系统；不要仅为“标准化”而引入 npm、打包器或框架。
 - 每个练习暴露统一的激活接口 `window.exercise = { activate }`（参考 piece-zed 的 `activate → [deactivate, schedule]` 契约），为以后接入统一播放器留口子；接口只需一行赋值，不引入任何加载器或构建步骤。
 
+## 跨练习音量约定
+
+参见根 [README「总音量与母带链约定」](README.md#总音量与母带链约定)。03 0.3 已对齐 02 0.4 的 `MASTER_VOLUME_DB = 6`：压缩 / 滤波之后、最终限幅之前提升总增益。**淡入终点必须为 `10 ** (MASTER_VOLUME_DB / 20)`，不能写死为 1**；淡出仍到 0。默认 +6 dB 是参考起点，不代表各练习听感等响；支路音量、压缩和总增益分开考虑。
+
 ## 最近交接：03 Phase Loops 0.3（2026-09-17）
 
 当前入口 `exercises/03-phase-process/0.3/index.html`；3D 实现为同目录 `stage.js`。根索引已指向 0.3，0.2 保留。音乐沿用 0.2，当前用户已认可 3D 环带及最终局部提亮效果。下次修改先读 [03 README](exercises/03-phase-process/README.md) 的「0.3 当前基线与衔接」。
