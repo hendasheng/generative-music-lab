@@ -27,6 +27,23 @@
 - 当前没有构建系统；不要仅为“标准化”而引入 npm、打包器或框架。
 - 每个练习暴露统一的激活接口 `window.exercise = { activate }`（参考 piece-zed 的 `activate → [deactivate, schedule]` 契约），为以后接入统一播放器留口子；接口只需一行赋值，不引入任何加载器或构建步骤。
 
+## 03 音乐衔接补充（2026-09-18）
+
+0.3 已开始音色时长与力度呼吸实验，详见练习 README 同名小节：钢琴时长参考采样 RMS 衰减并补偿变调速率；Drone 按周期预算扣除 8s release；时长一场内固定。力度按音频预调度次数推进 5–8 轮余弦呼吸，不能用 Draw 的视觉触发计数。测试 HUD 可切换呼吸，圆角与单面印字继续保留。旧文“音频沿用 0.2”仅适用于早期基线。
+
+## 03 引擎生命周期：构建中的引擎必须能被作废（2026-09-18）
+
+用户报「有的时候钢琴没声音」并伴随 `Synth was already disposed` 疯狂报错。根因**不是**音乐参数，而是 `stop` 落在 `activateEngine` 还没跑完的时候：那一刻 `engine` 仍是 `null`，停止处理函数因此什么都不做，而构建完成后照样 `schedule()` + `Transport.start()` —— 于是产生一个界面再也够不着的**孤儿引擎**：它继续排音、播进已被 dispose 的节点，下一次播放再建第二个引擎，报错每秒 20 次并不停。三条规矩：
+
+- **异步构建的东西必须有代次或取消机制**。`engineTransition` 这类「忙碌标志」只能挡住重入，**挡不住「构建中途被停止」**。做法：`engineGeneration` 计数器，`stop`/`restart` 时自增，构建完成后比对代次，不等就把这个引擎 `end()` + `deactivate()` 掉并 return，**绝不进入 `schedule()`**。构建中的引擎不可取消，只能作废后回收。
+- **`stop` 不能只看 `engine`，还要看「正在构建」**（`pendingBuild`）。只判 `engine` 的停止逻辑在构建期间等于没接上。
+- **注意 `result.value` 这类「包装之后忘了传值」的坑**：本轮我在重构时把 `settled()` 写成 `try { await promise; return { ok: true } }`，**丢掉了 resolve 出来的值**，于是 `engine = result.value` 赋成 `undefined`，表现为「播放失败：Cannot read properties of undefined (reading 'schedule')」。包装函数一定要把值带出来（`return { ok: true, value: await promise }`）。
+
+`Tone.Synth._scheduleEvent` 里 `assert(!this.disposed, 'Synth was already disposed')` 是 14.7.58 的唯一抛出点。两条独立来源：**①孤儿引擎**（上面那条）；**②凡是时长超过 Tone `lookAhead` 的音符，其 voice 用 `context.setTimeout` 安排未来的 release，而 `Synth.dispose()` 不取消这些回调** —— 引擎销毁后它们才到点，于是抛错并积压数十秒（实测 20 次/秒、最长 158 秒）。修法：`deactivate()` 末尾清空该 context 的待执行队列（`Tone.getContext()._timeouts._timeline`，私有 API，与本仓库已在用的 `_ticker` 同类，函数须注释「升级 Tone.js 要复查」）。★ 它是未捕获异常，**只污染控制台、不改变音频**，所以**不能拿「有没有报错」当作「有没有声音」的证据** —— 判断有没有声音要数 `triggerAttackRelease` 的调用次数。
+
+**验证这一类竞态必须用真实浏览器**：本项目历史做法里「无头环境跑不了音频链」的结论作废 —— 加 `--autoplay-policy=no-user-gesture-required --headless=new` 后音频链能跑完（实测构建约 6–8 秒）。★ 三个环境限制：**Chrome 在当前文件沙箱下起不来**（`mojo platform_channel` 要命名管道），需要 `danger-full-access`；**探针要小心读的是不是真页面**（用 `Page.setDocumentContent` 会把文档变成 `about:blank`，相对路径的 `import('./stage.js')` 直接失败，于是你测的根本不是那个页面 —— 要改文档就用 `Fetch` 拦截响应体，保住 URL）；**测试脚本传 `{ requestStage: 'Response' }` 拦截时，`ws.onmessage` 里不能同步 await 处理**（会在 `Page.navigate` 上死锁，表现为「unsettled top-level await」且页面根本没重新加载，于是你一直在测旧内容）。
+
+
 ## 跨练习音量约定
 
 参见根 [README「总音量与母带链约定」](README.md#总音量与母带链约定)。03 0.3 已对齐 02 0.4 的 `MASTER_VOLUME_DB = 6`：压缩 / 滤波之后、最终限幅之前提升总增益。**淡入终点必须为 `10 ** (MASTER_VOLUME_DB / 20)`，不能写死为 1**；淡出仍到 0。默认 +6 dB 是参考起点，不代表各练习听感等响；支路音量、压缩和总增益分开考虑。

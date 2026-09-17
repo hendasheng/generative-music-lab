@@ -26,6 +26,7 @@ export function createStage(host) {
   scene.add(group);
   let ribbons = [], yaw = 0, pitch = 0.24, zoom = 1, disposed = false;
   let height = 8, frame = 0, clock = null;
+  const cornerRadius = { value: 0 };
   const abort = new AbortController();
   const on = (target, name, fn, options = {}) => target.addEventListener(name, fn, { ...options, signal: abort.signal });
 
@@ -72,18 +73,35 @@ export function createStage(host) {
       const glow = { value: 0 };
       material.onBeforeCompile = shader => {
         shader.uniforms.playheadGlow = glow;
-        shader.vertexShader = 'varying vec3 ribbonWorldPosition;\n' + shader.vertexShader;
+        shader.uniforms.ribbonBaseColor = { value: new THREE.Color(colorFor(loop)) };
+        shader.uniforms.ribbonCornerRadius = cornerRadius;
+        shader.uniforms.ribbonSize = { value: new THREE.Vector2(RADIUS * span, BAND_HEIGHT) };
+        shader.vertexShader = 'varying vec3 ribbonWorldPosition;\nvarying vec2 ribbonUv;\n' + shader.vertexShader;
         shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
-          '#include <begin_vertex>\nribbonWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-        shader.fragmentShader = 'varying vec3 ribbonWorldPosition;\nuniform float playheadGlow;\n' + shader.fragmentShader;
+          '#include <begin_vertex>\nribbonWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;\nribbonUv = uv;');
+        shader.fragmentShader = 'varying vec3 ribbonWorldPosition;\nvarying vec2 ribbonUv;\nuniform vec3 ribbonBaseColor;\nuniform float ribbonCornerRadius;\nuniform vec2 ribbonSize;\nuniform float playheadGlow;\n' + shader.fragmentShader;
+        // Rounded rectangle in the band's unwrapped surface coordinates: its
+        // centreline/endpoints stay fixed, so duration and playhead timing do too.
+        shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+          #include <map_fragment>
+          // Text is printed on the outer/front face only; keep the back opaque.
+          if (!gl_FrontFacing) diffuseColor.rgb = ribbonBaseColor;
+          if (ribbonCornerRadius > 0.0) {
+            vec2 q = abs((ribbonUv - 0.5) * ribbonSize) - ribbonSize * 0.5 + ribbonCornerRadius;
+            float distanceToEdge = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - ribbonCornerRadius;
+            if (distanceToEdge > 0.0) discard;
+          }
+        `);
         shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `
+          vec3 unprintedEmissive = totalEmissiveRadiance * ribbonBaseColor;
           #include <emissivemap_fragment>
+          if (!gl_FrontFacing) totalEmissiveRadiance = unprintedEmissive;
           float playheadAngle = abs(atan(ribbonWorldPosition.x, ribbonWorldPosition.z));
           float localGlow = 1.0 - smoothstep(0.0, ${PLAYHEAD_GLOW_ANGLE.toFixed(4)}, playheadAngle);
           totalEmissiveRadiance += mix(diffuseColor.rgb, vec3(1.0), 0.35) * localGlow * playheadGlow;
         `);
       };
-      material.customProgramCacheKey = () => 'fixed-playhead-glow-v1';
+      material.customProgramCacheKey = () => 'fixed-playhead-front-print-v3';
       const mesh = new THREE.Mesh(geometry, material);
       mesh.position.y = y;
       group.add(mesh);
@@ -202,8 +220,14 @@ export function createStage(host) {
     event.preventDefault(); stop();
     document.getElementById('status').textContent = '3D 显示连接中断，请刷新页面。';
   });
+  function setRoundness(percent) {
+    const value = Number(percent);
+    if (!Number.isFinite(value)) return;
+    cornerRadius.value = THREE.MathUtils.clamp(value, 0, 100) / 100 * BAND_HEIGHT / 2;
+    draw();
+  }
   function dispose() {
     stop(); disposed = true; abort.abort(); clear(); renderer.dispose(); renderer.domElement.remove();
   }
-  return { setLoops, update, start, stop, dispose };
+  return { setLoops, update, start, stop, setRoundness, dispose };
 }

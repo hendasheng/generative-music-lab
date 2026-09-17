@@ -87,6 +87,16 @@
         this.emit(this.playing ? 'stop' : 'play');
       });
       root.querySelector('[data-action="regenerate"]').addEventListener('click', () => this.emit('regenerate'));
+      const input = root.querySelector('input');
+      input.setAttribute('aria-label', '演出种子');
+      if (this.hasAttribute('apply-seed')) {
+        input.title = '输入种子后按 Enter 应用';
+        input.addEventListener('keydown', event => {
+          if (event.key !== 'Enter' || event.isComposing || this.busy) return;
+          event.preventDefault();
+          this.emit('seed-apply');
+        });
+      }
       this.renderToggle();
     }
 
@@ -120,6 +130,7 @@
       const regenerate = this.shadowRoot.querySelector('[data-action="regenerate"]');
       if (!button) return;
       button.disabled = this.busy;
+      if (this.hasAttribute('apply-seed')) this.shadowRoot.querySelector('input').disabled = this.busy;
       if (regenerate) regenerate.disabled = this.busy;
       button.title = this.playing ? '停止' : '播放';
       button.setAttribute('aria-label', this.playing ? '停止' : '播放');

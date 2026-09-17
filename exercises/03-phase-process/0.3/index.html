@@ -46,6 +46,12 @@
   .visual-title { font-size:11px; font-weight:500; }
   .visual-meta { font:10px Consolas,monospace; }
   body.hud-hidden .hud, body.hud-hidden .visual-head { opacity:0; pointer-events:none; }
+  .test-hud { right:20px; bottom:52px; width:230px; padding:12px 14px; }
+  .test-hud summary { cursor:pointer; font-size:12px; font-weight:600; }
+  .test-row { display:flex; justify-content:space-between; margin:14px 0 8px; font-size:12px; }
+  .test-hud input { width:100%; accent-color:var(--accent); }
+  .test-hud p { margin:7px 0 10px; font-size:11px; color:var(--dim); }
+  .test-hud button { color:var(--fg); background:var(--cell); border:1px solid var(--line); border-radius:4px; padding:5px 9px; cursor:pointer; }
   exercise-controls { --exercise-control-radius:4px; --exercise-control-primary:#fafafa; --exercise-control-primary-fg:#18181b; --exercise-control-secondary:#27272a; --exercise-control-border:#3f3f46; }
   @media (max-width:700px) {
     .intro-hud { top:16px; left:16px; right:16px; max-width:none; }
@@ -54,6 +60,7 @@
     .info-hud { left:16px; bottom:16px; width:calc(100vw - 32px); max-height:54vh; }
     .visual-head { right:16px; bottom:18px; }
     .visual-title { display:none; }
+    .test-hud { right:16px; bottom:66px; width:200px; }
   }
 </style>
 </head>
@@ -66,15 +73,24 @@
     <div class="sub">独立周期持续错位，让音符的相遇关系生成旋律与和声。</div>
   </header>
   <section class="hud controls-hud">
-    <exercise-controls id="transportControls"></exercise-controls>
-    <div class="status" id="status">点击播放开始。每层环带是一条循环，前端经过固定竖线时发声。</div>
+    <exercise-controls id="transportControls" apply-seed></exercise-controls>
+    <div class="sub" style="margin-top:8px">种子输入后按 Enter 应用；换一版会随机生成。</div>
+    <div class="status" id="status">当前为基础预览；播放后按音色生成时长。环带前端经过竖线时发声。</div>
   </section>
+  <details class="hud test-hud" open>
+    <summary>测试参数</summary>
+    <div class="test-row"><label for="ribbonRoundness">条带圆角</label><output id="ribbonRoundnessValue" for="ribbonRoundness">0%</output></div>
+    <input id="ribbonRoundness" type="range" min="0" max="100" step="1" value="0" disabled>
+    <p>0% 直角 · 100% 圆头</p>
+    <label class="test-row"><span>力度呼吸</span><input id="breathingEnabled" type="checkbox" checked style="width:auto"></label>
+    <button id="resetTestParams" type="button" disabled>恢复默认</button>
+  </details>
   <details class="hud info-hud">
     <summary>▶ 机制与循环</summary>
     <div class="info-body">
       <div class="hint">
-      <b>机制：</b>固定音符集合不变，但每个音都有自己的周期、时值和初始相位。由于周期彼此错开，任何两个音的先后顺序和重叠关系都会慢慢改变。<br>
-      <b>灵感：</b>Tero Parviainen 的 <code>JavaScript Systems Music</code> 中，Music for Airports 的核心是多个不同长度的单音 tape loop；这里先沿用 02 的采样钢琴，方便比较两种生成机制。
+      <b>机制：</b>固定音符独立循环：种子决定周期、初始相位与力度呼吸的起点；钢琴时长参考采样衰减，Drone 时长由包络与留白计算。周期和时长在一场中保持稳定，循环持续错位，力度跨多轮缓慢起伏。<br>
+      <b>灵感：</b>Tero Parviainen 的 <code>JavaScript Systems Music</code> 中，Music for Airports 使用不同循环周期的单音 tape loop；本练习使用采样钢琴与 Drone，并加入音色时长与力度呼吸。
       </div>
       <div class="loops" id="loops"></div>
       <div class="log" id="log"></div>
@@ -105,8 +121,21 @@ const setStatus = html => { statusEl.innerHTML = html; };
 const log = msg => { logEl.textContent += msg + '\n'; logEl.scrollTop = logEl.scrollHeight; };
 const colorFor = loop => loop.isDrone ? '#00c896' : '#ff8a00';
 let stage = null;
+const applyTestRoundness = () => {
+  const value = Number($('ribbonRoundness').value);
+  $('ribbonRoundnessValue').textContent = value + '%';
+  stage?.setRoundness(value);
+};
+$('ribbonRoundness').addEventListener('input', applyTestRoundness);
+$('resetTestParams').addEventListener('click', () => {
+  $('ribbonRoundness').value = '0';
+  $('breathingEnabled').checked = true;
+  applyTestRoundness();
+});
 const stageReady = import('./stage.js').then(({ createStage }) => {
   stage = createStage(orbitStageEl);
+  $('ribbonRoundness').disabled = false;
+  $('resetTestParams').disabled = false;
   // Idle preview uses fixed base parameters; it does not consume the performance RNG.
   stage.setLoops([...NOTE_SET, ...DRONE_SET.map(item => ({ ...item, isDrone: true }))].map((item, index) => ({
     ...item, index, period: item.basePeriod, duration: item.baseDur,
@@ -168,7 +197,7 @@ const makeMasterChain = () => {
 const createDroneVoice = destination => {
   const synth = new Tone.PolySynth(Tone.Synth, {
     oscillator: { type: 'sine' },
-    envelope: { attack: 4, decay: 1, sustain: 0.78, release: 8 },
+    envelope: DRONE_ENVELOPE,
     volume: -13,
   });
   const filter = new Tone.Filter({ type: 'lowpass', frequency: 360, Q: 0.5 });
@@ -362,7 +391,43 @@ const PIANO_NOTES = ['A2', 'C#3', 'F3', 'A3', 'C#4', 'F4', 'A4', 'C#5', 'F5', 'A
 const JS_DELIVR_BASE = 'https://cdn.jsdelivr.net/gh/generative-music/samples-alex-bainter@master/samples/vsco2-piano-mf/';
 const sampleFile = (note, ext) => note.toLowerCase().replace('#', 'sharp') + ext;
 
-const wrapPiano = (piano, fxNodes) => ({
+// Musical duration: estimate the dry sample's decay, not its file's silence tail.
+// -24 dB RMS relative to the peak, sustained for 300 ms, is a tunable starting
+// point, not a claim about perceptual silence. Reverb/release remain outside the band.
+const PIANO_DECAY_DB = -24;
+const DRONE_ENVELOPE = { attack: 4, decay: 1, sustain: 0.78, release: 8 };
+const measureDecay = buffer => {
+  const hop = Math.max(1, Math.round(buffer.sampleRate * 0.05));
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i));
+  const rms = [];
+  for (let start = 0; start < buffer.length; start += hop) {
+    const end = Math.min(start + hop, buffer.length);
+    let sum = 0;
+    for (const channel of channels) for (let j = start; j < end; j++) sum += channel[j] ** 2;
+    rms.push(Math.sqrt(sum / ((end - start) * channels.length)));
+  }
+  const peak = Math.max(...rms);
+  if (peak < 1e-7) return 0.3;
+  const peakIndex = rms.indexOf(peak);
+  const threshold = peak * Math.pow(10, PIANO_DECAY_DB / 20);
+  for (let i = peakIndex + 1; i <= rms.length - 6; i++) {
+    if (rms.slice(i, i + 6).every(value => value < threshold)) return Math.max(0.3, i * hop / buffer.sampleRate);
+  }
+  return buffer.duration;
+};
+const droneDuration = period => Math.min(
+  period * 0.8 - DRONE_ENVELOPE.release,
+  Math.max(DRONE_ENVELOPE.attack + DRONE_ENVELOPE.decay, period * 0.65 - DRONE_ENVELOPE.release)
+);
+// Repeatable slow breathing over 5–8 returns; no per-trigger random draw.
+const breathingVelocity = (loop, occurrence) => {
+  const wave = 0.5 - 0.5 * Math.cos(2 * Math.PI * (loop.breathPhase + occurrence / loop.breathCycles));
+  const depth = $('breathingEnabled').checked ? (loop.isDrone ? 0.2 : 0.35) : 0;
+  return loop.velocity * (1 - depth + depth * wave);
+};
+
+const wrapPiano = (piano, fxNodes, durationFor = () => 1.205) => ({
+  durationFor,
   trigger: (note, dur, time, velocity) => piano.triggerAttackRelease(note, dur, time, velocity),
   releaseAll: time => piano.releaseAll(time),
   dispose: () => {
@@ -372,22 +437,41 @@ const wrapPiano = (piano, fxNodes) => ({
 });
 
 const createSampledPiano = async (destination, timeoutMs) => {
-  const piano = await new Promise((resolve, reject) => {
-    const sampler = new Tone.Sampler({
-      urls: Object.fromEntries(PIANO_NOTES.map(note => [note, sampleFile(note, '.wav')])),
-      baseUrl: JS_DELIVR_BASE,
-      release: 3.5,
-      volume: 12,
-      onload: () => resolve(sampler),
-      onerror: err => reject(err),
-    });
-    setTimeout(() => reject(new Error('加载超时（' + timeoutMs / 1000 + 's）')), timeoutMs);
-  });
+  const buffers = new Map();
+  let expired = false;
+  let timeout;
+  try {
+    await Promise.race([
+      Promise.all(PIANO_NOTES.map(async note => {
+        const buffer = await Tone.ToneAudioBuffer.fromUrl(JS_DELIVR_BASE + sampleFile(note, '.wav'));
+        if (expired) { buffer.dispose(); return; }
+        buffers.set(note, buffer);
+      })),
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('钢琴加载超时')), timeoutMs); }),
+    ]);
+  } catch (error) {
+    expired = true;
+    buffers.forEach(buffer => buffer.dispose());
+    throw error;
+  } finally { clearTimeout(timeout); }
+  const profiles = PIANO_NOTES.map(note => ({ midi: Tone.Frequency(note).toMidi(), decay: measureDecay(buffers.get(note)) }));
+  // Sampler chooses the higher source on equal semitone distance; account for
+  // playback-rate transposition when converting source decay to played seconds.
+  const durationFor = note => {
+    const midi = Tone.Frequency(note).toMidi();
+    const source = profiles.reduce((best, item) => Math.abs(item.midi - midi) < Math.abs(best.midi - midi)
+      || (Math.abs(item.midi - midi) === Math.abs(best.midi - midi) && item.midi > best.midi) ? item : best);
+    return source.decay / Math.pow(2, (midi - source.midi) / 12);
+  };
+  const piano = new Tone.Sampler({ urls: Object.fromEntries(buffers), release: 3.5, volume: 12 });
   const reverb = new Tone.Reverb({ decay: 10, wet: 0.38 });
-  await reverb.generate();
+  try { await reverb.generate(); } catch (error) {
+    piano.dispose(); reverb.dispose(); buffers.forEach(buffer => buffer.dispose());
+    throw error;
+  }
   piano.connect(reverb);
   reverb.connect(destination);
-  return wrapPiano(piano, [reverb]);
+  return wrapPiano(piano, [reverb, ...buffers.values()], durationFor);
 };
 
 const createFallbackPiano = async destination => {
@@ -421,7 +505,6 @@ const createPiano = async destination => {
 
 let engine = null;
 let currentSeed = null;
-let engineTransition = false;
 const transportControls = $('transportControls');
 
 const activateEngine = async seed => {
@@ -434,9 +517,9 @@ const activateEngine = async seed => {
 
   const loops = NOTE_SET.map((item, index) => {
     const periodJitter = 0.94 + rng() * 0.14;
-    const durJitter = 0.86 + rng() * 0.28;
+    rng(); // Preserve the existing period/phase/velocity seed sequence; old duration draw is retired.
     const period = item.basePeriod * periodJitter;
-    const duration = Math.min(period * 0.72, item.baseDur * durJitter);
+    const duration = Math.min(period * 0.72, piano.durationFor(item.note));
     const phase = rng() * period;
     const nextIn = (period - phase) % period;
     const velocity = 0.7 + rng() * 0.3;
@@ -457,7 +540,8 @@ const activateEngine = async seed => {
 
   const droneLoops = DRONE_SET.map((item, index) => {
     const period = item.basePeriod * (0.96 + rng() * 0.1);
-    const duration = Math.min(period * 0.62, item.baseDur * (0.9 + rng() * 0.18));
+    rng(); // Retired duration jitter slot: do not shift later seeded loop parameters.
+    const duration = droneDuration(period);
     const phase = rng() * period;
     const nextIn = (period - phase) % period;
     const velocity = 0.34 + rng() * 0.18;
@@ -477,6 +561,12 @@ const activateEngine = async seed => {
     };
   });
   const allLoops = loops.concat(droneLoops);
+  allLoops.forEach(loop => {
+    loop.scheduledCount = 0;
+    loop.breathCycles = 5 + Tone.Frequency(loop.note).toMidi() % 4;
+    loop.breathPhase = makeRng(hashSeed(seed + ':breath:' + loop.note))();
+    loop.currentVelocity = breathingVelocity(loop, 0);
+  });
 
   let scheduled = false;
 
@@ -494,8 +584,8 @@ const activateEngine = async seed => {
         '</div>' +
         '<div class="meta">' +
           (loop.isDrone ? 'drone' : 'piano') + ' · period ' + loop.period.toFixed(2) + 's<br>' +
-          'duration ' + loop.duration.toFixed(2) + 's<br>' +
-          'phase ' + loop.phase.toFixed(2) + 's · velocity ' + loop.velocity.toFixed(2) +
+          'duration ' + loop.duration.toFixed(2) + 's · ' + (loop.isDrone ? '包络与留白' : '衰减参考') + '<br>' +
+          'phase ' + loop.phase.toFixed(2) + 's<br>力度 <span id="velocity-' + loop.index + '">' + loop.currentVelocity.toFixed(2) + '</span> · 呼吸 ' + loop.breathCycles + ' 轮' +
         '</div>';
       loopsEl.appendChild(card);
     });
@@ -504,11 +594,15 @@ const activateEngine = async seed => {
   const scheduleLoop = (loop, trigger) => {
     const fireAt = loop.scheduledFireAt;
     loop.eventId = Tone.Transport.scheduleOnce(time => {
-      trigger(loop, time);
+      const velocity = breathingVelocity(loop, loop.scheduledCount++);
+      trigger(loop, time, velocity);
       loop.scheduledFireAt = fireAt + loop.period;
       Tone.Draw.schedule(() => {
         if (!scheduled) return;
         loop.triggers += 1;
+        loop.currentVelocity = velocity;
+        const velocityLabel = $('velocity-' + loop.index);
+        if (velocityLabel) velocityLabel.textContent = velocity.toFixed(2);
         loop.lastVisualFireAt = fireAt;
         const count = $('count-' + loop.index);
         if (count) count.textContent = String(loop.triggers);
@@ -531,11 +625,11 @@ const activateEngine = async seed => {
     stage.setLoops(allLoops);
     renderLoopList();
     log('seed ' + seed + ' · independent note loops');
-    loops.forEach(loop => scheduleLoop(loop, (item, time) => {
-      piano.trigger(item.note, item.duration, time, item.velocity);
+    loops.forEach(loop => scheduleLoop(loop, (item, time, velocity) => {
+      piano.trigger(item.note, item.duration, time, velocity);
     }));
-    droneLoops.forEach(loop => scheduleLoop(loop, (item, time) => {
-      droneVoice.trigger(item.note, item.duration, time, item.velocity);
+    droneLoops.forEach(loop => scheduleLoop(loop, (item, time, velocity) => {
+      droneVoice.trigger(item.note, item.duration, time, velocity);
     }));
     moodistTextures.start(Tone.now() + 0.05);
     // Transport.seconds uses Context.now() (includes lookAhead). Render the audible clock.
@@ -565,21 +659,75 @@ const activateEngine = async seed => {
     droneVoice.dispose();
     moodistTextures.dispose();
     [compressor, highpass, limiter, masterGain].forEach(node => node.dispose());
+    dropPendingVoiceCallbacks();
   };
 
   return { deactivate, schedule, end, fadeIn, fadeOut };
 };
 
+// Every note longer than Tone's lookAhead makes its voice schedule the release through
+// `context.setTimeout` (see Tone's `_scheduleEvent`), and `Synth.dispose()` does NOT
+// cancel those callbacks. They therefore fire after teardown, hit `assert(!this.disposed)`
+// and surface as `Synth was already disposed` — a backlog that keeps draining for tens of
+// seconds (实测停止后仍有 20 次/秒、最长 158 秒). The errors do not affect audio, but they
+// are uncaught and drown the console, so drop the queued callbacks once this engine is gone.
+// `_timeouts` / `_timeoutLoop` are Tone internals (same category as the `_ticker` private
+// API already used elsewhere in this repo): a Tone.js upgrade must re-check this function.
+const dropPendingVoiceCallbacks = () => {
+  try {
+    const context = Tone.getContext();
+    const timeouts = context && context._timeouts;
+    if (!timeouts || !Array.isArray(timeouts._timeline)) return;
+    timeouts._timeline.length = 0;
+  } catch (error) {
+    console.warn('[引擎] 清理待执行回调失败，可能残留控制台报错：', error.message);
+  }
+};
+
+// Engine lifetime. `engineGeneration` is the teardown authority: a build that started
+// before the latest stop/restart must never reach Transport.start(). Without it, a stop
+// pressed while activateEngine is still loading (Tone.start + 采样 + reverb 生成,
+// 可能数秒) finds engine === null, does nothing, and the build silently becomes an
+// orphan: it starts the Transport with nodes the UI can no longer reach, so the next
+// play builds a second engine while the orphan fires notes into disposed voices —
+// `Synth was already disposed` every 50ms, effectively forever. 构建中的引擎不可取消，
+// 所以只能靠代次把它作废并回收。
+let engineGeneration = 0;
+let engineTransition = false;
+let pendingBuild = null;
+let fadeOutTimer = null;
+// `settled` must carry the resolved value through — returning only { ok } here made
+// `engine = result.value` assign undefined and 播放失败 with "reading 'schedule'".
+const settled = async promise => {
+  if (!promise) return { ok: false, error: new Error('没有待完成的构建') };
+  try { return { ok: true, value: await promise }; } catch (error) { return { ok: false, error }; }
+};
+
 const playCurrent = async () => {
   if (engineTransition) return;
+  engineTransition = true;
   transportControls.setBusy(true);
+  const generation = engineGeneration;
   try {
     await Tone.start();
     if (!engine) {
       const text = transportControls.seedValue;
       currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
       setStatus('正在构建引擎（种子 ' + currentSeed + '）...');
-      engine = await activateEngine(currentSeed);
+      pendingBuild = activateEngine(currentSeed);
+      const result = await settled(pendingBuild);
+      pendingBuild = null;
+      if (!result.ok) throw result.error;
+      if (generation !== engineGeneration) {
+        // A stop/restart arrived during the build. The engine cannot be cancelled once
+        // started, so tear it down here and never reach Transport.start(): `end()` first
+        // so its Transport events and voices are released, not just its audio nodes.
+        result.value.end();
+        result.value.deactivate();
+        transportControls.setPlaying(false);
+        return;
+      }
+      engine = result.value;
     }
     engine.schedule();
     Tone.Transport.start();
@@ -590,6 +738,7 @@ const playCurrent = async () => {
     transportControls.setPlaying(false);
     setStatus('播放失败：' + err.message);
   } finally {
+    engineTransition = false;
     transportControls.setBusy(false);
   }
 };
@@ -597,41 +746,63 @@ const playCurrent = async () => {
 transportControls.addEventListener('exercise-play', playCurrent);
 
 transportControls.addEventListener('exercise-stop', () => {
-  if (!engine || engineTransition) return;
-  const oldEngine = engine;
+  if (!engine && !pendingBuild) return;
+  engineGeneration += 1; // Invalidate any build that is still loading.
   engineTransition = true;
   transportControls.setBusy(true);
-  oldEngine.fadeOut();
-  setTimeout(() => {
-    oldEngine.deactivate();
-    if (engine === oldEngine) engine = null;
+  const oldEngine = engine;
+  engine = null;
+  oldEngine?.fadeOut();
+  clearTimeout(fadeOutTimer);
+  fadeOutTimer = setTimeout(() => {
+    fadeOutTimer = null;
+    oldEngine?.deactivate();
     engineTransition = false;
-    transportControls.setPlaying(false);
     transportControls.setBusy(false);
+    transportControls.setPlaying(false);
     setStatus('已停止');
-  }, 900);
+  }, oldEngine ? 900 : 0);
 });
 
-transportControls.addEventListener('exercise-regenerate', async () => {
+const restartCurrent = async randomize => {
   if (engineTransition) return;
+  engineTransition = true;
   transportControls.setBusy(true);
-  if (engine) {
+  engineGeneration += 1;
+  try {
     const oldEngine = engine;
-    engineTransition = true;
-    oldEngine.fadeOut();
-    await new Promise(resolve => setTimeout(resolve, 900));
-    oldEngine.deactivate();
-    if (engine === oldEngine) engine = null;
+    engine = null;
+    if (oldEngine) {
+      oldEngine.fadeOut();
+      await new Promise(resolve => setTimeout(resolve, 900));
+      oldEngine.deactivate();
+    } else if (pendingBuild) {
+      // Wait for the in-flight build so we can dispose it; null it so playCurrent rebuilds.
+      const result = await settled(pendingBuild);
+      if (result.ok) { result.value.end(); result.value.deactivate(); }
+      pendingBuild = null;
+    }
+    if (randomize) transportControls.clearSeed();
+    transportControls.setPlaying(false);
+  } catch (error) {
+    setStatus('切换失败：' + error.message);
+    console.error(error);
+    return;
+  } finally {
     engineTransition = false;
+    transportControls.setBusy(false);
   }
-  transportControls.clearSeed();
-  transportControls.setPlaying(false);
-  transportControls.setBusy(false);
-  playCurrent();
-});
+  await playCurrent();
+};
+transportControls.addEventListener('exercise-seed-apply', () => restartCurrent(false));
+transportControls.addEventListener('exercise-regenerate', () => restartCurrent(true));
 
 window.addEventListener('pagehide', event => {
-  if (!event.persisted) { engine?.deactivate(); stage?.dispose(); }
+  if (event.persisted) return;
+  engineGeneration += 1; // Also invalidate a build that has not resolved yet.
+  engine?.deactivate();
+  settled(pendingBuild).then(result => { if (result.ok) result.value.deactivate(); });
+  stage?.dispose();
 });
 
 window.exercise = {
