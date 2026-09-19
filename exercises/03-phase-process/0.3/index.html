@@ -82,7 +82,6 @@
     <div class="test-row"><label for="ribbonRoundness">条带圆角</label><output id="ribbonRoundnessValue" for="ribbonRoundness">0%</output></div>
     <input id="ribbonRoundness" type="range" min="0" max="100" step="1" value="0" disabled>
     <p>0% 直角 · 100% 圆头</p>
-    <label class="test-row"><span>力度呼吸</span><input id="breathingEnabled" type="checkbox" checked style="width:auto"></label>
     <button id="resetTestParams" type="button" disabled>恢复默认</button>
   </details>
   <details class="hud info-hud">
@@ -121,6 +120,13 @@ const setStatus = html => { statusEl.innerHTML = html; };
 const log = msg => { logEl.textContent += msg + '\n'; logEl.scrollTop = logEl.scrollHeight; };
 const colorFor = loop => loop.isDrone ? '#00c896' : '#ff8a00';
 let stage = null;
+// 钢琴 Release 按各环周期取比例：Piano 尾音时长 = period × 该比例。
+// 默认 25%；下限 3.5s 保留旧版尾音，且为同音下次触发预留 0.5s。
+const PIANO_RELEASE_FRACTION_DEFAULT = 0.25;
+const pianoReleaseSeconds = (period, duration) => Math.min(
+  Math.max(3.5, period * PIANO_RELEASE_FRACTION_DEFAULT),
+  Math.max(0.05, period - duration - 0.5)
+);
 const applyTestRoundness = () => {
   const value = Number($('ribbonRoundness').value);
   $('ribbonRoundnessValue').textContent = value + '%';
@@ -129,7 +135,6 @@ const applyTestRoundness = () => {
 $('ribbonRoundness').addEventListener('input', applyTestRoundness);
 $('resetTestParams').addEventListener('click', () => {
   $('ribbonRoundness').value = '0';
-  $('breathingEnabled').checked = true;
   applyTestRoundness();
 });
 const stageReady = import('./stage.js').then(({ createStage }) => {
@@ -415,6 +420,53 @@ const measureDecay = buffer => {
   }
   return buffer.duration;
 };
+// Sustain is a bounded change to the sample's decay, NOT a longer release timer.
+// Preserve the first 200ms after the peak. Gently flatten the later envelope,
+// cap lift at +12dB, and return to unity in the noise floor (-48..-60dB).
+const sustainBuffer = buffer => {
+  const hop = Math.max(1, Math.round(buffer.sampleRate * 0.05));
+  const input = Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i));
+  const levels = [], peaks = [];
+  for (let start = 0; start < buffer.length; start += hop) {
+    const end = Math.min(start + hop, buffer.length);
+    let energy = 0, peak = 0;
+    for (const channel of input) for (let i = start; i < end; i++) {
+      energy += channel[i] * channel[i]; peak = Math.max(peak, Math.abs(channel[i]));
+    }
+    levels.push(Math.sqrt(energy / ((end - start) * input.length)));
+    peaks.push(peak);
+  }
+  const peak = Math.max(...levels), peakAt = levels.indexOf(peak);
+  const gains = [];
+  let gain = 1;
+  levels.forEach((level, index) => {
+    const db = 20 * Math.log10(Math.max(level / Math.max(peak, 1e-9), 1e-9));
+    const noiseGuard = Math.max(0, Math.min(1, (db + 60) / 12));
+    const liftDb = Math.min(12, Math.max(0, -db * (1 - 1 / 1.8)));
+    const target = index <= peakAt + 4 ? 1 : 1 + (Math.pow(10, liftDb / 20) - 1) * noiseGuard;
+    gain += (target - gain) * (target > gain ? 0.18 : 0.3);
+    gains.push(gain);
+  });
+  // Adjacent-block peak bounds protect both ends of the interpolation without clipping.
+  gains.forEach((gain, i) => {
+    const nearbyPeak = Math.max(peaks[Math.max(0, i - 1)], peaks[i], peaks[Math.min(peaks.length - 1, i + 1)]);
+    gains[i] = Math.min(gain, Math.max(1, 0.95 / Math.max(nearbyPeak, 1e-9)));
+  });
+  const output = input.map(channel => {
+    const data = new Float32Array(channel.length);
+    for (let i = 0; i < data.length; i++) {
+      const block = Math.floor(i / hop), fraction = i / hop - block;
+      const from = gains[block], to = gains[Math.min(block + 1, gains.length - 1)];
+      data[i] = channel[i] * (from + (to - from) * fraction);
+    }
+    return data;
+  });
+  // Preserve source sample rate (fromArray would use the current context rate).
+  const native = new AudioBuffer({ length: buffer.length, numberOfChannels: input.length, sampleRate: buffer.sampleRate });
+  output.forEach((data, channel) => native.copyToChannel(data, channel));
+  return new Tone.ToneAudioBuffer(native);
+};
+
 const droneDuration = period => Math.min(
   period * 0.8 - DRONE_ENVELOPE.release,
   Math.max(DRONE_ENVELOPE.attack + DRONE_ENVELOPE.decay, period * 0.65 - DRONE_ENVELOPE.release)
@@ -422,19 +474,9 @@ const droneDuration = period => Math.min(
 // Repeatable slow breathing over 5–8 returns; no per-trigger random draw.
 const breathingVelocity = (loop, occurrence) => {
   const wave = 0.5 - 0.5 * Math.cos(2 * Math.PI * (loop.breathPhase + occurrence / loop.breathCycles));
-  const depth = $('breathingEnabled').checked ? (loop.isDrone ? 0.2 : 0.35) : 0;
+  const depth = loop.isDrone ? 0.2 : 0.35;
   return loop.velocity * (1 - depth + depth * wave);
 };
-
-const wrapPiano = (piano, fxNodes, durationFor = () => 1.205) => ({
-  durationFor,
-  trigger: (note, dur, time, velocity) => piano.triggerAttackRelease(note, dur, time, velocity),
-  releaseAll: time => piano.releaseAll(time),
-  dispose: () => {
-    piano.dispose();
-    fxNodes.forEach(node => node.dispose());
-  },
-});
 
 const createSampledPiano = async (destination, timeoutMs) => {
   const buffers = new Map();
@@ -454,7 +496,8 @@ const createSampledPiano = async (destination, timeoutMs) => {
     buffers.forEach(buffer => buffer.dispose());
     throw error;
   } finally { clearTimeout(timeout); }
-  const profiles = PIANO_NOTES.map(note => ({ midi: Tone.Frequency(note).toMidi(), decay: measureDecay(buffers.get(note)) }));
+  const sustained = new Map([...buffers].map(([note, buffer]) => [note, sustainBuffer(buffer)]));
+  const profiles = PIANO_NOTES.map(note => ({ midi: Tone.Frequency(note).toMidi(), decay: measureDecay(sustained.get(note)) }));
   // Sampler chooses the higher source on equal semitone distance; account for
   // playback-rate transposition when converting source decay to played seconds.
   const durationFor = note => {
@@ -463,32 +506,58 @@ const createSampledPiano = async (destination, timeoutMs) => {
       || (Math.abs(item.midi - midi) === Math.abs(best.midi - midi) && item.midi > best.midi) ? item : best);
     return source.decay / Math.pow(2, (midi - source.midi) / 12);
   };
-  const piano = new Tone.Sampler({ urls: Object.fromEntries(buffers), release: 3.5, volume: 12 });
+  const sustainedPiano = new Tone.Sampler({ urls: Object.fromEntries(sustained), release: 3.5, volume: 12 });
   const reverb = new Tone.Reverb({ decay: 10, wet: 0.38 });
   try { await reverb.generate(); } catch (error) {
-    piano.dispose(); reverb.dispose(); buffers.forEach(buffer => buffer.dispose());
+    sustainedPiano.dispose(); reverb.dispose();
+    buffers.forEach(buffer => buffer.dispose()); sustained.forEach(buffer => buffer.dispose());
     throw error;
   }
-  piano.connect(reverb);
+  sustainedPiano.connect(reverb);
   reverb.connect(destination);
-  return wrapPiano(piano, [reverb, ...buffers.values()], durationFor);
+  return {
+    durationFor,
+    trigger: (note, dur, time, velocity, release) => {
+      const selected = sustainedPiano;
+      if (Number.isFinite(release)) selected.release = release;
+      selected.triggerAttackRelease(note, dur, time, velocity);
+    },
+    releaseAll: time => sustainedPiano.releaseAll(time),
+    dispose: () => {
+      sustainedPiano.dispose(); reverb.dispose();
+      buffers.forEach(buffer => buffer.dispose()); sustained.forEach(buffer => buffer.dispose());
+    },
+  };
 };
 
 const createFallbackPiano = async destination => {
-  const piano = new Tone.PolySynth(Tone.FMSynth, {
-    harmonicity: 3,
-    modulationIndex: 8,
-    oscillator: { type: 'sine' },
-    modulation: { type: 'triangle' },
-    envelope: { attack: 0.005, decay: 1.2, sustain: 0, release: 2.8 },
-    modulationEnvelope: { attack: 0.005, decay: 0.4, sustain: 0, release: 0.8 },
-    volume: 6,
-  });
+  const voices = new Map();
   const reverb = new Tone.Reverb({ decay: 8, wet: 0.34 });
-  await reverb.generate();
-  piano.connect(reverb);
+  try { await reverb.generate(); } catch (error) { reverb.dispose(); throw error; }
   reverb.connect(destination);
-  return wrapPiano(piano, [reverb]);
+  return {
+    durationFor: () => 3,
+    trigger: (note, dur, time, velocity, release) => {
+      let voice = voices.get(note);
+      if (!voice) {
+        voice = new Tone.FMSynth({
+          harmonicity: 3, modulationIndex: 8,
+          oscillator: { type: 'sine' }, modulation: { type: 'triangle' },
+          envelope: { attack: 0.005, decay: 1.2, sustain: 0, release: 3.5 },
+          modulationEnvelope: { attack: 0.005, decay: 0.4, sustain: 0, release: 0.8 },
+          volume: 6,
+        }).connect(reverb);
+        voices.set(note, voice);
+      }
+      // Distinct pitches never share an envelope. The loop's release budget
+      // finishes before the same pitch returns, so reusing its voice is safe.
+      voice.envelope.sustain = 0.18;
+      if (Number.isFinite(release)) voice.envelope.release = release;
+      voice.triggerAttackRelease(note, dur, time, velocity);
+    },
+    releaseAll: time => voices.forEach(voice => voice.triggerRelease(time)),
+    dispose: () => { voices.forEach(voice => voice.dispose()); voices.clear(); reverb.dispose(); },
+  };
 };
 
 const createPiano = async destination => {
@@ -520,6 +589,9 @@ const activateEngine = async seed => {
     rng(); // Preserve the existing period/phase/velocity seed sequence; old duration draw is retired.
     const period = item.basePeriod * periodJitter;
     const duration = Math.min(period * 0.72, piano.durationFor(item.note));
+    // Release 由这个音在环上的位置算：环越长，尾音越长。用一个 getter 而不是冻结的数值，
+    // 周期、时值和相位不受 Release 设置影响。
+    const release = () => pianoReleaseSeconds(period, duration);
     const phase = rng() * period;
     const nextIn = (period - phase) % period;
     const velocity = 0.7 + rng() * 0.3;
@@ -528,6 +600,7 @@ const activateEngine = async seed => {
       index,
       period,
       duration,
+      release,
       phase,
       nextIn,
       velocity,
@@ -585,6 +658,7 @@ const activateEngine = async seed => {
         '<div class="meta">' +
           (loop.isDrone ? 'drone' : 'piano') + ' · period ' + loop.period.toFixed(2) + 's<br>' +
           'duration ' + loop.duration.toFixed(2) + 's · ' + (loop.isDrone ? '包络与留白' : '衰减参考') + '<br>' +
+          (loop.isDrone ? '' : 'release <span data-release-period="' + loop.period + '" data-release-duration="' + loop.duration + '">' + loop.release().toFixed(2) + 's</span><br>') +
           'phase ' + loop.phase.toFixed(2) + 's<br>力度 <span id="velocity-' + loop.index + '">' + loop.currentVelocity.toFixed(2) + '</span> · 呼吸 ' + loop.breathCycles + ' 轮' +
         '</div>';
       loopsEl.appendChild(card);
@@ -626,7 +700,8 @@ const activateEngine = async seed => {
     renderLoopList();
     log('seed ' + seed + ' · independent note loops');
     loops.forEach(loop => scheduleLoop(loop, (item, time, velocity) => {
-      piano.trigger(item.note, item.duration, time, velocity);
+      // Release 使用当前固定比例和同音循环预算。
+      piano.trigger(item.note, item.duration, time, velocity, item.release());
     }));
     droneLoops.forEach(loop => scheduleLoop(loop, (item, time, velocity) => {
       droneVoice.trigger(item.note, item.duration, time, velocity);
