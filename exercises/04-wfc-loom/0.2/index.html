@@ -80,18 +80,17 @@
   .time-lane {
     position:absolute; left:7px; right:7px; bottom:7px; height:5px;
     border-top:1px solid rgba(37,32,24,.24);
+    /* 2.5s 的线性标尺，每 0.5s 一根刻度（5 格），所以"跨了几拍"可以直接数 */
     background:
-      linear-gradient(90deg,
-        rgba(37,32,24,.34) 0 1px, transparent 1px 25%,
-        rgba(37,32,24,.2) 25% calc(25% + 1px), transparent calc(25% + 1px) 50%,
-        rgba(37,32,24,.28) 50% calc(50% + 1px), transparent calc(50% + 1px) 75%,
-        rgba(37,32,24,.2) 75% calc(75% + 1px), transparent calc(75% + 1px));
+      repeating-linear-gradient(90deg,
+        rgba(37,32,24,.32) 0 1px, transparent 1px 20%);
   }
   .time-mark {
-    position:absolute; left:var(--time-x, 0%); top:-2px; width:var(--time-w, 34%); height:5px;
+    position:absolute; left:var(--time-x, 0%); top:-2px; width:var(--time-w, 5%); height:5px;
     background:rgba(37,32,24,.58);
     transform:translateX(0);
-    transition:background .2s ease, width .2s ease;
+    /* 注意：width 不能有 CSS transition —— 生长是逐帧写 --time-w 驱动的，过渡会和它打架 */
+    transition:background .2s ease;
   }
   .cell.collapsed .time-mark { background:color-mix(in srgb, var(--tile-ink, #252018) 72%, transparent); }
   .cell.observing {
@@ -110,6 +109,19 @@
   h1 small { color:#aaa08d; font:500 13px/1 Consolas,monospace; vertical-align:4px; }
   .sub { color:#aaa08d; font-size:12px; line-height:1.55; }
   .controls { right:20px; top:20px; width:310px; padding:14px; }
+  .tempo { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .tempo label { color:#aaa08d; font-size:11px; letter-spacing:.08em; }
+  .tempo input {
+    width:74px; border:1px solid var(--line); border-radius:4px; padding:3px 8px; outline:none;
+    color:#eee7d6; background:#12110e; font:12px/1.2 Consolas,"Courier New",monospace;
+  }
+  .tempo input:focus { border-color:var(--accent); }
+  .tempo span { color:#8f866f; font-size:11px; }
+  .tempo select {
+    border:1px solid var(--line); border-radius:4px; padding:3px 6px; outline:none;
+    color:#eee7d6; background:#12110e; font:12px/1.2 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  }
+  .tempo select:focus { border-color:var(--accent); }
   .status { margin-top:10px; padding-top:10px; border-top:1px solid var(--line); color:#aaa08d; font-size:11px; line-height:1.5; }
   .status b { color:#eee7d6; }
   .notes {
@@ -144,7 +156,7 @@
 <body>
 <main class="stage">
   <div class="score-wrap">
-    <section class="score" aria-label="二维单音 WFC tile 网格">
+    <section class="score" aria-label="二维 WFC tile 网格（和声进行约束音高）">
       <div class="cells" id="cells"></div>
     </section>
   </div>
@@ -152,18 +164,38 @@
 
 <header class="hud intro">
   <h1>04 · Note Tile Collapse <small>0.2</small></h1>
-  <div class="sub">最小二维 WFC：cell 有自己的局部发声时间，候选 tile 只表示音高或休止。</div>
+  <div class="sub">最小二维 WFC：每个 cell 至少占一拍（= 60/BPM 秒），音越长、下一次坍缩等得越久（×0.6 后<b>向上取整到整拍</b>）——所以坍缩<b>每一次都踩在拍上</b>，只是有时等一两拍；音高由 F 小调的和声进行约束，<b>强拍锁在和弦音上</b>，所以织出来的是一块有和声的织物。</div>
 </header>
 
 <section class="hud controls">
   <exercise-controls id="transportControls" apply-seed></exercise-controls>
-  <div class="sub" style="margin-top:8px">输入种子按 Enter 应用；换一版重新坍缩。</div>
+  <div class="tempo">
+    <label for="voiceSelect">音色</label>
+    <select id="voiceSelect">
+      <option value="piano">钢琴采样</option>
+      <option value="synth">合成器</option>
+    </select>
+    <span id="voiceHint">vsco2-piano-mf · 首次播放需联网</span>
+  </div>
+  <div class="tempo">
+    <label for="bpmInput">BPM</label>
+    <input id="bpmInput" type="number" min="40" max="240" step="1" value="120" autocomplete="off" inputmode="numeric">
+    <span id="bpmHint">1 拍 = 0.500s</span>
+  </div>
+  <div class="sub" style="margin-top:8px">输入种子按 Enter 应用；换一版重新坍缩。音色与 BPM 是<b>演出参数</b>：同一颗种子换音色、改速度，听到的都是同一首曲子。</div>
   <div class="status" id="status">待机：每个位置都有一组候选音。</div>
 </section>
 
 <details class="hud notes">
   <summary>▶ 规则</summary>
-  <div>8×8 cell，候选是 F 小调内 8 个音高和一个休止。每个 cell 下方的横条表示该格自己的局部节奏位置和时值；位置落在 0、1/8、1/4、3/8 这类基本 subdivision 上。</div>
+  <div>
+    <b>候选</b>：8×8 cell，每个 cell 的候选是 F 小调内 8 个音高（F4 G4 Ab4 Bb4 C5 Db5 Eb5 F5）加一个休止；未坍缩时显示为 9 个小方块，坍缩后整个 cell 被该 tile 填满。
+    <br><b>和声</b>：和弦挂在时间轴上，每 <b>8 拍</b>（2 小节）换一次，沿进行图走（Fm → Db / Ab / Bbm / Cm → …）。选音时强拍（<b>小节第 1 拍</b>）锁和弦音、弱拍放开经过音与辅助音；上一个音若是「当时的非和弦音」，优先走到它的解决目标（Db→C、Eb→F、G→Ab、Bb→Ab / C）。<b>最近 3 个发过的音高按远近降权</b>（越近降得越狠），所以不会卡在同一个音上反复弹。当前和弦显示在状态栏。
+    <br><b>时间</b>：每个 cell 下方的横条是一条 <b>5 拍</b>标尺（120 BPM 时 = 2.5s，刻度每 1 拍）。标记的起点 = 这个音接进来的延迟，长度 = 它<b>实际响多久</b>；音一开始响，这条线就从左往右长出来，长满即结束。休止的线保持 0。
+    <br><b>坍缩不是等距的，但每次都在拍上</b>：下一个 cell 在 <b>max(1 拍, ceil(（延迟 + 实际时长）× 0.6)) 拍</b>之后才坍缩 —— 步长只会是 <b>1 / 2 / 3 拍</b>：短音是一拍的脉冲，长音后面等两三拍。因为步长取整，整首曲子始终落在拍网格上，小节重音与乐句留白也就真的落在小节和乐句上。
+    <br><b>时值</b>：与上一个音构成同音或级进（≤2 半音）→ <b>2.4 拍</b>连成一条线，跳进 → 用基本时值断开，终止列 → <b>4 拍</b>收句。每句（<b>16 拍</b> = 4 小节）末尾 <b>2 拍</b>强制休止，并把仍在响的音一起放掉。与仍在响的音撞上小 2 度 / 三全音 / 大 7 度时，这个音高几乎不会被选中。
+    <br><b>两个演出参数</b>：音色（钢琴采样 / 合成器）与 BPM（40–240）。BPM 缩放的是整条时间基准，所以叠置关系、乐句与重音都不变；换音色也不改任何音符 —— 两者都只为对比听感。
+  </div>
 </details>
 
 <div class="corner">2D NOTE TILE WFC · OPTIONS TO CELLS</div>
@@ -183,7 +215,7 @@ const CELL_COUNT = GRID * GRID;
 const MASTER_VOLUME_DB = 6;
 const MASTER_VOLUME_GAIN = Math.pow(10, MASTER_VOLUME_DB / 20);
 const NOTES = [
-  { id:'rest', label:'·', midi:null, weight:0.5, color:'#c9bea4', ink:'#3c3428' },
+  { id:'rest', label:'·', midi:null, weight:1.2, color:'#c9bea4', ink:'#3c3428' },
   { id:'F4', label:'F', midi:65, weight:1.35, color:'#7f987e', ink:'#182116' },
   { id:'G4', label:'G', midi:67, weight:0.92, color:'#9aa071', ink:'#242312' },
   { id:'Ab4', label:'Ab', midi:68, weight:1.1, color:'#b89452', ink:'#251909' },
@@ -215,13 +247,147 @@ const hashSeed = str => {
   return h >>> 0;
 };
 
+// 时间网格：最小间隔 1 拍。下面所有 offset / dur 的单位都是**秒**（120 BPM 时 1 拍 = 0.5s），
+// 播放时统一乘 timeScale() = 120 / BPM —— BPM 只改绝对速度，音乐结构（叠置关系、乐句、重音）不变。
+// ★ 不要改 Tone.Transport.bpm 来代替这个缩放：本练习用**绝对秒数**排事件，改 Transport 的 BPM 会
+//   把它已经排好的事件按新速度重新解释（tick↔秒 的换算是排程时做的），正在飞的下一步会跳。
+const STEP_S = 0.5;
+// 坍缩节奏跟着音长走（2026-09-20 第三轮）：下一个 cell 在
+//   max(1 拍, ceil((本次延迟 + 实际时长) × WAIT_SCALE)) 拍
+// 之后才坍缩 —— 短音仍保持一拍的脉冲，长音后面明显停顿一下。
+// 取 0.6 而不是 1.0：等满就没有叠置了（实测那会退回单音线）；0.6 让长音与下一个音重叠约 40%，
+// 和声还在，同时坍缩速度真的跟着音乐呼吸。
+// ★ 取整到整拍是第九轮加的，见 collapseLine 里 waitBeats 的注释：不取整就永远偏离拍点。
+const WAIT_SCALE = 0.6;
+// time-lane 的横轴跨度：5 拍（120 BPM 时 = 2.5s；最大延迟 0.75 拍 + 最长时值 4 拍 ≈ 4.75 拍，取 5）；
+// 刻度每 1 拍，于是"跨了几拍"可以直接数刻度。标尺以**拍**为单位，所以 BPM 改了它也不变。
+const LANE_SPAN_BEATS = 5;
+const laneBeats = beats => beats / LANE_SPAN_BEATS * 100;
+// 秒 → 拍（RHYTHM_CELLS 里写的是 120 BPM 下的秒数，除以 STEP_S 就是拍数）
+const toBeats = seconds => seconds / STEP_S;
+// 一拍（模型的最小步长，同时也是"1 拍"这个单位本身）
+const STEP_BEATS = 1;
+// ★ 小节 / 乐句一律按**拍**算，不能按"第几个格子"算（第九轮）：坍缩步长是 1–3 拍不等，
+//   所以"每 4 格"根本不是"每 4 拍" —— 重音会落在 0.5s/0.72s/1.2s… 这些互不成倍数的时刻上，
+//   乐句留白也一样跑偏。凡是"音乐上的时间结构"都只能数拍（stepBeat），不能数 step。
+const BAR_BEATS = 4;       // 4 拍一小节，重音在小节第 1 拍
+const PHRASE_BEATS = 16;   // 4 小节一句
+const PHRASE_REST_BEATS = 2; // 每句最后 2 拍留白
+const START_LEAD_S = 0.25; // 排第一步的提前量
+const BEAT_ACCENT = [0.22, 0, 0.10, 0]; // 小节内第 1/2/3/4 拍的重音加成
+const BREATH_DEPTH = 0.14;              // 一句（16 拍）内的呼吸弧幅度
+
+// 时值与句法（2026-09-20 第二轮：单音线太"点"，加入长音与呼吸）
+//  · 级进延长：这个音与**上一个发声的音**构成同音或级进（≤2 半音）→ 用 LEGATO_S 铺开，
+//    于是连续级进会串成一条线；跳进 → 保持 cell 自己的短时值，让线断开。
+//    ★ 用"进入音程"决定当前音的长短，而不是去延长上一个音：上一个音的 release 已经排好了，
+//      延后释放要改 triggerAttackRelease 为 attack+release 两次调用，既脆又依赖 voice 池内部状态。
+//  · 终止延长：col === 7 那一列是终止列 → CADENCE_S 长音收句。
+//  · 句尾留白：每句最后 PHRASE_REST_BEATS 拍强制休止，并把仍在响的音一起放掉
+//    （否则长音的尾巴会盖过休止，"留白"听不见）。
+const LEGATO_S = 1.2;
+const LEGATO_STEP_SEMITONES = 2;
+const CADENCE_S = 2.0;
+// 与仍在响的音构成小 2 度 / 三全音 / 大 7 度时几乎排除该候选（长音一叠，这三类音程会打拍子）。
+const HARSH_INTERVALS = new Set([1, 6, 11]);
+
+// ── 和声：F 小调的六个三和弦 + 进行图（借 0.1 的 `CHORDS` / `next`）─────────────────
+// 0.2 原来是「从 8 个音阶音里独立抽一个」，实测强拍只有 **67%** 落在和弦音上、倾向解决只有 **31%**，
+// 所以听不出和声 —— 只是"在 F 小调里随机走音阶"。参考 02（手写乐句里的和弦琶音 + 导音解决）与
+// 03（整首只用同一个和弦，任何叠置都协和），这里给**时间轴**加一层和弦状态：
+//   ① 每 CHORD_BEATS 拍换一次和弦，沿 next 图走，用**种子派生的独立 rng**（绝不能和 WFC 共用）；
+//   ② 选音时当前和弦的音 ×8、非和弦音 ×0.5（当经过/辅助音），强拍上的和弦音再 ×2；
+//   ③ 倾向解决：Db→C、Eb→F、G→Ab、Bb→Ab/C，该解决却不解决时降权。
+// ★ 和弦必须挂在**时钟（拍）**上，不能挂在格子的 row/col 上 —— 空间坐标与播放时刻无关，
+//   那样等于在和声上撒随机（与"重音不能来自 col"是同一条）。也**不能挂在步号上**：
+//   步长 1–3 拍不等，8 步 = 8–24 拍，和声变换的周期就散了（第九轮）。
+const CHORD_BEATS = 8;            // 每 8 拍（2 小节）一个和弦
+const CHORD_SLOTS = 24;           // 进行图长度：24 × 8 拍 = 192 拍，够长到不会绕回去
+const CHORDS = {
+  Fm:  { name:'Fm',  pcs:[5, 8, 0],  next:['Db', 'Ab', 'Bbm', 'Cm'] },
+  Db:  { name:'Db',  pcs:[1, 5, 8],  next:['Ab', 'Eb', 'Fm'] },
+  Ab:  { name:'Ab',  pcs:[8, 0, 3],  next:['Eb', 'Fm', 'Db'] },
+  Eb:  { name:'Eb',  pcs:[3, 7, 10], next:['Fm', 'Ab', 'Db'] },
+  Bbm: { name:'Bbm', pcs:[10, 1, 5], next:['Db', 'Eb', 'Fm'] },
+  Cm:  { name:'Cm',  pcs:[0, 3, 7],  next:['Fm', 'Ab'] },
+};
+const CHORD_STRONG_TONE = 8;      // 强拍的和弦音（骨架）
+const CHORD_STRONG_OTHER = 0.4;   // 强拍的非和弦音：经过音不该落在强拍
+const CHORD_WEAK_TONE = 4;        // 弱拍的和弦音
+const CHORD_WEAK_OTHER = 1;       // 弱拍的非和弦音（经过 / 辅助音）
+const RESOLVE_IN_CHORD = 2.5;     // 上一个音是"当时的非和弦音"时，**在和弦音里**优先解决目标
+const RESOLUTION = { 1:[0], 3:[5], 7:[8], 10:[8, 0] };   // 音高类 → 倾向解决的目标音高类
+// ★ 时间上的重复必须管**最近几个音**，不能只管上一个（第十轮）。这一条补的是一个长期错位：
+//   `chooseValue` 里原有的「同音 ×0.48 / 级进 ×1.6 / 跳进 ×0.44」用的是 `cellAt(row, col-1)`
+//   —— **空间上的左邻居**，属于 WFC 的横向 tile 语法；而**听的是时间序列**，两者不是一个序列
+//   （选格由熵决定）。实测那条规则整首只命中 7.6 对，等于对听感没有作用，于是时间上完全没有
+//   同音约束：实测时间相邻同音 **27.6%**（最高 38%）、最长连击 **7 下**，而且这些重复**全部**
+//   是在候选 ≥3 个时被权重选出来的（不是传播逼的）。
+//   只压"相邻同音"还不够：真实浏览器里改完之后相邻重复只剩 4.3%，但前 12 个音是
+//   `F5 Ab4 Bb4 Ab4 F4 Ab4 Bb4 G4 F4 Ab4 Bb4 Ab4` —— Ab4 出现 6 次，**隔一个音又回来**，
+//   听感上仍然是"大量重复"。所以按**多久以前**分级降权：age 0（紧邻）最重、age 2 最轻，
+//   3 个音以前不再管（那时已经是"呼应"，不是"卡带"）。
+//   判据用"最近 **2** 个音之内重复"而不是"最近 3 个"：完美地 A-B-C 轮流在"最近 3 个"下面
+//   会被记成 100% 重复，指标本身就把好旋律判成坏的。参考点：**8 个候选里均匀乱抽 = 23.4%**。
+//   同一份源码只替换这一个数组实测（5 种子，其余逐字相同；`关` 复现出 27.6% 的原始值）：
+//     关              → 相邻 27.6% / 2 音内 43.3% / 最长连击 4.2 / 强拍和弦音 86.4% / 音高 7.6
+//     [0.2]           → 相邻  5.3% / 2 音内 30.0% / 最长连击 2.0 / 强拍和弦音 90.8% / 音高 7.8
+//     [0.2,0.5,0.75]  → 相邻  7.5% / 2 音内 **24.7%** / 最长连击 2.2 / 强拍和弦音 **94.3%** / 音高 **8.0**
+//     再加第 4 个音（0.85）→ 2 音内反而回到 30.5%，没有收益，所以窗口就取 3。
+//   也试过"连击按次数再乘一次方"（第 3 次同音 = 0.2²）：相邻 7.5%→5.0%、最长连击 2.2→1.8，
+//   但强拍和弦音 94.3%→89.1%、"2 音内重复"持平（24.5%）—— 收益只落在"少见的连击 3 下"，
+//   不值这条复杂度，**已回退**。
+//   ★ 强拍和弦音**变高**不是巧合：以前强拍反复落在同一个和弦音上，现在换到和弦的另一个音 ——
+//     重复少了，和声骨架反而更稳（94.3% 与第七轮记录的 95% 齐平）。
+const PITCH_RECENCY = [0.2, 0.5, 0.75];
+const chordPlanFor = (seed, slots) => {
+  const rng = makeRng((seed ^ 0x9e3779b9) >>> 0);   // ★ 独立流，不动 WFC 的随机序列
+  const plan = [];
+  let current = 'Fm';
+  for (let k = 0; k < slots; k += 1) {
+    plan.push(current);
+    const options = CHORDS[current].next;
+    current = options[Math.floor(rng() * options.length)];
+  }
+  return plan;
+};
+
+// 音色：两套共用同一个演奏接口（trigger / releaseNotes / releaseAll / dispose），引擎构建时按
+// `instrument` 选一套。钢琴采样沿用 02/03 的同一套素材（generative-music/samples-alex-bainter 的
+// vsco2-piano-mf），只取覆盖 F4–F5 的 4 个采样点，Tone.Sampler 会在其间变调。
+const PIANO_SAMPLE_BASE = 'https://cdn.jsdelivr.net/gh/generative-music/samples-alex-bainter@master/samples/vsco2-piano-mf/';
+const PIANO_SAMPLE_NOTES = ['F4', 'A4', 'C#5', 'F5'];
+const PIANO_SAMPLE_EXT = '.wav';
+const PIANO_LOAD_TIMEOUT_MS = 20000;   // 4 个 wav 共约 13MB（浏览器会缓存），超时就回退合成器
+// ★ 音色音量：与合成器的 -5 dB 同一量级的参数。+14 不是猜的 —— 在真实输出链路末端挂分析器、
+//   用同一颗种子各放 16 秒实测：钢琴的有声帧 RMS 比合成器低 **8.2 dB**、峰值低 11.9 dB，
+//   所以按"有声帧 RMS 对齐"补 +8（6 → 14）。改大后钢琴峰值约 0.52，仍远低于 Limiter(-1)。
+const PIANO_VOLUME_DB = 14;
+const PIANO_RELEASE_S = 1.5;
+const SYNTH_RELEASE_S = 1.15;   // 合成器的 release 单独一个常量（原来写在 envelope 字面量里）
+const pianoSampleFile = note => note.toLowerCase().replace('#', 'sharp') + PIANO_SAMPLE_EXT;
+const INSTRUMENTS = [
+  { id:'piano', label:'钢琴采样' },
+  { id:'synth', label:'合成器' },
+];
+let instrument = 'piano';   // 默认钢琴；合成器保留为另一个选项
+const voiceLabel = () => (INSTRUMENTS.find(item => item.id === instrument) || INSTRUMENTS[0]).label;
+
+// BPM：整个时间基准的缩放。DEFAULT_BPM 是上面所有秒数的基准，所以 120 BPM 时系数为 1。
+const DEFAULT_BPM = 120;
+const BPM_MIN = 40;
+const BPM_MAX = 240;
+let bpm = DEFAULT_BPM;
+const timeScale = () => DEFAULT_BPM / bpm;
+
+// cellTime() 只会取到索引 0（乐句重音）与 1..4（其余由 row/col 派生）。
+// 早先列过的 'skip'（索引 5）从未被选中，已删除；要加回节奏型必须同时改 cellTime() 的 pattern 公式。
 const RHYTHM_CELLS = [
   { name:'0', offset:0, dur:0.5 },
   { name:'1/8', offset:0.125, dur:0.25 },
   { name:'1/4', offset:0.25, dur:0.25 },
   { name:'3/8', offset:0.375, dur:0.125 },
   { name:'hold', offset:0, dur:0.75 },
-  { name:'skip', offset:0.25, dur:0.125 },
 ];
 
 const cellTime = index => {
@@ -231,9 +397,40 @@ const cellTime = index => {
   const cadence = col === GRID - 1;
   const pattern = phraseAccent ? 0 : cadence ? 4 : (row * 2 + col * 3) % 4 + 1;
   const unit = RHYTHM_CELLS[pattern];
-  const x = unit.offset / 0.5 * 100;
-  const w = Math.min(100 - x, Math.max(10, unit.dur / 0.5 * 100));
+  // 横轴以**拍**为单位：延迟 + 基本时值。标尺与标记都不随 BPM 变。
+  // 坍缩那一刻会再按**实际时长**重画一次（级进/终止会改写时值），所以这里只是"基本值"。
+  const x = laneBeats(toBeats(unit.offset));
+  const w = laneBeats(toBeats(unit.dur));
   return { ...unit, x, w };
+};
+
+// 力度只来自时钟。observe 顺序由熵决定、和格子的 row/col 无关，所以重音**不能**用 col 当节拍位置
+//（那会把重音撒在随机时刻）。这里只用两个时间尺度：小节内第 1 拍最重、第 3 拍次之；再叠一层
+// 4 小节（16 拍）的呼吸弧。总范围 0.40–0.80，沿用 02 记录下来的力度区间。
+// ★ 参数是**拍号**（stepBeat），不是 step：步长不等，`step % 4` 不是每 4 拍（第九轮）。
+const stepVelocity = beat => {
+  const accent = BEAT_ACCENT[beat % BAR_BEATS] || 0;
+  const breath = Math.sin(Math.PI * ((beat % PHRASE_BEATS) / PHRASE_BEATS));
+  return Math.min(0.8, 0.4 + accent + breath * BREATH_DEPTH);
+};
+
+const beatIsPhraseRest = beat => (beat % PHRASE_BEATS) >= PHRASE_BEATS - PHRASE_REST_BEATS;
+
+// 一个音实际响多久。**返回「拍」**（不是秒）：模型全部在拍域里算，只在排程时乘 timeScale()，
+// 这样同一颗种子在任何 BPM 下都是逐位相同的音乐（在秒域里比较会因为浮点在最边界处翻一位）。
+const noteDuration = (cell, midi, prevMidi) => {
+  if (cell.col === GRID - 1) return toBeats(CADENCE_S);
+  if (prevMidi != null && Math.abs(midi - prevMidi) <= LEGATO_STEP_SEMITONES) return toBeats(LEGATO_S);
+  return toBeats(cell.time.dur);
+};
+
+// 演奏状态：仍在响的音 + 上一个发声的音。**都以「拍」为单位**（BPM 无关）。
+// 剔除已经响完的，返回仍在响的那一份。
+const pruneRinging = (state, startBeat) => {
+  for (let i = state.ringing.length - 1; i >= 0; i -= 1) {
+    if (state.ringing[i].endsBeat <= startBeat) state.ringing.splice(i, 1);
+  }
+  return state.ringing;
 };
 
 const cells = Array.from({ length:CELL_COUNT }, (_, index) => {
@@ -261,8 +458,8 @@ const renderCell = cell => {
   lane.className = 'time-lane';
   const timeMark = document.createElement('i');
   timeMark.className = 'time-mark';
-  timeMark.style.setProperty('--time-x', cell.time.x + '%');
-  timeMark.style.setProperty('--time-w', cell.time.w + '%');
+  timeMark.style.setProperty('--time-x', cell.time.x.toFixed(3) + '%');
+  timeMark.style.setProperty('--time-w', cell.time.w.toFixed(3) + '%');
   lane.appendChild(timeMark);
   cell.el.appendChild(lane);
   cell.timeMark = timeMark;
@@ -305,7 +502,6 @@ const phraseAllowed = (cell, id) => {
   const note = NOTE_BY_ID.get(id);
   if (cell.col === 0 && cell.row === 0) return id === 'rest' || ['F4', 'C5', 'F5'].includes(note.id);
   if (cell.col === GRID - 1 && cell.row === GRID - 1) return id === 'rest' || ['F4', 'Ab4', 'C5', 'F5'].includes(note.id);
-  if ((cell.col === 3 || cell.col === 7) && id === 'rest') return true;
   return true;
 };
 
@@ -344,15 +540,16 @@ const propagate = startIndex => {
       }
     });
   }
-  touched.forEach(cell => {
-    cell.el.classList.add('propagating');
-    cell.candidates.forEach(id => cell.marks.get(id)?.classList.remove('removed'));
-    NOTES.forEach(note => {
-      if (!cell.candidates.has(note.id)) cell.marks.get(note.id)?.classList.add('removed');
-    });
-    window.setTimeout(() => cell.el.classList.remove('propagating'), 360);
+  return touched;
+};
+
+// 把候选集合画到 DOM 上。0.2 拆开了「算法改模型」与「画出模型」：propagate() 只改候选集合，
+// 由 collapseLine() 交给 Tone.Draw 在真正的发声时刻去画，避免预排回调提前一帧动手。
+const paintCandidates = cell => {
+  cell.candidates.forEach(id => cell.marks.get(id)?.classList.remove('removed'));
+  NOTES.forEach(note => {
+    if (!cell.candidates.has(note.id)) cell.marks.get(note.id)?.classList.add('removed');
   });
-  return touched.size;
 };
 
 const chooseCell = rng => {
@@ -369,7 +566,11 @@ const chooseCell = rng => {
   return best[Math.floor(rng() * best.length)];
 };
 
-const chooseValue = (cell, rng) => {
+// `recent` 是**时间上最近几个发声的音高**（midi，最近的在最前；与左邻居 `previous` 区分开：那条是空间语法）。
+const chooseValue = (cell, rng, ringing = [], phraseRest = false, harmony = null, recent = []) => {
+  // 句尾留白：这一拍在演奏上必须是休止。`rest` 与任何候选都兼容（compatible 直接放行），
+  // 所以只要候选集非空，它一定还在里面。
+  if (phraseRest && cell.candidates.has('rest')) return 'rest';
   const previous = cellAt(cell.row, cell.col - 1)?.value;
   const next = cellAt(cell.row, cell.col + 1)?.value;
   const above = cellAt(cell.row - 1, cell.col)?.value;
@@ -391,6 +592,25 @@ const chooseValue = (cell, rng) => {
     if (cell.index === CELL_COUNT - 1 && (note.id === 'F4' || note.id === 'F5')) weight *= 1.8;
     if (cell.row < 2 && note.midi && note.midi < 70) weight *= 0.72;
     if (cell.row > 5 && note.midi && note.midi > 72) weight *= 0.72;
+    // 和声：强拍锁和弦音、弱拍放开经过音；未解决的非和弦音在**和弦音内部**优先解决。
+    if (id !== 'rest' && harmony) {
+      const pc = note.midi % 12;
+      const tone = harmony.chord.pcs.includes(pc);
+      weight *= harmony.strong
+        ? (tone ? CHORD_STRONG_TONE : CHORD_STRONG_OTHER)
+        : (tone ? CHORD_WEAK_TONE : CHORD_WEAK_OTHER);
+      if (tone && harmony.resolveTo && harmony.resolveTo.includes(pc)) weight *= RESOLVE_IN_CHORD;
+    }
+    // 长音的兜底：与仍在响的音撞上小 2 度 / 三全音 / 大 7 度时几乎排除（不是硬禁，留一条退路）。
+    if (id !== 'rest' && ringing.length) {
+      const harsh = ringing.some(active => HARSH_INTERVALS.has(Math.abs(note.midi - active.midi) % 12));
+      if (harsh) weight *= 0.03;
+    }
+    // 时间上的重复：最近几个发过的音高按"多久以前"分级降权（第十轮，理由与取值见 PITCH_RECENCY 的注释）
+    if (id !== 'rest' && recent.length) {
+      const age = recent.indexOf(note.midi);
+      if (age >= 0 && age < PITCH_RECENCY.length) weight *= PITCH_RECENCY[age];
+    }
     total += weight;
     return { id, weight };
   });
@@ -402,104 +622,346 @@ const chooseValue = (cell, rng) => {
   return weighted[weighted.length - 1].id;
 };
 
-const collapseLine = (seed, signal, onStep, onCollapse) => new Promise(resolve => {
+// 一次 observe = 一个时间步，步与步之间固定 STEP_S，全部排在 Tone.Transport 上。
+// 三条硬规矩：
+//  ① 绝不用 setTimeout 做音乐调度（见 notes/piece-zed-注解版.md：它跟着主线程漂移）；
+//  ② **两套时间轴不能混用**：`Transport.scheduleOnce(fn, time)` 的 `time` 是**传输时间**，
+//     而回调收到的 `time` 参数是**音频上下文时间**（Tone 的约定，官方示例就是把回调的 time 直接
+//     喂给 `Tone.Draw.schedule`）。所以下一步用自己维护的 `stepAt`（传输时间轴）来排，回调的
+//     `audioTime` 只用来排声音和画面 —— 反过来把 audioTime 当传输时间用，第一步之后要等 30 秒才响
+//    （实测：上下文时间 30.5 被当成传输时刻 30.5，而此刻传输位置只有 0.5）。
+//  ③ 下一步用**绝对时刻** stepAt += STEP_S，不用 '+0.5' —— 回调受 lookAhead 影响会提前执行，
+//     相对时间会把执行抖动逐句累加。
+// 算法（候选、坍缩、传播）在回调里同步推进；所有 DOM 改动都交给 Tone.Draw 排到真正的发声时刻，
+// 音符的闪光再往后挪到它自己的拍内偏移上。
+const collapseLine = (seed, startAt, signal, eventIds, noteState, onStep, onCollapse) => new Promise(resolve => {
   const rng = makeRng(seed);
+  // 派生量不要留空：页面自己的 schedule() 建的是完整对象，但直接调 collapseLine 的路径
+  //（离线探针）很容易漏字段，漏了就在演奏中途抛 `Cannot read properties of undefined`。
+  noteState.recent = noteState.recent || [];
   applyPhraseConstraints();
   cells.forEach(renderCell);
   let step = 0;
-  const tick = () => {
+  let stepAt = startAt;   // 传输时间轴（秒）上的步时刻 —— 只用来排程
+  let stepBeat = 0;       // 模型时间轴（拍）上的步位置 —— 所有音乐判断都用它
+  const tick = audioTime => {
     if (signal.cancelled) { resolve(null); return; }
     const cell = chooseCell(rng);
     if (!cell) {
       resolve(cells.map(item => item.value));
       return;
     }
-    cell.el.classList.add('observing');
-    const value = chooseValue(cell, rng);
+    const scale = timeScale();
+    const secPerBeat = STEP_S * scale;   // 拍 → 秒（唯一的换算点）
+    const offsetBeats = toBeats(cell.time.offset);
+    const noteStartBeat = stepBeat + offsetBeats;
+    const ringing = pruneRinging(noteState, noteStartBeat);
+    const phraseRest = beatIsPhraseRest(stepBeat);
+    // 当前和弦（挂在**拍**上，每 CHORD_BEATS 拍换一次）+ 这一拍是不是强拍 + 上一个发声的音
+    const chordName = noteState.chordPlan[Math.floor(stepBeat / CHORD_BEATS) % noteState.chordPlan.length];
+    const chord = CHORDS[chordName] || CHORDS.Fm;
+    const harmony = {
+      chord,
+      strong: stepBeat % BAR_BEATS === 0,
+      // 只有"上一个音是**当时的非和弦音**"才要求解决：它本该走到和弦音上。
+      // 是和弦音的倾向音（例如 Db 和弦里的 Db）不需要解决，硬要求会和和声打架。
+      resolveTo: noteState.prevNonChord && noteState.prevMidi != null ? (RESOLUTION[noteState.prevMidi % 12] || null) : null,
+    };
+    const value = chooseValue(cell, rng, ringing, phraseRest, harmony, noteState.recent);
     cell.value = value;
     cell.candidates = new Set([value]);
     const note = NOTE_BY_ID.get(value);
-    cell.el.style.setProperty('--tile-bg', note.color);
-    cell.el.style.setProperty('--tile-ink', note.ink);
-    NOTES.forEach(note => {
-      const mark = cell.marks.get(note.id);
-      if (note.id !== value) mark.classList.add('removed');
+    // 演奏上的三个决定：还在响的是谁（供协和约束与句尾放手）、这个音响多久、这一拍是不是留白。
+    const ringingNames = ringing.map(item => item.name);
+    let durationBeats = 0;
+    let tieOver = null;
+    if (value !== 'rest') {
+      durationBeats = noteDuration(cell, note.midi, noteState.prevMidi);
+      // ★ 同音重复必须让前一个音**在新音起音处**退场。原因在 Tone.Sampler 的实现里：
+      //   `triggerRelease(note, t)` 会停掉该音高**全部**活动 source（并且 `triggerAttack` 每次都新建
+      //   source 堆在同一音高下），所以后一个同音自己的释放点会把前一个还在响的长音一起停掉 ——
+      //   实测这一组的衰减比对照组快 4 倍（250ms 掉 11.5 dB vs 2.8 dB），听感就是"有的音断得特别突然"。
+      //   钢琴上这正是"重新按下同一个键"：旧音从新音起音处自然退场，而不是被后面某个时刻连坐。
+      const samePitch = ringing.filter(item => item.midi === note.midi);
+      if (samePitch.length) {
+        tieOver = value;
+        samePitch.forEach(item => { item.endsBeat = Math.min(item.endsBeat, noteStartBeat); });   // 它到此为止
+      }
+      noteState.ringing.push({ name: value, midi: note.midi, endsBeat: noteStartBeat + durationBeats });
+      noteState.prevMidi = note.midi;
+      noteState.prevNonChord = !chord.pcs.includes(note.midi % 12);   // 供下一步的"倾向解决"判断
+      // 时间上的重复降权只看**发声的**音：休止不进这个列表（隔着一个休止再回来是同音呼应，
+      // 不是卡带；而且休止之后本来就该允许回到刚才的音）。
+      noteState.recent.unshift(note.midi);
+      if (noteState.recent.length > PITCH_RECENCY.length) noteState.recent.length = PITCH_RECENCY.length;
+    }
+    const touched = propagate(cell.index);
+    const velocity = stepVelocity(stepBeat);
+    // 这个 cell 占用多久（拍）：延迟 + 实际时长，再乘 WAIT_SCALE，然后**向上取整到整拍**。
+    // ★★ 取整是第九轮的关键（用户的第三次同类反馈："还是觉得坍缩没有在节奏上"）：不取整时
+    //    `(延迟+时长)×0.6` 算出 1 / 1.44 / 1.59 / 1.74 / 1.89 / 2.4 拍这些非整拍值，于是
+    //    **一旦出现一个长音，后面每一次坍缩都永久偏离拍点**（实测 90% 的步偏离拍点、中位 0.23 拍、
+    //    最大 0.49 拍，步间隔有 6 个互不成倍数的取值）—— 听不出脉冲，坍缩听起来像随意撒的。
+    //    取整后步长 ∈ {1,2,3} 拍，整首曲子都落在拍网格上，而"跟着音长呼吸"变成"这一步等几拍"：
+    //    长短变化还在（不是等距），而且每一次坍缩都踩在拍上。
+    const desired = Math.max(STEP_BEATS, Math.ceil((offsetBeats + durationBeats) * WAIT_SCALE));
+    // 句尾留白是**结构标点**，长音不许跨过它：否则 16 拍的乐句会被一步跳过去、乐句周期就散了。
+    const toRest = PHRASE_BEATS - PHRASE_REST_BEATS - (stepBeat % PHRASE_BEATS);
+    const waitBeats = toRest > 0 ? Math.min(desired, toRest) : desired;
+    // 视觉的「激活」必须落在**这个音真正发声的时刻**上：延迟最大 0.375s，若把坍缩画在拍点上，
+    // 带延迟的音就会「先亮后响」（用户实测：视觉永远在第一下被激活，而有的音要等）。休止不发声，
+    // 所以它仍然画在拍点上，让网格本身继续可读。
+    const paintAt = audioTime + (value === 'rest' ? 0 : offsetBeats * secPerBeat);
+    Tone.Draw.schedule(() => {
+      cell.el.style.setProperty('--tile-bg', note.color);
+      cell.el.style.setProperty('--tile-ink', note.ink);
+      NOTES.forEach(item => {
+        if (item.id !== value) cell.marks.get(item.id)?.classList.add('removed');
+      });
+      cell.chosen.textContent = note.label;
+      cell.el.classList.add('collapsed', 'observing');
+      window.setTimeout(() => cell.el.classList.remove('observing'), 220);
+      touched.forEach(item => {
+        paintCandidates(item);
+        item.el.classList.add('propagating');
+        window.setTimeout(() => item.el.classList.remove('propagating'), 360);
+      });
+    }, paintAt);
+    onCollapse(value, cell.index, step, audioTime, velocity, {
+      startAt: audioTime + (value === 'rest' ? 0 : offsetBeats * secPerBeat),
+      duration: durationBeats * secPerBeat,
+      markTarget: laneBeats(durationBeats),   // 时值线的目标宽度（%，拍域 → 与 BPM 无关）
+      offsetPercent: laneBeats(offsetBeats),
+      phraseRest,
+      ringing: ringingNames,
+      tieOver,   // 同音还在响时的旧音名：在 startAt 处放掉它，别让它被后一个音的释放点连坐
     });
-    cell.chosen.textContent = note.label;
-    cell.el.classList.add('collapsed');
-    cell.el.classList.add('playing');
-    onCollapse(value, cell.index, step);
-    window.setTimeout(() => cell.el.classList.remove('playing'), 220);
-    window.setTimeout(() => cell.el.classList.remove('observing'), 220);
-    const changed = propagate(cell.index);
     step += 1;
-    onStep(step, cell.index, value, changed);
-    window.setTimeout(tick, value === 'rest' ? 170 : 310);
+    onStep(step, cell.index, value, touched.size, durationBeats, chordName);
+    stepBeat += waitBeats;
+    stepAt += waitBeats * secPerBeat;
+    eventIds.push(Tone.Transport.scheduleOnce(tick, stepAt));
   };
-  tick();
+  eventIds.push(Tone.Transport.scheduleOnce(tick, startAt));
 });
 
 const makeMaster = () => {
   const limiter = new Tone.Limiter(-1).connect(Tone.Destination);
   const masterGain = new Tone.Gain(0).connect(limiter);
   const reverb = new Tone.Reverb({ decay:3.6, wet:0.26 }).connect(masterGain);
-  const delay = new Tone.FeedbackDelay({ delayTime:'8n', feedback:0.12, wet:0.1 }).connect(reverb);
+  const delay = new Tone.FeedbackDelay({ delayTime:(60 / bpm) / 2, feedback:0.12, wet:0.1 }).connect(reverb);
   const input = new Tone.Gain(1).connect(delay);
   return { input, masterGain, delay, reverb, limiter };
 };
 
-const createVoice = destination => {
-  const synth = new Tone.MonoSynth({
+// 合成器：原来 64 个格子共用一个 Tone.MonoSynth，而 attack 中位间隔 0.31s、时值 0.125–0.93s、
+// release 1.15s —— 实测 73–83% 的音在走完自己的时值前就被下一个音抢占。现在按音区分两个复音池
+// （F4–Bb4 / C5–F5），同池内可以叠着响，音色选项与单声部时完全一致。
+// PolySynth 的 maxPolyphony 是实例属性（第二个参数里的 maxPolyphony 不会生效）。
+const POOL_MAX_VOICES = 8;
+const createSynthVoice = destination => {
+  const base = {
     oscillator:{ type:'triangle' },
     filter:{ type:'lowpass', frequency:1600, Q:0.7 },
-    envelope:{ attack:0.012, decay:0.28, sustain:0.18, release:1.15 },
+    envelope:{ attack:0.012, decay:0.28, sustain:0.18, release:SYNTH_RELEASE_S },
     filterEnvelope:{ attack:0.01, decay:0.22, sustain:0.2, release:0.9, baseFrequency:420, octaves:2.2 },
     volume:-5,
-  }).connect(destination);
+  };
+  const low = new Tone.PolySynth(Tone.MonoSynth, base).connect(destination);
+  const high = new Tone.PolySynth(Tone.MonoSynth, base).connect(destination);
+  low.maxPolyphony = POOL_MAX_VOICES;
+  high.maxPolyphony = POOL_MAX_VOICES;
   return {
-    trigger(id, time, index) {
+    kind: 'synth',
+    trigger(id, time, duration, velocity) {
       const note = NOTE_BY_ID.get(id);
       if (!note || id === 'rest') return;
-      const cell = cells[index];
-      const phraseHold = (index % GRID === GRID - 1) ? 0.18 : 0;
-      synth.triggerAttackRelease(note.id, cell.time.dur + phraseHold, time + cell.time.offset, 0.34);
+      const pool = note.midi <= 70 ? low : high;
+      pool.triggerAttackRelease(note.id, duration, time, velocity);
     },
-    release(time) { synth.triggerRelease(time); },
-    dispose() { synth.dispose(); },
+    // 句尾留白时把仍在响的音一起放掉：长音的尾巴会盖过休止，留白要真的听得见。
+    releaseNotes(names, time) {
+      names.forEach(name => {
+        const note = NOTE_BY_ID.get(name);
+        if (note) (note.midi <= 70 ? low : high).triggerRelease(note.id, time);
+      });
+    },
+    releaseAll(time) { low.releaseAll(time); high.releaseAll(time); },
+    dispose() { low.dispose(); high.dispose(); },
   };
 };
+
+// 钢琴采样：一个 Tone.Sampler 就是复音的（每次 triggerAttack 新建一个 source，没有 voice 池），
+// 所以不需要按音区分池。加载是异步的，失败/超时由调用方回退到合成器。
+const createPianoVoice = async destination => {
+  const sampler = await new Promise((resolve, reject) => {
+    // 采样一定会异步取回，所以 `created` 在 onload 触发时已经赋值
+    const created = new Tone.Sampler({
+      urls: Object.fromEntries(PIANO_SAMPLE_NOTES.map(note => [note, pianoSampleFile(note)])),
+      baseUrl: PIANO_SAMPLE_BASE,
+      release: PIANO_RELEASE_S,
+      volume: PIANO_VOLUME_DB,
+      onload: () => resolve(created),
+      onerror: error => reject(error instanceof Error ? error : new Error(String(error))),
+    });
+    window.setTimeout(() => reject(new Error('钢琴采样加载超时')), PIANO_LOAD_TIMEOUT_MS);
+  });
+  sampler.connect(destination);
+  return {
+    kind: 'piano',
+    trigger(id, time, duration, velocity) {
+      const note = NOTE_BY_ID.get(id);
+      if (!note || id === 'rest') return;
+      sampler.triggerAttackRelease(note.id, duration, time, velocity);
+    },
+    releaseNotes(names, time) { names.forEach(name => sampler.triggerRelease(name, time)); },
+    releaseAll(time) { sampler.releaseAll(time); },
+    dispose() { sampler.dispose(); },
+  };
+};
+
+// ★ 加载失败时**不要** dispose 那个还在加载的 Sampler：它没有连到 destination，留着无害；
+//   而中途 dispose 会让它自己的 onload 回调去写一个已销毁的对象（控制台报错）。
+const createVoice = (destination, kind) => (kind === 'piano' ? createPianoVoice(destination) : Promise.resolve(createSynthVoice(destination)));
 
 let engine = null;
 let transition = false;
 
+// Tone 的 Synth/PolySynth 对「时间上超过 lookAhead 的音」是用 `context.setTimeout` 排 attack/release 的
+//（见 Tone 的 `_scheduleEvent`），而 `dispose()` 不会取消这些回调。它们到点后会撞上
+// `assert(!this.disposed)`，于是停止之后控制台开始刷「Synth was already disposed」——
+// 0.2 的音符最长 0.93s + release，本来就会积压。报错不改变音频，但会淹没控制台，所以在引擎销毁后
+// 把这些待执行回调丢掉。`_timeouts` 是 Tone 私有 API（与仓库里已在用的 `_ticker` 同类）：升级 Tone.js 要复查。
+const dropPendingVoiceCallbacks = () => {
+  try {
+    const context = Tone.getContext();
+    const timeouts = context && context._timeouts;
+    if (!timeouts || !Array.isArray(timeouts._timeline)) return;
+    timeouts._timeline.length = 0;
+  } catch (error) {
+    console.warn('[引擎] 清理待执行回调失败，可能残留控制台报错：', error.message);
+  }
+};
+
 const activateEngine = async seed => {
+  if (instrument === 'piano') setStatus('加载钢琴采样…（首次约 13MB，之后走浏览器缓存）');
   const { input, masterGain, delay, reverb, limiter } = makeMaster();
   try { await reverb.generate(); } catch (error) { /* reverb may finish lazily */ }
-  const voice = createVoice(input);
+  let voice;
+  let voiceNote = '';
+  try {
+    voice = await createVoice(input, instrument);
+  } catch (error) {
+    console.warn('[音色] ' + instrument + ' 构建失败，回退合成器：', error && error.message);
+    voiceNote = ' · 钢琴加载失败，已回退合成器';
+    voice = await createVoice(input, 'synth');
+  }
   const signal = { cancelled:false };
-  let eventIds = [];
+  // 演奏状态（每个引擎一份，不跨场残留）：仍在响的音 + 上一个发声的音 + **最近几个发声的音高**
+  // （供时间上的重复降权）+ 这一场的和弦进行。
+  // 和弦进行在**创建时就建好**（同一个种子结果相同），schedule() 里再建一次 —— 派生量不要留空，
+  // 否则任何直接调用 collapseLine 的路径都会在取和弦时炸掉。
+  const noteState = { ringing: [], prevMidi: null, prevNonChord: false, recent: [], chordPlan: chordPlanFor(seed, CHORD_SLOTS) };
+
+  // ── 时值线的动态生长 ──────────────────────────────────────────────
+  // 线的宽度必须**跟着音一起长出来**，而不是坍缩瞬间跳到一个固定长度：
+  //   ① 音一开始响（`startAt`）就把这条线清成 0 并登记进生长队列；
+  //   ② 每帧按音频时钟（`getContext().currentTime`，和音符用的是同一条轴）算进度，写 `--time-w`；
+  //   ③ 长满即结束，之后保持为这次演奏的记录；
+  //   ④ 被句尾留白提前放掉的音（`releaseNotes`）也要把线**停在截断处**，不能继续长满。
+  // 宽度只有一个来源（`--time-w`）：静态渲染写基本值，这里写生长值。
+  const growing = [];
+  let markFrame = null;
+  const writeMark = (item, percent) => item.mark.style.setProperty('--time-w', percent.toFixed(3) + '%');
+  const stepMarks = () => {
+    const now = Tone.getContext().currentTime;
+    for (let i = growing.length - 1; i >= 0; i -= 1) {
+      const item = growing[i];
+      const progress = (now - item.startAt) / (item.endAt - item.startAt);
+      if (progress >= 1) {
+        writeMark(item, item.target);
+        growing.splice(i, 1);
+      } else {
+        writeMark(item, item.target * Math.max(0, progress));
+      }
+    }
+    markFrame = growing.length ? requestAnimationFrame(stepMarks) : null;
+  };
+  const growMark = (index, name, startAt, duration, target, offsetPercent) => {
+    const mark = cells[index].timeMark;
+    mark.style.setProperty('--time-x', offsetPercent.toFixed(3) + '%');
+    writeMark({ mark }, 0);
+    if (!(duration > 0)) return;   // 休止：线停在 0 = 这一格不发声
+    growing.push({ mark, name, startAt, endAt: startAt + duration, target });
+    if (markFrame === null) markFrame = requestAnimationFrame(stepMarks);
+  };
+  // 提前放掉某个音时，把它的线冻结在当前进度
+  const freezeMarks = (names, at) => {
+    for (let i = growing.length - 1; i >= 0; i -= 1) {
+      const item = growing[i];
+      if (!names.includes(item.name)) continue;
+      const progress = Math.min(1, Math.max(0, (at - item.startAt) / (item.endAt - item.startAt)));
+      writeMark(item, item.target * progress);
+      growing.splice(i, 1);
+    }
+  };
+  const stopMarks = () => {
+    if (markFrame !== null) { cancelAnimationFrame(markFrame); markFrame = null; }
+    growing.length = 0;
+  };
+
   let finishTimer = null;
+  let eventIds = [];
 
   const schedule = () => {
     resetVisual();
-    setStatus('坍缩中 · seed <b>' + seed + '</b>');
-    collapseLine(seed, signal, (step, index, value, changed) => {
+    Tone.Draw.cancel(0);
+    stopMarks();
+    // ★ 先把上一批排程清掉再重置数组：否则重复调用 schedule()（例如外部播放器连发两次 play）
+    //   会让旧坍缩链继续在 Transport 上飞，而它的 id 已经不在 eventIds 里、end() 永远清不掉。
+    eventIds.forEach(id => Tone.Transport.clear(id));
+    eventIds = [];
+    noteState.ringing.length = 0;
+    noteState.prevMidi = null;
+    noteState.prevNonChord = false;
+    noteState.chordPlan = chordPlanFor(seed, CHORD_SLOTS);   // 每 CHORD_BEATS 拍一个和弦
+    // startAt 是**传输时间**轴上的位置。Transport 停止时 `Transport.seconds` 读 0（实测：页面开着
+    // 30 秒、从未播放过时它仍是 0），所以这里得到的就是「从 0 起 0.25 秒」。两套时间轴的区别见 collapseLine。
+    const startAt = Tone.Transport.seconds + START_LEAD_S;
+    setStatus('坍缩中 · seed <b>' + seed + '</b> · ' + voiceLabel() + voiceNote + ' · 每个 cell 至少一拍');
+    collapseLine(seed, startAt, signal, eventIds, noteState, (step, index, value, changed, duration, chordName) => {
       const tile = NOTE_BY_ID.get(value);
       const time = cells[index].time;
-      setStatus('坍缩中 · <b>' + step + '</b> / 64 · cell ' + (index + 1) + ' = ' + tile.label + ' · t+' + time.offset.toFixed(2) + 's · 传播 ' + changed);
-    }, (value, index) => {
-      voice.trigger(value, Tone.now() + 0.015, index);
+      setStatus('坍缩中 · <b>' + step + '</b> / 64 · 和声 <b>' + chordName + '</b> · cell ' + (index + 1) + ' = ' + tile.label +
+        ' · 延迟 +' + toBeats(time.offset).toFixed(2) + ' 拍 · 时值 ' + (duration ? duration.toFixed(2) + ' 拍' : '休止') + ' · 传播 ' + changed);
+    }, (value, index, step, at, velocity, plan) => {
+      if (value === 'rest') {
+        if (plan.phraseRest && plan.ringing.length) {
+          voice.releaseNotes(plan.ringing, at);
+          freezeMarks(plan.ringing, at);
+        }
+        // 休止：在拍点上把线清成 0（和它的激活画面同刻）
+        Tone.Draw.schedule(() => growMark(index, value, plan.startAt, 0, 0, plan.offsetPercent), plan.startAt);
+        return;
+      }
+      // 同音重复：先让旧音在这个新音的起音处退场（钢琴=重新按同一个键；合成器=干净地重发音）
+      if (plan.tieOver) {
+        voice.releaseNotes([plan.tieOver], plan.startAt);
+        freezeMarks([plan.tieOver], plan.startAt);
+      }
+      voice.trigger(value, plan.startAt, plan.duration, velocity);
+      // 线的生长与声音同刻开始（`Tone.Draw` 到点才动）
+      Tone.Draw.schedule(() => growMark(index, value, plan.startAt, plan.duration, plan.markTarget, plan.offsetPercent), plan.startAt);
     }).then(sequence => {
       if (!sequence || signal.cancelled) return;
-      setStatus('坍缩完成 · 每个 tile 已在 observe 时发声。');
+      setStatus('坍缩完成 · 每个 tile 都在自己的时刻发声。');
       finishTimer = window.setTimeout(() => {
-        cells.forEach(cell => cell.el.classList.remove('playing'));
         Tone.Transport.stop();
         Tone.Transport.cancel();
         eventIds = [];
         transportControls.setPlaying(false);
         setStatus('完成。换一版可生成另一块合法 tile 场。');
-      }, 900);
+      }, (STEP_S + 1) * 1000);
     }).catch(error => {
       console.error(error);
       setStatus('坍缩失败：' + error.message);
@@ -509,11 +971,13 @@ const activateEngine = async seed => {
     signal.cancelled = true;
     eventIds.forEach(id => Tone.Transport.clear(id));
     eventIds = [];
+    Tone.Draw.cancel(0);
+    stopMarks();   // 停止时冻结时值线的生长进程（下一次播放由 resetVisual 恢复基本值）
     if (finishTimer) window.clearTimeout(finishTimer);
-    voice.release(Tone.now() + 0.04);
+    voice.releaseAll(Tone.now() + 0.04);
     Tone.Transport.stop();
     Tone.Transport.cancel();
-    cells.forEach(cell => cell.el.classList.remove('playing', 'observing', 'propagating'));
+    cells.forEach(cell => cell.el.classList.remove('observing', 'propagating'));
   };
   const fadeIn = () => masterGain.gain.linearRampToValueAtTime(MASTER_VOLUME_GAIN, Tone.now() + 0.45);
   const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.35);
@@ -521,9 +985,14 @@ const activateEngine = async seed => {
     end();
     voice.dispose();
     [input, masterGain, delay, reverb, limiter].forEach(node => node.dispose());
+    dropPendingVoiceCallbacks();
   };
   return { schedule, end, fadeIn, fadeOut, deactivate };
 };
+
+// lastSeed：当前这一版的种子；pendingSeed：下一次构建强制使用的种子（音色切换时用它保住同一首曲子）
+let lastSeed = null;
+let pendingSeed = null;
 
 const playCurrent = async () => {
   if (transition) return;
@@ -533,7 +1002,9 @@ const playCurrent = async () => {
     await Tone.start();
     if (!engine) {
       const text = transportControls.seedValue;
-      const seed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      const seed = pendingSeed != null ? pendingSeed : (text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31));
+      pendingSeed = null;
+      lastSeed = seed;
       engine = await activateEngine(seed);
     }
     engine.schedule();
@@ -587,6 +1058,54 @@ transportControls.addEventListener('exercise-play', playCurrent);
 transportControls.addEventListener('exercise-stop', stopCurrent);
 transportControls.addEventListener('exercise-regenerate', () => restartCurrent(true));
 transportControls.addEventListener('exercise-seed-apply', () => restartCurrent(false));
+
+// BPM 输入框：改的是**绝对速度**（timeScale = 120 / BPM），音乐结构不变。
+// 播放中改也有效 —— 每个 cell 的时长与下一步的间隔都是现算的，所以从下一次坍缩开始生效。
+// 非法输入（空、非数字、越界）就回到上一个合法值并在状态栏点名，不把 NaN 带进调度。
+const bpmInput = document.getElementById('bpmInput');
+const bpmHint = document.getElementById('bpmHint');
+// 实测：整曲约 92–99 拍（120 BPM 时 46–50 秒），用它给输入框一个量级参考。
+const PIECE_BEATS = 96;
+const updateTempoHint = () => {
+  bpmHint.textContent = '1 拍 = ' + (60 / bpm).toFixed(3) + 's · 整曲约 ' + Math.round(PIECE_BEATS * 60 / bpm) + 's';
+};
+const applyBpm = () => {
+  const value = Math.round(Number(bpmInput.value));
+  if (!Number.isFinite(value) || value < BPM_MIN || value > BPM_MAX) {
+    bpmInput.value = String(bpm);
+    setStatus('BPM 需在 ' + BPM_MIN + '–' + BPM_MAX + ' 之间，已保留 <b>' + bpm + '</b>');
+    return;
+  }
+  bpm = value;
+  bpmInput.value = String(bpm);
+  updateTempoHint();
+};
+bpmInput.addEventListener('change', applyBpm);
+bpmInput.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.isComposing) return;
+  event.preventDefault();
+  applyBpm();
+  bpmInput.blur();
+});
+updateTempoHint();
+
+// 音色切换。两套音色共用同一份演奏（同一颗种子 → 完全相同的音符、时值、塌缩顺序），
+// 所以可以 A/B 对比音色本身。正在播放或暂停时用**同一颗种子**重建并重放；空闲时只记下选择。
+const voiceSelect = document.getElementById('voiceSelect');
+voiceSelect.value = instrument;
+voiceSelect.addEventListener('change', async () => {
+  const next = INSTRUMENTS.some(item => item.id === voiceSelect.value) ? voiceSelect.value : instrument;
+  if (next === instrument) return;
+  instrument = next;
+  // 保住同一首曲子（同一颗种子）方便 A/B 对比音色：即使已经停止，下一次播放也用它
+  if (lastSeed != null) pendingSeed = lastSeed;
+  if (!engine) {
+    setStatus('音色：<b>' + voiceLabel() + '</b>（下次播放，仍是同一颗种子）');
+    return;
+  }
+  await restartCurrent(false);
+});
+
 window.addEventListener('pagehide', event => {
   if (event.persisted) return;
   engine?.deactivate();
