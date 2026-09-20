@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>04 · Constraint Loom 0.1</title>
+<style>
+  :root {
+    --bg:#11110f; --panel:#1b1a17; --line:#3a362e; --fg:#efe8d6; --dim:#a89f8d;
+    --gold:#b89452; --green:#6f9278; --blue:#6f8594; --red:#a46458;
+  }
+  * { box-sizing:border-box; }
+  html, body { width:100%; height:100%; }
+  body {
+    margin:0; overflow:hidden; background:var(--bg); color:var(--fg);
+    font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  }
+  .stage {
+    position:fixed; inset:0; display:grid; place-items:center; overflow:hidden;
+    background:
+      repeating-linear-gradient(88deg, rgba(255,255,255,.018) 0 1px, transparent 1px 13px),
+      repeating-linear-gradient(2deg, rgba(0,0,0,.16) 0 1px, transparent 1px 17px),
+      #11110f;
+  }
+  .loom {
+    position:relative;
+    width:min(84vw, 84vh);
+    aspect-ratio:1;
+    transform:perspective(1200px) rotateX(50deg) rotateZ(-38deg);
+    transform-style:preserve-3d;
+  }
+  .warp {
+    position:absolute; inset:-6%;
+    background:
+      repeating-linear-gradient(90deg, transparent 0 11.85%, rgba(205,188,145,.24) 11.95% 12.12%, transparent 12.25%),
+      repeating-linear-gradient(0deg, transparent 0 11.85%, rgba(95,87,70,.24) 11.95% 12.12%, transparent 12.25%),
+      #181713;
+    border:1px solid rgba(205,188,145,.22);
+    box-shadow:18px 28px 44px rgba(0,0,0,.36);
+  }
+  .grid {
+    position:absolute; inset:0;
+    display:grid; grid-template-columns:repeat(8, 1fr); grid-template-rows:repeat(8, 1fr);
+    gap:clamp(2px, .32vw, 5px);
+  }
+  .cell {
+    position:relative; border:1px solid rgba(205,188,145,.16); border-radius:2px;
+    background:rgba(31,29,24,.74); overflow:hidden; transform:translateZ(0);
+    transition:transform .42s cubic-bezier(.18,.78,.18,1), border-color .24s ease, background .28s ease;
+  }
+  .cell::before, .cell::after {
+    content:""; position:absolute; inset:10%; border-radius:1px; opacity:.62;
+    background:
+      repeating-linear-gradient(var(--angle, 35deg), transparent 0 8px, color-mix(in srgb, var(--tile-color, #9c8f68) 72%, #3b3428) 8px 10px, transparent 10px 17px);
+    transform:scale(var(--spread, 1.08)) rotate(var(--twist, 0deg));
+    filter:none;
+    transition:opacity .32s ease, transform .46s cubic-bezier(.2,.8,.2,1), background .3s ease;
+  }
+  .cell::after {
+    --angle:-38deg; inset:24%; opacity:.28; transform:scale(1.12) rotate(8deg);
+  }
+  .cell.collapsed {
+    border-color:color-mix(in srgb, var(--tile-color, #b89452) 48%, #3a362e);
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--tile-color, #b89452) 18%, #201d17) 0, #171612 100%);
+  }
+  .cell.collapsed::before {
+    opacity:.88; transform:scale(.92) rotate(0deg);
+  }
+  .cell.collapsed::after {
+    opacity:.2; transform:scale(.78) rotate(90deg);
+  }
+  .cell.observing {
+    border-color:#d8c89d;
+    background:#242018;
+  }
+  .cell.propagating {
+    animation:tug .44s ease-out;
+  }
+  .cell.playing {
+    border-color:#efe8d6;
+    background:color-mix(in srgb, var(--tile-color, #b89452) 28%, #181713);
+    transform:translateZ(14px) scale(1.025);
+  }
+  .cell.rest::before { opacity:.16; }
+  .cell.rest::after { opacity:.06; }
+  @keyframes tug {
+    0% { transform:translateZ(0) scale(1); }
+    44% { transform:translateZ(11px) scale(1.025) skewX(-1.2deg); }
+    100% { transform:translateZ(0) scale(1); }
+  }
+  .shuttle {
+    position:absolute; width:9.4%; height:3.4%; left:0; top:0; z-index:5;
+    border-radius:999px 38% 38% 999px; pointer-events:none;
+    background:
+      linear-gradient(90deg, transparent 0 10%, #6d5736 10% 18%, #c1a165 18% 56%, #4d3d28 56% 68%, transparent 68%),
+      #8b7044;
+    border:1px solid rgba(239,232,214,.28);
+    transform:translate(-200%, -200%);
+    transition:transform .44s cubic-bezier(.28,.72,.18,1), opacity .18s ease;
+    opacity:0;
+  }
+  .shuttle.visible { opacity:1; }
+  .hud {
+    position:fixed; z-index:10; background:rgba(27,26,23,.94); border:1px solid var(--line);
+    border-radius:7px;
+  }
+  .intro { left:20px; top:20px; width:min(390px, calc(100vw - 40px)); padding:14px 16px; }
+  h1 { margin:0 0 6px; font-size:24px; font-weight:650; }
+  h1 small { color:var(--dim); font:500 13px/1 Consolas,monospace; vertical-align:4px; }
+  .sub { color:var(--dim); font-size:12px; line-height:1.55; }
+  .controls { right:20px; top:20px; width:310px; padding:14px; }
+  .status { margin-top:10px; padding-top:10px; border-top:1px solid #303238; color:var(--dim); font-size:11px; line-height:1.5; }
+  .status b { color:var(--fg); }
+  .legend { left:20px; bottom:20px; width:min(560px, calc(100vw - 40px)); padding:12px 14px; }
+  .legend summary { cursor:pointer; font-size:12px; font-weight:650; }
+  .legend-body { margin-top:12px; padding-top:12px; border-top:1px solid var(--line); color:var(--dim); font-size:12px; line-height:1.7; }
+  .tile-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:7px; margin-top:10px; }
+  .tile-chip { border:1px solid #303238; border-radius:5px; padding:7px 8px; background:#101112; }
+  .tile-chip b { display:block; color:var(--fg); font-size:11px; }
+  .tile-chip span { font:11px/1.4 Consolas,monospace; color:var(--dim); }
+  .corner-label {
+    position:fixed; right:20px; bottom:16px; z-index:4; color:rgba(244,241,232,.48);
+    font:10px/1.4 Consolas,"Courier New",monospace; letter-spacing:.08em;
+  }
+  exercise-controls {
+    --exercise-control-radius:4px; --exercise-control-primary:#f4f1e8; --exercise-control-primary-fg:#111;
+    --exercise-control-secondary:#282b2f; --exercise-control-border:#3f3f46;
+    --exercise-control-focus:#e4b95e;
+  }
+  @media (max-width:720px) {
+    .loom { width:min(98vw, 70vh); transform:perspective(980px) rotateX(55deg) rotateZ(-43deg); }
+    .intro { left:14px; top:14px; }
+    .intro .sub { display:none; }
+    .controls { left:14px; right:14px; top:82px; width:auto; }
+    .legend { left:14px; bottom:14px; width:calc(100vw - 28px); max-height:44vh; overflow:auto; }
+    .corner-label { display:none; }
+  }
+</style>
+</head>
+<body>
+<main class="stage">
+  <div class="loom" id="loom" aria-label="WFC 约束织机矩阵">
+    <div class="warp"></div>
+    <div class="grid" id="grid"></div>
+    <div class="shuttle" id="shuttle"></div>
+  </div>
+</main>
+
+<header class="hud intro">
+  <h1>04 · Constraint Loom <small>0.1</small></h1>
+  <div class="sub">WFC 把和声、旋律、节奏与织纹收束成一张哑光矩阵织物，再由梭子牵动读出。</div>
+</header>
+
+<section class="hud controls">
+  <exercise-controls id="transportControls" apply-seed></exercise-controls>
+  <div class="sub" style="margin-top:8px">输入种子按 Enter 应用；换一版重新织一块矩阵。</div>
+  <div class="status" id="status">待机：矩阵保留一片未坍缩的可能性。</div>
+</section>
+
+<details class="hud legend">
+  <summary>▶ 机制与层级</summary>
+  <div class="legend-body">
+    <div>每列是一枚乐句柱，八行分别承载段落、和声、低音、旋律、节奏、纹理、点缀与留白。坍缩传播改变候选集合；播放时只牵动相关线束，不把矩阵当作逐格音序器。</div>
+    <div class="tile-list" id="tileList"></div>
+  </div>
+</details>
+
+<div class="corner-label">MATTE CONSTRAINT FABRIC · 8×8 HWFC</div>
+
+<script src="../../../shared/exercise-controls.js"></script>
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+const SIZE = 8;
+const COLLAPSE_STEP_MS = 38;
+const MASTER_VOLUME_DB = 6;
+const MASTER_VOLUME_GAIN = Math.pow(10, MASTER_VOLUME_DB / 20);
+const SCALE = ['F3', 'G3', 'Ab3', 'Bb3', 'C4', 'Db4', 'Eb4', 'F4', 'G4', 'Ab4', 'Bb4', 'C5', 'Db5', 'Eb5', 'F5', 'G5'];
+const gridEl = document.getElementById('grid');
+const statusEl = document.getElementById('status');
+const shuttleEl = document.getElementById('shuttle');
+const tileListEl = document.getElementById('tileList');
+const transportControls = document.getElementById('transportControls');
+const setStatus = html => { statusEl.innerHTML = html; };
+
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i += 1) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h >>> 0;
+};
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+const TILES = [
+  { id:'rest', name:'rest', color:'#4f5556', density:0.05, tension:0.05, register:'none', family:'air', weight:1.25, pattern:'empty', notes:[] },
+  { id:'resonance', name:'resonance', color:'#8c8170', density:0.18, tension:0.12, register:'mid', family:'air', weight:1.05, pattern:'tail', notes:['C4'], dur:1.2, gain:0.12 },
+  { id:'low-root', name:'low root', color:'#72c49b', density:0.38, tension:0.16, register:'low', family:'anchor', weight:1.1, pattern:'knot', notes:['F2'], dur:0.55, gain:0.34 },
+  { id:'low-fifth', name:'low fifth', color:'#65a9b3', density:0.34, tension:0.22, register:'low', family:'anchor', weight:0.86, pattern:'knot', notes:['C3'], dur:0.55, gain:0.28 },
+  { id:'dyad-minor', name:'minor dyad', color:'#e4b95e', density:0.56, tension:0.32, register:'mid', family:'chord', weight:0.95, pattern:'cross', notes:['F4','Ab4'], dur:0.34, gain:0.22 },
+  { id:'dyad-sus', name:'sus dyad', color:'#d9c172', density:0.58, tension:0.46, register:'mid', family:'chord', weight:0.72, pattern:'cross', notes:['G4','C5'], dur:0.32, gain:0.18 },
+  { id:'falling-pair', name:'falling pair', color:'#d66f66', density:0.62, tension:0.44, register:'mid', family:'motion', weight:0.82, pattern:'diagonal', notes:['C5','Ab4'], offsets:[0,0.18], dur:0.18, gain:0.18 },
+  { id:'upper-fleck', name:'upper fleck', color:'#7aa7d9', density:0.44, tension:0.36, register:'high', family:'spark', weight:0.9, pattern:'spark', notes:['Eb5'], dur:0.12, gain:0.16 },
+  { id:'shimmer', name:'shimmer', color:'#b48de0', density:0.68, tension:0.58, register:'high', family:'spark', weight:0.55, pattern:'spark', notes:['G5','F5'], offsets:[0,0.11], dur:0.14, gain:0.13 },
+  { id:'thick-chord', name:'thick chord', color:'#f0a15f', density:0.82, tension:0.64, register:'wide', family:'chord', weight:0.45, pattern:'dense', notes:['F3','C4','Ab4'], dur:0.46, gain:0.18 },
+];
+const TILE_BY_ID = new Map(TILES.map(tile => [tile.id, tile]));
+const SAFE_IDS = ['rest', 'resonance'];
+
+const cells = [];
+const snakePath = [];
+
+for (let row = 0; row < SIZE; row += 1) {
+  for (let col = 0; col < SIZE; col += 1) {
+    const el = document.createElement('div');
+    el.className = 'cell';
+    gridEl.appendChild(el);
+    cells.push({ row, col, el, candidates:new Set(TILES.map(tile => tile.id)), collapsed:null });
+  }
+}
+
+for (let row = 0; row < SIZE; row += 1) {
+  const cols = row % 2 === 0 ? [...Array(SIZE).keys()] : [...Array(SIZE).keys()].reverse();
+  cols.forEach(col => snakePath.push(row * SIZE + col));
+}
+
+const structuralBias = cell => {
+  const x = cell.col / (SIZE - 1);
+  const y = cell.row / (SIZE - 1);
+  const center = 1 - clamp(Math.hypot(x - 0.55, y - 0.48) / 0.68, 0, 1);
+  const release = clamp((x + y - 1.05) * 1.6, 0, 1);
+  return { density:clamp(0.18 + center * 0.55 - release * 0.18, 0.08, 0.78), tension:clamp(0.12 + center * 0.62 - release * 0.28, 0.06, 0.72) };
+};
+
+const compatible = (a, b, direction) => {
+  if (a.id === 'rest' || b.id === 'rest') return true;
+  const densityJump = Math.abs(a.density - b.density);
+  const tensionJump = Math.abs(a.tension - b.tension);
+  if (direction === 'horizontal') {
+    if (a.family === 'spark' && b.family === 'spark') return false;
+    if (a.family === 'anchor' && b.family === 'anchor' && densityJump < 0.08) return false;
+    if (a.family === 'air' && b.family === 'air') return true;
+    return densityJump < 0.58 && tensionJump < 0.62;
+  }
+  if (a.register === 'low' && b.register === 'low') return false;
+  if (a.density + b.density > 1.25 && a.family !== 'air' && b.family !== 'air') return false;
+  return tensionJump < 0.72;
+};
+
+const renderCell = cell => {
+  const tile = cell.collapsed ? TILE_BY_ID.get(cell.collapsed) : null;
+  const entropy = cell.candidates.size / TILES.length;
+  cell.el.className = 'cell' + (tile ? ' collapsed ' + tile.id : '') + (tile && tile.id === 'rest' ? ' rest' : '');
+  cell.el.style.setProperty('--tile-color', tile ? tile.color : '#9b8a65');
+  cell.el.style.setProperty('--spread', tile ? String(1 + tile.density * 0.1) : String(1 + entropy * 0.34));
+  cell.el.style.setProperty('--blur', tile ? '.25px' : (1.4 + entropy * 2.4).toFixed(2) + 'px');
+  cell.el.style.setProperty('--twist', tile ? (tile.tension * 18 - 6).toFixed(1) + 'deg' : (entropy * 22).toFixed(1) + 'deg');
+  const angle = tile
+    ? ({ empty:'0deg', tail:'90deg', knot:'0deg', cross:'45deg', diagonal:'-35deg', spark:'22deg', dense:'58deg' }[tile.pattern] || '35deg')
+    : '35deg';
+  cell.el.style.setProperty('--angle', angle);
+};
+
+const resetVisual = () => {
+  cells.forEach(cell => {
+    cell.candidates = new Set(TILES.map(tile => tile.id));
+    cell.collapsed = null;
+    cell.el.className = 'cell';
+    renderCell(cell);
+  });
+  shuttleEl.classList.remove('visible');
+  shuttleEl.style.transform = 'translate(-200%, -200%)';
+};
+
+resetVisual();
+
+const LAYERS = ['section', 'chord', 'bass', 'melody', 'rhythm', 'texture', 'accent', 'space'];
+tileListEl.innerHTML = LAYERS.map((layer, index) =>
+  '<div class="tile-chip"><b>' + layer +
+  '</b><span>row ' + (index + 1) + ' · constraint layer</span></div>'
+).join('');
+const SECTIONS = {
+  calm: { name:'calm', color:'#7f8d82', density:0.18, tension:0.10, rhythms:['hold','slow'], textures:['air','felt'], accents:['none','low'] },
+  gather: { name:'gather', color:'#d2ad62', density:0.42, tension:0.30, rhythms:['slow','broken'], textures:['felt','thread'], accents:['low','turn'] },
+  bloom: { name:'bloom', color:'#e57d62', density:0.68, tension:0.58, rhythms:['broken','woven'], textures:['thread','glint'], accents:['turn','high'] },
+  release: { name:'release', color:'#78a8c7', density:0.28, tension:0.18, rhythms:['hold','slow'], textures:['air','glint'], accents:['none','high'] },
+};
+const CHORDS = {
+  Fm: { name:'Fm', color:'#72c49b', notes:['F3','Ab3','C4','F4'], bass:['F2','C3'], next:['Db','Ab','Bbm','Cm'] },
+  Db: { name:'Db', color:'#d9c172', notes:['Db3','F3','Ab3','C4'], bass:['Db2','Ab2'], next:['Ab','Eb','Fm'] },
+  Ab: { name:'Ab', color:'#e4b95e', notes:['Ab3','C4','Eb4','G4'], bass:['Ab2','Eb3'], next:['Eb','Fm','Db'] },
+  Eb: { name:'Eb', color:'#7aa7d9', notes:['Eb3','G3','Bb3','Db4'], bass:['Eb2','Bb2'], next:['Fm','Ab','Db'] },
+  Bbm: { name:'Bbm', color:'#b48de0', notes:['Bb2','Db3','F3','Ab3'], bass:['Bb1','F2'], next:['Db','Eb','Fm'] },
+  Cm: { name:'Cm', color:'#d66f66', notes:['C3','Eb3','G3','Bb3'], bass:['C2','G2'], next:['Fm','Ab'] },
+};
+const RHYTHMS = {
+  hold: { name:'hold', color:'#8c8170', offsets:[0], chordDur:1.7, melody:[0.72], density:0.15 },
+  slow: { name:'slow', color:'#72c49b', offsets:[0, 0.86], chordDur:1.25, melody:[0.42, 1.05], density:0.35 },
+  broken: { name:'broken', color:'#e4b95e', offsets:[0, 0.42, 1.06], chordDur:0.9, melody:[0.2, 0.64, 1.22], density:0.58 },
+  woven: { name:'woven', color:'#e57d62', offsets:[0, 0.32, 0.68, 1.18], chordDur:0.72, melody:[0.16, 0.48, 0.9, 1.28], density:0.78 },
+};
+const TEXTURES = {
+  air: { name:'air', color:'#4f5556', gain:0.03 },
+  felt: { name:'felt', color:'#8c8170', gain:0.07 },
+  thread: { name:'thread', color:'#d2ad62', gain:0.10 },
+  glint: { name:'glint', color:'#7aa7d9', gain:0.08 },
+};
+const ACCENTS = {
+  none: { name:'none', color:'#4f5556' },
+  low: { name:'low', color:'#72c49b' },
+  turn: { name:'turn', color:'#d66f66' },
+  high: { name:'high', color:'#7aa7d9' },
+};
+const NOTE_TO_MIDI = note => Tone.Frequency(note).toMidi();
+const stateColor = (layer, id) => (
+  layer === 'section' ? SECTIONS[id].color :
+  layer === 'chord' ? CHORDS[id].color :
+  layer === 'bass' ? '#72c49b' :
+  layer === 'melody' ? '#f0d17b' :
+  layer === 'rhythm' ? RHYTHMS[id].color :
+  layer === 'texture' ? TEXTURES[id].color :
+  layer === 'accent' ? ACCENTS[id].color : '#4f5556'
+);
+const stateLabel = (layer, id) => (
+  layer === 'section' ? SECTIONS[id].name :
+  layer === 'chord' ? CHORDS[id].name :
+  layer === 'rhythm' ? RHYTHMS[id].name :
+  layer === 'texture' ? TEXTURES[id].name :
+  layer === 'accent' ? ACCENTS[id].name : id
+);
+const paintStateCell = (row, col, layer, id) => {
+  const cell = cells[row * SIZE + col];
+  const color = stateColor(layer, id);
+  const layerT = row / (SIZE - 1);
+  cell.el.className = 'cell collapsed' + (id === 'none' || id === 'rest' ? ' rest' : '');
+  cell.el.style.setProperty('--tile-color', color);
+  cell.el.style.setProperty('--spread', (0.92 + layerT * 0.16).toFixed(2));
+  cell.el.style.setProperty('--blur', '.25px');
+  cell.el.style.setProperty('--twist', ((col - 3.5) * 2.2 + layerT * 8).toFixed(1) + 'deg');
+  cell.el.style.setProperty('--angle', ['0deg','42deg','90deg','-35deg','58deg','22deg','-62deg','0deg'][row]);
+  cell.el.title = layer + ': ' + stateLabel(layer, id);
+};
+
+const positionSectionOptions = col => {
+  const x = col / (SIZE - 1);
+  if (x < 0.2) return ['calm', 'gather'];
+  if (x < 0.45) return ['calm', 'gather', 'bloom'];
+  if (x < 0.72) return ['gather', 'bloom', 'release'];
+  return ['release', 'calm', 'gather'];
+};
+
+const makeDomains = () => {
+  const domains = new Map();
+  for (let col = 0; col < SIZE; col += 1) {
+    domains.set('section:' + col, new Set(positionSectionOptions(col)));
+    domains.set('chord:' + col, new Set(Object.keys(CHORDS)));
+    domains.set('bass:' + col, new Set(['F2','C3','Db2','Ab2','Eb2','Bb2','C2','G2']));
+    domains.set('melody:' + col, new Set(['F4','G4','Ab4','Bb4','C5','Db5','Eb5','F5','G5']));
+    domains.set('rhythm:' + col, new Set(Object.keys(RHYTHMS)));
+    domains.set('texture:' + col, new Set(Object.keys(TEXTURES)));
+    domains.set('accent:' + col, new Set(Object.keys(ACCENTS)));
+    domains.set('space:' + col, new Set(['open','thread','knot']));
+  }
+  return domains;
+};
+
+const single = set => set.size === 1 ? [...set][0] : null;
+const keyFor = (layer, col) => layer + ':' + col;
+const filterDomain = (domains, key, allowed) => {
+  const current = domains.get(key);
+  const next = new Set([...current].filter(value => allowed.has(value)));
+  if (!next.size) return false;
+  if (next.size === current.size && [...next].every(value => current.has(value))) return false;
+  domains.set(key, next);
+  return true;
+};
+
+const propagateHWFC = domains => {
+  let changed = true;
+  let touched = [];
+  while (changed) {
+    changed = false;
+    for (let col = 0; col < SIZE; col += 1) {
+      const section = single(domains.get(keyFor('section', col)));
+      const chord = single(domains.get(keyFor('chord', col)));
+      const rhythm = single(domains.get(keyFor('rhythm', col)));
+      if (section) {
+        const s = SECTIONS[section];
+        [
+          ['rhythm', new Set(s.rhythms)],
+          ['texture', new Set(s.textures)],
+          ['accent', new Set(s.accents)],
+        ].forEach(([layer, allowed]) => {
+          if (filterDomain(domains, keyFor(layer, col), allowed)) { changed = true; touched.push([layer, col]); }
+        });
+      }
+      if (chord) {
+        const c = CHORDS[chord];
+        const melodyAllowed = new Set(c.notes.concat(c.notes.map(note => Tone.Frequency(note).transpose(12).toNote())));
+        if (filterDomain(domains, keyFor('bass', col), new Set(c.bass))) { changed = true; touched.push(['bass', col]); }
+        if (filterDomain(domains, keyFor('melody', col), melodyAllowed)) { changed = true; touched.push(['melody', col]); }
+        if (col > 0) {
+          const prevChord = single(domains.get(keyFor('chord', col - 1)));
+          if (prevChord && filterDomain(domains, keyFor('chord', col), new Set(CHORDS[prevChord].next))) {
+            changed = true; touched.push(['chord', col]);
+          }
+        }
+        if (col < SIZE - 1) {
+          const allowedPrev = new Set(Object.keys(CHORDS).filter(id => CHORDS[id].next.includes(chord)));
+          if (filterDomain(domains, keyFor('chord', col + 1), new Set(c.next))) {
+            changed = true; touched.push(['chord', col + 1]);
+          }
+          if (col > 0 && filterDomain(domains, keyFor('chord', col - 1), allowedPrev)) {
+            changed = true; touched.push(['chord', col - 1]);
+          }
+        }
+      }
+      if (col > 0) {
+        const prevMelody = single(domains.get(keyFor('melody', col - 1)));
+        if (prevMelody) {
+          const allowed = new Set([...domains.get(keyFor('melody', col))].filter(note => Math.abs(NOTE_TO_MIDI(note) - NOTE_TO_MIDI(prevMelody)) <= 7));
+          if (filterDomain(domains, keyFor('melody', col), allowed.size ? allowed : new Set([prevMelody]))) {
+            changed = true; touched.push(['melody', col]);
+          }
+        }
+      }
+      if (rhythm) {
+        const dense = RHYTHMS[rhythm].density > 0.65;
+        if (dense && filterDomain(domains, keyFor('texture', col), new Set(['air','felt','thread']))) {
+          changed = true; touched.push(['texture', col]);
+        }
+      }
+    }
+  }
+  return touched;
+};
+
+const chooseHWCell = (domains, rng) => {
+  const open = [...domains.entries()].filter(([, domain]) => domain.size > 1);
+  if (!open.length) return null;
+  let best = [];
+  let bestScore = Infinity;
+  open.forEach(([key, domain]) => {
+    const layer = key.split(':')[0];
+    const layerBias = layer === 'section' ? -0.35 : layer === 'chord' ? -0.22 : layer === 'melody' ? 0.08 : 0;
+    const score = domain.size + layerBias + rng() * 0.07;
+    if (score < bestScore) { bestScore = score; best = [[key, domain]]; }
+    else if (Math.abs(score - bestScore) < 1e-6) best.push([key, domain]);
+  });
+  return best[Math.floor(rng() * best.length)];
+};
+
+const chooseHWValue = (key, domain, domains, rng) => {
+  const [layer, colText] = key.split(':');
+  const col = Number(colText);
+  const values = [...domain];
+  const section = single(domains.get(keyFor('section', col)));
+  const prev = col > 0 ? {
+    chord: single(domains.get(keyFor('chord', col - 1))),
+    melody: single(domains.get(keyFor('melody', col - 1))),
+  } : {};
+  let total = 0;
+  const weighted = values.map(value => {
+    let weight = 1;
+    if (layer === 'section') weight *= positionSectionOptions(col).includes(value) ? 1.8 : 0.4;
+    if (layer === 'chord' && prev.chord) weight *= CHORDS[prev.chord].next.includes(value) ? 2.5 : 0.15;
+    if (layer === 'melody' && prev.melody) {
+      const leap = Math.abs(NOTE_TO_MIDI(value) - NOTE_TO_MIDI(prev.melody));
+      weight *= leap <= 2 ? 1.8 : leap <= 5 ? 1.25 : 0.45;
+    }
+    if (section && layer === 'rhythm') weight *= SECTIONS[section].rhythms.includes(value) ? 2.2 : 0.3;
+    if (section && layer === 'texture') weight *= SECTIONS[section].textures.includes(value) ? 2.2 : 0.3;
+    if (section && layer === 'accent') weight *= SECTIONS[section].accents.includes(value) ? 2.2 : 0.3;
+    if (layer === 'space') weight *= value === 'open' && col > 5 ? 1.8 : 1;
+    total += weight;
+    return { value, weight };
+  });
+  let pick = rng() * total;
+  for (const item of weighted) {
+    pick -= item.weight;
+    if (pick <= 0) return item.value;
+  }
+  return weighted[weighted.length - 1].value;
+};
+
+const collapseHWFC = (seed, onStep, signal) => new Promise(resolve => {
+  const rng = makeRng(seed);
+  const domains = makeDomains();
+  let steps = 0;
+  const step = () => {
+    if (signal.cancelled) { resolve(null); return; }
+    const target = chooseHWCell(domains, rng);
+    if (!target) {
+      const composition = [];
+      for (let col = 0; col < SIZE; col += 1) {
+        composition.push(Object.fromEntries(LAYERS.map(layer => [layer, single(domains.get(keyFor(layer, col)))])));
+      }
+      resolve(composition);
+      return;
+    }
+    const [key, domain] = target;
+    const [layer, colText] = key.split(':');
+    const col = Number(colText);
+    const row = LAYERS.indexOf(layer);
+    const value = chooseHWValue(key, domain, domains, rng);
+    domains.set(key, new Set([value]));
+    const cell = cells[row * SIZE + col];
+    cell.el.classList.add('observing');
+    window.setTimeout(() => cell.el.classList.remove('observing'), COLLAPSE_STEP_MS + 180);
+    paintStateCell(row, col, layer, value);
+    const touched = propagateHWFC(domains);
+    touched.forEach(([changedLayer, changedCol]) => {
+      const changedRow = LAYERS.indexOf(changedLayer);
+      const changedCell = cells[changedRow * SIZE + changedCol];
+      if (changedCell) {
+        changedCell.el.classList.add('propagating');
+        window.setTimeout(() => changedCell.el.classList.remove('propagating'), 460);
+      }
+    });
+    steps += 1;
+    onStep(steps, layer, col, touched.length);
+    window.setTimeout(step, COLLAPSE_STEP_MS);
+  };
+  step();
+});
+
+const chooseCell = rng => {
+  const open = cells.filter(cell => !cell.collapsed);
+  if (!open.length) return null;
+  let bestScore = Infinity;
+  let best = [];
+  open.forEach(cell => {
+    const jitter = rng() * 0.08;
+    const score = cell.candidates.size + jitter;
+    if (score < bestScore - 1e-6) { bestScore = score; best = [cell]; }
+    else if (Math.abs(score - bestScore) < 1e-6) best.push(cell);
+  });
+  return best[Math.floor(rng() * best.length)];
+};
+
+const chooseTile = (cell, rng) => {
+  const bias = structuralBias(cell);
+  const candidates = [...cell.candidates].map(id => TILE_BY_ID.get(id));
+  let total = 0;
+  const weighted = candidates.map(tile => {
+    const densityFit = 1 - Math.abs(tile.density - bias.density);
+    const tensionFit = 1 - Math.abs(tile.tension - bias.tension);
+    const edgeRest = (cell.col === 0 || cell.col === SIZE - 1 || cell.row === SIZE - 1) && tile.family === 'air' ? 1.25 : 1;
+    const weight = Math.max(0.02, tile.weight * (0.45 + densityFit) * (0.55 + tensionFit) * edgeRest);
+    total += weight;
+    return { tile, weight };
+  });
+  let pick = rng() * total;
+  for (const item of weighted) {
+    pick -= item.weight;
+    if (pick <= 0) return item.tile.id;
+  }
+  return weighted[weighted.length - 1].tile.id;
+};
+
+const neighborsOf = cell => [
+  { row:cell.row, col:cell.col - 1, direction:'horizontal' },
+  { row:cell.row, col:cell.col + 1, direction:'horizontal' },
+  { row:cell.row - 1, col:cell.col, direction:'vertical' },
+  { row:cell.row + 1, col:cell.col, direction:'vertical' },
+].filter(item => item.row >= 0 && item.row < SIZE && item.col >= 0 && item.col < SIZE)
+ .map(item => ({ ...item, cell:cells[item.row * SIZE + item.col] }));
+
+const propagateFrom = startCell => {
+  const queue = [startCell];
+  const changed = new Set();
+  while (queue.length) {
+    const source = queue.shift();
+    const sourceOptions = source.collapsed ? [source.collapsed] : [...source.candidates];
+    neighborsOf(source).forEach(({ cell, direction }) => {
+      if (cell.collapsed) return;
+      const before = cell.candidates.size;
+      const filtered = [...cell.candidates].filter(candidateId =>
+        sourceOptions.some(sourceId => compatible(TILE_BY_ID.get(sourceId), TILE_BY_ID.get(candidateId), direction))
+      );
+      cell.candidates = new Set(filtered.length ? filtered : SAFE_IDS);
+      if (cell.candidates.size !== before) {
+        changed.add(cell);
+        queue.push(cell);
+      }
+    });
+  }
+  changed.forEach(cell => {
+    cell.el.classList.add('propagating');
+    window.setTimeout(() => cell.el.classList.remove('propagating'), 460);
+    renderCell(cell);
+  });
+  return changed.size;
+};
+
+const collapseMatrix = (seed, onStep, signal) => new Promise(resolve => {
+  const rng = makeRng(seed);
+  let steps = 0;
+  const step = () => {
+    if (signal.cancelled) { resolve(false); return; }
+    const cell = chooseCell(rng);
+    if (!cell) { resolve(true); return; }
+    cell.el.classList.add('observing');
+    window.setTimeout(() => cell.el.classList.remove('observing'), COLLAPSE_STEP_MS + 120);
+    const id = chooseTile(cell, rng);
+    cell.collapsed = id;
+    cell.candidates = new Set([id]);
+    renderCell(cell);
+    const changed = propagateFrom(cell);
+    steps += 1;
+    onStep(steps, cell, changed);
+    window.setTimeout(step, COLLAPSE_STEP_MS);
+  };
+  step();
+});
+
+const makeMaster = () => {
+  const limiter = new Tone.Limiter(-1).connect(Tone.Destination);
+  const masterGain = new Tone.Gain(0).connect(limiter);
+  const reverb = new Tone.Reverb({ decay:4.8, wet:0.34 }).connect(masterGain);
+  const delay = new Tone.FeedbackDelay({ delayTime:'8n.', feedback:0.18, wet:0.18 }).connect(reverb);
+  const input = new Tone.Gain(1).connect(delay);
+  return { input, masterGain, delay, reverb, limiter };
+};
+
+const createVoices = destination => {
+  const low = new Tone.MonoSynth({
+    oscillator:{ type:'sine' },
+    filter:{ Q:0.5, type:'lowpass', rolloff:-12 },
+    envelope:{ attack:0.012, decay:0.25, sustain:0.18, release:1.6 },
+    filterEnvelope:{ attack:0.02, decay:0.2, sustain:0.2, release:1.1, baseFrequency:90, octaves:2.2 },
+    volume:-6,
+  }).connect(destination);
+  const body = new Tone.PolySynth(Tone.Synth, {
+    oscillator:{ type:'triangle' },
+    envelope:{ attack:0.01, decay:0.22, sustain:0.1, release:1.35 },
+    volume:-10,
+  }).connect(destination);
+  const high = new Tone.PolySynth(Tone.Synth, {
+    oscillator:{ type:'sine' },
+    envelope:{ attack:0.004, decay:0.12, sustain:0.02, release:0.8 },
+    volume:-15,
+  }).connect(destination);
+  return {
+    trigger(tile, time, offset) {
+      if (!tile.notes.length) return;
+      const notes = tile.notes.map((note, i) => {
+        if (tile.register !== 'high') return note;
+        const shift = (offset + i) % 3;
+        return SCALE[Math.min(SCALE.length - 1, SCALE.indexOf(note) + shift)] || note;
+      });
+      const gain = tile.gain || 0.16;
+      const dur = tile.dur || 0.28;
+      const offsets = tile.offsets || notes.map(() => 0);
+      notes.forEach((note, i) => {
+        const at = time + (offsets[i] || 0);
+        const voice = tile.register === 'low' ? low : tile.register === 'high' ? high : body;
+        voice.triggerAttackRelease(note, dur, at, gain);
+      });
+    },
+    releaseAll(time) {
+      low.triggerRelease(time);
+      body.releaseAll(time);
+      high.releaseAll(time);
+    },
+    dispose() {
+      low.dispose(); body.dispose(); high.dispose();
+    },
+  };
+};
+
+const createHierarchicalVoices = destination => {
+  const bass = new Tone.MonoSynth({
+    oscillator:{ type:'sine' },
+    filter:{ Q:0.6, type:'lowpass', rolloff:-12 },
+    envelope:{ attack:0.018, decay:0.34, sustain:0.28, release:1.9 },
+    filterEnvelope:{ attack:0.02, decay:0.24, sustain:0.3, release:1.2, baseFrequency:80, octaves:2.5 },
+    volume:-3,
+  }).connect(destination);
+  const chords = new Tone.PolySynth(Tone.Synth, {
+    oscillator:{ type:'triangle' },
+    envelope:{ attack:0.035, decay:0.35, sustain:0.25, release:2.4 },
+    volume:-7,
+  }).connect(destination);
+  const melody = new Tone.PolySynth(Tone.Synth, {
+    oscillator:{ type:'sine' },
+    envelope:{ attack:0.006, decay:0.16, sustain:0.05, release:1.05 },
+    volume:-9,
+  }).connect(destination);
+  const glint = new Tone.PolySynth(Tone.Synth, {
+    oscillator:{ type:'triangle' },
+    envelope:{ attack:0.003, decay:0.09, sustain:0.01, release:0.55 },
+    volume:-16,
+  }).connect(destination);
+  const textureFilter = new Tone.Filter({ type:'highpass', frequency:1200 }).connect(destination);
+  const texture = new Tone.NoiseSynth({
+    noise:{ type:'pink' },
+    envelope:{ attack:0.08, decay:0.42, sustain:0.03, release:1.4 },
+    volume:-24,
+  }).connect(textureFilter);
+  const playColumn = (column, time, index) => {
+    const chord = CHORDS[column.chord];
+    const rhythm = RHYTHMS[column.rhythm];
+    const section = SECTIONS[column.section];
+    const textureState = TEXTURES[column.texture];
+    const accent = column.accent;
+    const breath = 0.82 + section.density * 0.32;
+    chords.triggerAttackRelease(chord.notes.slice(1), rhythm.chordDur, time, 0.13 * breath);
+    bass.triggerAttackRelease(column.bass, accent === 'low' ? 0.9 : 0.56, time + 0.02, 0.33 * breath);
+    rhythm.melody.forEach((offset, i) => {
+      const base = column.melody;
+      const chordNotes = chord.notes.concat(chord.notes.map(note => Tone.Frequency(note).transpose(12).toNote()));
+      const target = chordNotes[(chordNotes.indexOf(base) + i + index) % chordNotes.length] || base;
+      melody.triggerAttackRelease(target, 0.18 + section.tension * 0.12, time + offset, 0.18 + section.density * 0.08);
+    });
+    if (accent === 'turn') {
+      const midi = NOTE_TO_MIDI(column.melody);
+      melody.triggerAttackRelease(Tone.Frequency(midi - 2, 'midi').toNote(), 0.16, time + 1.36, 0.16);
+    } else if (accent === 'high') {
+      glint.triggerAttackRelease(Tone.Frequency(column.melody).transpose(12).toNote(), 0.11, time + 1.18, 0.12);
+    }
+    if (column.texture !== 'air') {
+      texture.triggerAttackRelease(0.26 + textureState.gain * 2.2, time + 0.08, textureState.gain);
+    }
+  };
+  return {
+    playColumn,
+    releaseAll(time) {
+      bass.triggerRelease(time);
+      chords.releaseAll(time);
+      melody.releaseAll(time);
+      glint.releaseAll(time);
+    },
+    dispose() {
+      bass.dispose(); chords.dispose(); melody.dispose(); glint.dispose(); texture.dispose(); textureFilter.dispose();
+    },
+  };
+};
+
+let engine = null;
+let transition = false;
+let currentSeed = 0;
+
+const moveShuttleTo = index => {
+  const cell = cells[index];
+  const x = (cell.col + 0.5) / SIZE * 100;
+  const y = (cell.row + 0.5) / SIZE * 100;
+  const direction = cell.row % 2 === 0 ? 1 : -1;
+  shuttleEl.classList.add('visible');
+  shuttleEl.style.transform = 'translate(calc(' + x.toFixed(3) + '% - 50%), calc(' + y.toFixed(3) + '% - 50%)) rotate(' + (direction > 0 ? 0 : 180) + 'deg)';
+};
+
+const moveShuttleToColumn = col => {
+  const row = col % 2 === 0 ? 3 : 4;
+  const x = (col + 0.5) / SIZE * 100;
+  const y = (row + 0.5) / SIZE * 100;
+  shuttleEl.classList.add('visible');
+  shuttleEl.style.transform = 'translate(calc(' + x.toFixed(3) + '% - 50%), calc(' + y.toFixed(3) + '% - 50%)) rotate(' + (col % 2 === 0 ? 0 : 180) + 'deg)';
+};
+
+const columnDuration = column => {
+  const rhythm = RHYTHMS[column.rhythm];
+  const section = SECTIONS[column.section];
+  const lastGesture = Math.max(...rhythm.melody, 0);
+  return Math.max(1.22, lastGesture + 0.72 + (1 - section.density) * 0.34);
+};
+
+const showColumnRead = (col, column) => {
+  cells.forEach(item => item.el.classList.remove('playing'));
+  ['section', 'chord', 'rhythm', 'texture'].forEach(layer => {
+    const row = LAYERS.indexOf(layer);
+    cells[row * SIZE + col].el.classList.add('playing');
+  });
+  window.setTimeout(() => {
+    ['bass', 'melody', 'accent'].forEach(layer => {
+      const row = LAYERS.indexOf(layer);
+      cells[row * SIZE + col].el.classList.add('playing');
+    });
+  }, 160);
+  window.setTimeout(() => {
+    cells.forEach(item => item.el.classList.remove('playing'));
+    const row = LAYERS.indexOf('space');
+    cells[row * SIZE + col].el.classList.add('playing');
+  }, Math.min(980, columnDuration(column) * 520));
+  moveShuttleToColumn(col);
+};
+
+const activateEngine = async seed => {
+  const { input, masterGain, delay, reverb, limiter } = makeMaster();
+  try { await reverb.generate(); } catch (error) { /* Tone also works while it generates lazily. */ }
+  const voices = createHierarchicalVoices(input);
+  const signal = { cancelled:false };
+  let eventIds = [];
+  let playbackTimer = null;
+  let collapsed = false;
+
+  const schedule = () => {
+    resetVisual();
+    collapsed = false;
+    setStatus('坍缩中 · seed <b>' + seed + '</b>');
+    collapseHWFC(seed, (step, layer, col, changed) => {
+      setStatus('分层坍缩 · <b>' + step + '</b> · ' + layer + ' ' + (col + 1) + ' · 传播 ' + changed + ' 格');
+    }, signal).then(ok => {
+    if (!ok || signal.cancelled) return;
+    collapsed = true;
+    const composition = ok;
+    setStatus('织物完成 · 8 个乐句柱准备读谱');
+    const startAt = Tone.Transport.seconds + 0.35;
+    let cursor = 0.35;
+    composition.forEach((column, pathIndex) => {
+      const at = startAt + cursor;
+      const eventId = Tone.Transport.scheduleOnce(time => {
+        Tone.Draw.schedule(() => {
+          showColumnRead(pathIndex, column);
+          setStatus('播放中 · <b>' + column.chord + '</b> · ' + column.section + ' · ' + (pathIndex + 1) + ' / 8');
+        }, time);
+        voices.playColumn(column, time, pathIndex);
+      }, at);
+      eventIds.push(eventId);
+      cursor += columnDuration(column);
+    });
+    playbackTimer = window.setTimeout(() => {
+      cells.forEach(cell => cell.el.classList.remove('playing'));
+      shuttleEl.classList.remove('visible');
+      if (!signal.cancelled) {
+        Tone.Transport.stop();
+        Tone.Transport.cancel();
+        eventIds = [];
+        transportControls.setPlaying(false);
+        setStatus('已读完整块织物，可换一版或重播。');
+      }
+    }, (cursor + 1.2) * 1000);
+    }).catch(error => {
+      console.error(error);
+      if (!signal.cancelled) setStatus('坍缩失败：' + error.message);
+    });
+  };
+
+  const end = () => {
+    signal.cancelled = true;
+    eventIds.forEach(id => Tone.Transport.clear(id));
+    eventIds = [];
+    if (playbackTimer) window.clearTimeout(playbackTimer);
+    playbackTimer = null;
+    voices.releaseAll(Tone.now() + 0.05);
+    Tone.Transport.stop();
+    Tone.Transport.cancel();
+    cells.forEach(cell => {
+      cell.el.classList.remove('playing', 'observing', 'propagating');
+    });
+    shuttleEl.classList.remove('visible');
+    if (!collapsed) resetVisual();
+  };
+
+  const fadeIn = () => masterGain.gain.linearRampToValueAtTime(MASTER_VOLUME_GAIN, Tone.now() + 0.45);
+  const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.35);
+  const deactivate = () => {
+    end();
+    voices.dispose();
+    [input, masterGain, delay, reverb, limiter].forEach(node => node.dispose());
+  };
+
+  return { schedule, end, fadeIn, fadeOut, deactivate };
+};
+
+const playCurrent = async () => {
+  if (transition) return;
+  transition = true;
+  transportControls.setBusy(true);
+  try {
+    await Tone.start();
+    if (!engine) {
+      const text = transportControls.seedValue;
+      currentSeed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      engine = await activateEngine(currentSeed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    engine.fadeIn();
+    transportControls.setPlaying(true);
+  } catch (error) {
+    console.error(error);
+    setStatus('播放失败：' + error.message);
+    transportControls.setPlaying(false);
+  } finally {
+    transition = false;
+    transportControls.setBusy(false);
+  }
+};
+
+const stopCurrent = () => {
+  if (!engine) return;
+  const old = engine;
+  engine = null;
+  old.fadeOut();
+  window.setTimeout(() => {
+    old.deactivate();
+    transportControls.setPlaying(false);
+    setStatus('已停止');
+  }, 380);
+};
+
+const restartCurrent = async randomize => {
+  if (transition) return;
+  transition = true;
+  transportControls.setBusy(true);
+  const old = engine;
+  engine = null;
+  try {
+    if (old) {
+      old.fadeOut();
+      await new Promise(resolve => window.setTimeout(resolve, 380));
+      old.deactivate();
+    }
+    if (randomize) transportControls.clearSeed();
+  } finally {
+    transition = false;
+    transportControls.setBusy(false);
+    transportControls.setPlaying(false);
+  }
+  await playCurrent();
+};
+
+transportControls.addEventListener('exercise-play', playCurrent);
+transportControls.addEventListener('exercise-stop', stopCurrent);
+transportControls.addEventListener('exercise-regenerate', () => restartCurrent(true));
+transportControls.addEventListener('exercise-seed-apply', () => restartCurrent(false));
+
+window.addEventListener('pagehide', event => {
+  if (event.persisted) return;
+  engine?.deactivate();
+});
+
+window.exercise = { activate: activateEngine };
+</script>
+</body>
+</html>

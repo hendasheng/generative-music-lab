@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>04 · Note Tile Collapse 0.2</title>
+<style>
+  :root {
+    color-scheme:dark;
+    --bg:#12110e; --paper:#d8cfb7; --ink:#252018; --muted:#8f866f;
+    --panel:#1b1915; --line:#3a3429; --accent:#b58b47; --blue:#6c8790;
+  }
+  * { box-sizing:border-box; }
+  html, body { width:100%; height:100%; }
+  body {
+    margin:0; overflow:hidden; background:var(--bg); color:#eee7d6;
+    font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  }
+  .stage {
+    position:fixed; inset:0; display:grid; place-items:center; overflow:hidden;
+    background:
+      repeating-linear-gradient(92deg, rgba(255,255,255,.018) 0 1px, transparent 1px 18px),
+      linear-gradient(135deg, #171611, #0f0e0c);
+  }
+  .score-wrap {
+    width:min(86vw, 86vh);
+    height:min(86vw, 86vh);
+    position:relative;
+    display:grid;
+    place-items:center;
+  }
+  .score {
+    position:relative;
+    width:100%;
+    height:100%;
+    padding:38px 34px 34px;
+    border:1px solid #4c4436;
+    background:
+      repeating-linear-gradient(0deg, rgba(37,32,24,.06) 0 1px, transparent 1px 22px),
+      linear-gradient(180deg, #d8cfb7, #c9bea4);
+    box-shadow:18px 26px 44px rgba(0,0,0,.32);
+  }
+  .cells {
+    position:absolute; inset:38px 34px 34px;
+    display:grid; grid-template-columns:repeat(8, 1fr); grid-template-rows:repeat(8, 1fr); gap:0;
+  }
+  .cell {
+    position:relative; border:1px solid rgba(37,32,24,.22); margin:-1px 0 0 -1px;
+    background:rgba(255,255,255,.12); overflow:hidden;
+    transition:background .24s ease, transform .24s cubic-bezier(.2,.8,.2,1), border-color .2s ease;
+  }
+  .cell:nth-child(8n + 1) { margin-left:0; }
+  .cell:nth-child(-n + 8) { margin-top:0; }
+  .options {
+    position:absolute; left:6px; right:6px; top:6px; bottom:18px;
+    display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); grid-template-rows:repeat(3, minmax(0, 1fr));
+    gap:2px; place-items:center;
+  }
+  .candidate {
+    position:relative; width:min(100%, 12px); aspect-ratio:1 / 1; min-width:0; min-height:0; border:1px solid rgba(37,32,24,.24);
+    background:color-mix(in srgb, var(--note-color, #8f866f) 34%, transparent);
+    transition:opacity .18s ease, transform .24s cubic-bezier(.2,.8,.2,1);
+  }
+  .candidate.removed {
+    opacity:0; transform:scale(.18);
+  }
+  .candidate.rest {
+    border-radius:50%; background:transparent;
+  }
+  .chosen {
+    position:absolute; inset:0; display:grid; place-items:center;
+    color:var(--tile-ink, var(--ink)); font:700 clamp(13px, 1.4vw, 22px)/1 Consolas,"Courier New",monospace;
+    opacity:0; letter-spacing:.04em;
+    transition:opacity .16s ease, transform .24s cubic-bezier(.18,.78,.18,1);
+  }
+  .cell.collapsed { background:var(--tile-bg, #c9bea4); border-color:rgba(37,32,24,.48); transform:translateY(-2px); }
+  .cell.collapsed .options { opacity:0; }
+  .cell.collapsed .chosen { opacity:1; transform:scale(1.03); }
+  .time-lane {
+    position:absolute; left:7px; right:7px; bottom:7px; height:5px;
+    border-top:1px solid rgba(37,32,24,.24);
+    background:
+      linear-gradient(90deg,
+        rgba(37,32,24,.34) 0 1px, transparent 1px 25%,
+        rgba(37,32,24,.2) 25% calc(25% + 1px), transparent calc(25% + 1px) 50%,
+        rgba(37,32,24,.28) 50% calc(50% + 1px), transparent calc(50% + 1px) 75%,
+        rgba(37,32,24,.2) 75% calc(75% + 1px), transparent calc(75% + 1px));
+  }
+  .time-mark {
+    position:absolute; left:var(--time-x, 0%); top:-2px; width:var(--time-w, 34%); height:5px;
+    background:rgba(37,32,24,.58);
+    transform:translateX(0);
+    transition:background .2s ease, width .2s ease;
+  }
+  .cell.collapsed .time-mark { background:color-mix(in srgb, var(--tile-ink, #252018) 72%, transparent); }
+  .cell.observing {
+    border-color:var(--ink);
+    transform:translateY(-4px);
+  }
+  .cell.propagating .candidate:not(.removed) {
+    transform:scale(1.12);
+  }
+  .hud {
+    position:fixed; z-index:10; background:rgba(27,25,21,.94); border:1px solid var(--line);
+    border-radius:7px;
+  }
+  .intro { left:20px; top:20px; width:min(410px, calc(100vw - 40px)); padding:14px 16px; }
+  h1 { margin:0 0 6px; font-size:24px; font-weight:650; }
+  h1 small { color:#aaa08d; font:500 13px/1 Consolas,monospace; vertical-align:4px; }
+  .sub { color:#aaa08d; font-size:12px; line-height:1.55; }
+  .controls { right:20px; top:20px; width:310px; padding:14px; }
+  .status { margin-top:10px; padding-top:10px; border-top:1px solid var(--line); color:#aaa08d; font-size:11px; line-height:1.5; }
+  .status b { color:#eee7d6; }
+  .notes {
+    left:20px; bottom:20px; width:min(620px, calc(100vw - 40px)); padding:12px 14px;
+    color:#aaa08d; font-size:12px; line-height:1.7;
+  }
+  .notes summary { cursor:pointer; color:#eee7d6; font-weight:650; }
+  .notes div { margin-top:10px; padding-top:10px; border-top:1px solid var(--line); }
+  .corner {
+    position:fixed; right:20px; bottom:16px; color:rgba(238,231,214,.48);
+    font:10px/1.4 Consolas,"Courier New",monospace; letter-spacing:.08em;
+  }
+  exercise-controls {
+    --exercise-control-radius:4px; --exercise-control-primary:#eee7d6; --exercise-control-primary-fg:#12110e;
+    --exercise-control-secondary:#2a261f; --exercise-control-focus:#b58b47;
+  }
+  @media (max-width:720px) {
+    .score-wrap { width:96vw; height:56vh; }
+    .score { padding:28px 18px 26px; }
+    .cells { inset:28px 18px 26px; }
+    .options { left:4px; right:4px; top:5px; bottom:16px; gap:2px; }
+    .candidate { width:min(100%, 9px); }
+    .time-lane { left:5px; right:5px; bottom:6px; }
+    .intro { left:14px; top:14px; }
+    .intro .sub { display:none; }
+    .controls { left:14px; right:14px; top:82px; width:auto; }
+    .notes { left:14px; bottom:14px; width:calc(100vw - 28px); max-height:32vh; overflow:auto; }
+    .corner { display:none; }
+  }
+</style>
+</head>
+<body>
+<main class="stage">
+  <div class="score-wrap">
+    <section class="score" aria-label="二维单音 WFC tile 网格">
+      <div class="cells" id="cells"></div>
+    </section>
+  </div>
+</main>
+
+<header class="hud intro">
+  <h1>04 · Note Tile Collapse <small>0.2</small></h1>
+  <div class="sub">最小二维 WFC：cell 有自己的局部发声时间，候选 tile 只表示音高或休止。</div>
+</header>
+
+<section class="hud controls">
+  <exercise-controls id="transportControls" apply-seed></exercise-controls>
+  <div class="sub" style="margin-top:8px">输入种子按 Enter 应用；换一版重新坍缩。</div>
+  <div class="status" id="status">待机：每个位置都有一组候选音。</div>
+</section>
+
+<details class="hud notes">
+  <summary>▶ 规则</summary>
+  <div>8×8 cell，候选是 F 小调内 8 个音高和一个休止。每个 cell 下方的横条表示该格自己的局部节奏位置和时值；位置落在 0、1/8、1/4、3/8 这类基本 subdivision 上。</div>
+</details>
+
+<div class="corner">2D NOTE TILE WFC · OPTIONS TO CELLS</div>
+
+<script src="../../../shared/exercise-controls.js"></script>
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+const GRID = 8;
+const CELL_COUNT = GRID * GRID;
+const MASTER_VOLUME_DB = 6;
+const MASTER_VOLUME_GAIN = Math.pow(10, MASTER_VOLUME_DB / 20);
+const NOTES = [
+  { id:'rest', label:'·', midi:null, weight:0.5, color:'#c9bea4', ink:'#3c3428' },
+  { id:'F4', label:'F', midi:65, weight:1.35, color:'#7f987e', ink:'#182116' },
+  { id:'G4', label:'G', midi:67, weight:0.92, color:'#9aa071', ink:'#242312' },
+  { id:'Ab4', label:'Ab', midi:68, weight:1.1, color:'#b89452', ink:'#251909' },
+  { id:'Bb4', label:'Bb', midi:70, weight:0.88, color:'#a87157', ink:'#25140d' },
+  { id:'C5', label:'C', midi:72, weight:1.3, color:'#6f9278', ink:'#102019' },
+  { id:'Db5', label:'Db', midi:73, weight:0.72, color:'#7b8295', ink:'#111823' },
+  { id:'Eb5', label:'Eb', midi:75, weight:0.95, color:'#6f8594', ink:'#101a20' },
+  { id:'F5', label:'F+', midi:77, weight:1.0, color:'#b7a46c', ink:'#211d10' },
+];
+const NOTE_BY_ID = new Map(NOTES.map(note => [note.id, note]));
+
+const cellsEl = document.getElementById('cells');
+const statusEl = document.getElementById('status');
+const transportControls = document.getElementById('transportControls');
+const setStatus = html => { statusEl.innerHTML = html; };
+
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i += 1) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h >>> 0;
+};
+
+const RHYTHM_CELLS = [
+  { name:'0', offset:0, dur:0.5 },
+  { name:'1/8', offset:0.125, dur:0.25 },
+  { name:'1/4', offset:0.25, dur:0.25 },
+  { name:'3/8', offset:0.375, dur:0.125 },
+  { name:'hold', offset:0, dur:0.75 },
+  { name:'skip', offset:0.25, dur:0.125 },
+];
+
+const cellTime = index => {
+  const row = Math.floor(index / GRID);
+  const col = index % GRID;
+  const phraseAccent = col === 0 || col === 4;
+  const cadence = col === GRID - 1;
+  const pattern = phraseAccent ? 0 : cadence ? 4 : (row * 2 + col * 3) % 4 + 1;
+  const unit = RHYTHM_CELLS[pattern];
+  const x = unit.offset / 0.5 * 100;
+  const w = Math.min(100 - x, Math.max(10, unit.dur / 0.5 * 100));
+  return { ...unit, x, w };
+};
+
+const cells = Array.from({ length:CELL_COUNT }, (_, index) => {
+  const el = document.createElement('div');
+  el.className = 'cell';
+  cellsEl.appendChild(el);
+  return { index, row:Math.floor(index / GRID), col:index % GRID, time:cellTime(index), el, candidates:new Set(NOTES.map(note => note.id)), value:null, marks:new Map(), chosen:null, timeMark:null };
+});
+
+const renderCell = cell => {
+  cell.el.innerHTML = '';
+  cell.marks.clear();
+  const options = document.createElement('div');
+  options.className = 'options';
+  cell.el.appendChild(options);
+  NOTES.forEach(note => {
+    const mark = document.createElement('i');
+    mark.className = 'candidate' + (note.id === 'rest' ? ' rest' : '');
+    mark.style.setProperty('--note-color', note.color);
+    if (!cell.candidates.has(note.id)) mark.classList.add('removed');
+    options.appendChild(mark);
+    cell.marks.set(note.id, mark);
+  });
+  const lane = document.createElement('div');
+  lane.className = 'time-lane';
+  const timeMark = document.createElement('i');
+  timeMark.className = 'time-mark';
+  timeMark.style.setProperty('--time-x', cell.time.x + '%');
+  timeMark.style.setProperty('--time-w', cell.time.w + '%');
+  lane.appendChild(timeMark);
+  cell.el.appendChild(lane);
+  cell.timeMark = timeMark;
+  const chosen = document.createElement('b');
+  chosen.className = 'chosen';
+  cell.el.appendChild(chosen);
+  cell.chosen = chosen;
+};
+
+const resetVisual = () => {
+  cells.forEach(cell => {
+    cell.candidates = new Set(NOTES.map(note => note.id));
+    cell.value = null;
+    cell.el.style.removeProperty('--tile-bg');
+    cell.el.style.removeProperty('--tile-ink');
+    cell.el.className = 'cell';
+    renderCell(cell);
+  });
+};
+resetVisual();
+
+const compatible = (leftId, rightId) => {
+  if (leftId === 'rest' || rightId === 'rest') return true;
+  const left = NOTE_BY_ID.get(leftId);
+  const right = NOTE_BY_ID.get(rightId);
+  const interval = Math.abs(right.midi - left.midi);
+  return interval <= 7;
+};
+
+const verticalCompatible = (aId, bId) => {
+  if (aId === 'rest' || bId === 'rest') return true;
+  const a = NOTE_BY_ID.get(aId);
+  const b = NOTE_BY_ID.get(bId);
+  return Math.abs(a.midi - b.midi) <= 5;
+};
+
+const cellAt = (row, col) => (row >= 0 && row < GRID && col >= 0 && col < GRID) ? cells[row * GRID + col] : null;
+
+const phraseAllowed = (cell, id) => {
+  const note = NOTE_BY_ID.get(id);
+  if (cell.col === 0 && cell.row === 0) return id === 'rest' || ['F4', 'C5', 'F5'].includes(note.id);
+  if (cell.col === GRID - 1 && cell.row === GRID - 1) return id === 'rest' || ['F4', 'Ab4', 'C5', 'F5'].includes(note.id);
+  if ((cell.col === 3 || cell.col === 7) && id === 'rest') return true;
+  return true;
+};
+
+const applyPhraseConstraints = () => {
+  cells.forEach(cell => {
+    const next = new Set([...cell.candidates].filter(id => phraseAllowed(cell, id)));
+    if (next.size) cell.candidates = next;
+  });
+};
+
+const propagate = startIndex => {
+  const queue = [startIndex];
+  const touched = new Set();
+  while (queue.length) {
+    const index = queue.shift();
+    const source = cells[index];
+    [
+      { dr:0, dc:-1, dir:'horizontal' },
+      { dr:0, dc:1, dir:'horizontal' },
+      { dr:-1, dc:0, dir:'vertical' },
+      { dr:1, dc:0, dir:'vertical' },
+    ].forEach(({ dr, dc, dir }) => {
+      const target = cellAt(source.row + dr, source.col + dc);
+      if (!target) return;
+      if (target.value) return;
+      const before = target.candidates.size;
+      const allowed = [...target.candidates].filter(candidate => {
+        return [...source.candidates].some(sourceId => dir === 'horizontal'
+          ? compatible(sourceId, candidate)
+          : verticalCompatible(sourceId, candidate));
+      });
+      target.candidates = new Set(allowed.length ? allowed : ['rest']);
+      if (target.candidates.size !== before) {
+        touched.add(target);
+        queue.push(target.index);
+      }
+    });
+  }
+  touched.forEach(cell => {
+    cell.el.classList.add('propagating');
+    cell.candidates.forEach(id => cell.marks.get(id)?.classList.remove('removed'));
+    NOTES.forEach(note => {
+      if (!cell.candidates.has(note.id)) cell.marks.get(note.id)?.classList.add('removed');
+    });
+    window.setTimeout(() => cell.el.classList.remove('propagating'), 360);
+  });
+  return touched.size;
+};
+
+const chooseCell = rng => {
+  const open = cells.filter(cell => !cell.value);
+  if (!open.length) return null;
+  let best = [];
+  let bestScore = Infinity;
+  open.forEach(cell => {
+    const edgeBias = (cell.index === 0 || cell.index === CELL_COUNT - 1) ? -0.2 : 0;
+    const score = cell.candidates.size + edgeBias + rng() * 0.06;
+    if (score < bestScore) { bestScore = score; best = [cell]; }
+    else if (Math.abs(score - bestScore) < 1e-6) best.push(cell);
+  });
+  return best[Math.floor(rng() * best.length)];
+};
+
+const chooseValue = (cell, rng) => {
+  const previous = cellAt(cell.row, cell.col - 1)?.value;
+  const next = cellAt(cell.row, cell.col + 1)?.value;
+  const above = cellAt(cell.row - 1, cell.col)?.value;
+  const below = cellAt(cell.row + 1, cell.col)?.value;
+  let total = 0;
+  const weighted = [...cell.candidates].map(id => {
+    const note = NOTE_BY_ID.get(id);
+    let weight = note.weight;
+    if (previous && previous === id) weight *= 0.48;
+    if (previous && previous !== 'rest' && id !== 'rest') {
+      const prev = NOTE_BY_ID.get(previous);
+      const interval = Math.abs(note.midi - prev.midi);
+      weight *= interval <= 2 ? 1.6 : interval <= 5 ? 1.05 : 0.44;
+    }
+    if (next && !compatible(id, next)) weight *= 0.05;
+    if (above && !verticalCompatible(id, above)) weight *= 0.05;
+    if (below && !verticalCompatible(id, below)) weight *= 0.05;
+    if (cell.index === 0 && note.id === 'F4') weight *= 1.7;
+    if (cell.index === CELL_COUNT - 1 && (note.id === 'F4' || note.id === 'F5')) weight *= 1.8;
+    if (cell.row < 2 && note.midi && note.midi < 70) weight *= 0.72;
+    if (cell.row > 5 && note.midi && note.midi > 72) weight *= 0.72;
+    total += weight;
+    return { id, weight };
+  });
+  let pick = rng() * total;
+  for (const item of weighted) {
+    pick -= item.weight;
+    if (pick <= 0) return item.id;
+  }
+  return weighted[weighted.length - 1].id;
+};
+
+const collapseLine = (seed, signal, onStep, onCollapse) => new Promise(resolve => {
+  const rng = makeRng(seed);
+  applyPhraseConstraints();
+  cells.forEach(renderCell);
+  let step = 0;
+  const tick = () => {
+    if (signal.cancelled) { resolve(null); return; }
+    const cell = chooseCell(rng);
+    if (!cell) {
+      resolve(cells.map(item => item.value));
+      return;
+    }
+    cell.el.classList.add('observing');
+    const value = chooseValue(cell, rng);
+    cell.value = value;
+    cell.candidates = new Set([value]);
+    const note = NOTE_BY_ID.get(value);
+    cell.el.style.setProperty('--tile-bg', note.color);
+    cell.el.style.setProperty('--tile-ink', note.ink);
+    NOTES.forEach(note => {
+      const mark = cell.marks.get(note.id);
+      if (note.id !== value) mark.classList.add('removed');
+    });
+    cell.chosen.textContent = note.label;
+    cell.el.classList.add('collapsed');
+    cell.el.classList.add('playing');
+    onCollapse(value, cell.index, step);
+    window.setTimeout(() => cell.el.classList.remove('playing'), 220);
+    window.setTimeout(() => cell.el.classList.remove('observing'), 220);
+    const changed = propagate(cell.index);
+    step += 1;
+    onStep(step, cell.index, value, changed);
+    window.setTimeout(tick, value === 'rest' ? 170 : 310);
+  };
+  tick();
+});
+
+const makeMaster = () => {
+  const limiter = new Tone.Limiter(-1).connect(Tone.Destination);
+  const masterGain = new Tone.Gain(0).connect(limiter);
+  const reverb = new Tone.Reverb({ decay:3.6, wet:0.26 }).connect(masterGain);
+  const delay = new Tone.FeedbackDelay({ delayTime:'8n', feedback:0.12, wet:0.1 }).connect(reverb);
+  const input = new Tone.Gain(1).connect(delay);
+  return { input, masterGain, delay, reverb, limiter };
+};
+
+const createVoice = destination => {
+  const synth = new Tone.MonoSynth({
+    oscillator:{ type:'triangle' },
+    filter:{ type:'lowpass', frequency:1600, Q:0.7 },
+    envelope:{ attack:0.012, decay:0.28, sustain:0.18, release:1.15 },
+    filterEnvelope:{ attack:0.01, decay:0.22, sustain:0.2, release:0.9, baseFrequency:420, octaves:2.2 },
+    volume:-5,
+  }).connect(destination);
+  return {
+    trigger(id, time, index) {
+      const note = NOTE_BY_ID.get(id);
+      if (!note || id === 'rest') return;
+      const cell = cells[index];
+      const phraseHold = (index % GRID === GRID - 1) ? 0.18 : 0;
+      synth.triggerAttackRelease(note.id, cell.time.dur + phraseHold, time + cell.time.offset, 0.34);
+    },
+    release(time) { synth.triggerRelease(time); },
+    dispose() { synth.dispose(); },
+  };
+};
+
+let engine = null;
+let transition = false;
+
+const activateEngine = async seed => {
+  const { input, masterGain, delay, reverb, limiter } = makeMaster();
+  try { await reverb.generate(); } catch (error) { /* reverb may finish lazily */ }
+  const voice = createVoice(input);
+  const signal = { cancelled:false };
+  let eventIds = [];
+  let finishTimer = null;
+
+  const schedule = () => {
+    resetVisual();
+    setStatus('坍缩中 · seed <b>' + seed + '</b>');
+    collapseLine(seed, signal, (step, index, value, changed) => {
+      const tile = NOTE_BY_ID.get(value);
+      const time = cells[index].time;
+      setStatus('坍缩中 · <b>' + step + '</b> / 64 · cell ' + (index + 1) + ' = ' + tile.label + ' · t+' + time.offset.toFixed(2) + 's · 传播 ' + changed);
+    }, (value, index) => {
+      voice.trigger(value, Tone.now() + 0.015, index);
+    }).then(sequence => {
+      if (!sequence || signal.cancelled) return;
+      setStatus('坍缩完成 · 每个 tile 已在 observe 时发声。');
+      finishTimer = window.setTimeout(() => {
+        cells.forEach(cell => cell.el.classList.remove('playing'));
+        Tone.Transport.stop();
+        Tone.Transport.cancel();
+        eventIds = [];
+        transportControls.setPlaying(false);
+        setStatus('完成。换一版可生成另一块合法 tile 场。');
+      }, 900);
+    }).catch(error => {
+      console.error(error);
+      setStatus('坍缩失败：' + error.message);
+    });
+  };
+  const end = () => {
+    signal.cancelled = true;
+    eventIds.forEach(id => Tone.Transport.clear(id));
+    eventIds = [];
+    if (finishTimer) window.clearTimeout(finishTimer);
+    voice.release(Tone.now() + 0.04);
+    Tone.Transport.stop();
+    Tone.Transport.cancel();
+    cells.forEach(cell => cell.el.classList.remove('playing', 'observing', 'propagating'));
+  };
+  const fadeIn = () => masterGain.gain.linearRampToValueAtTime(MASTER_VOLUME_GAIN, Tone.now() + 0.45);
+  const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.35);
+  const deactivate = () => {
+    end();
+    voice.dispose();
+    [input, masterGain, delay, reverb, limiter].forEach(node => node.dispose());
+  };
+  return { schedule, end, fadeIn, fadeOut, deactivate };
+};
+
+const playCurrent = async () => {
+  if (transition) return;
+  transition = true;
+  transportControls.setBusy(true);
+  try {
+    await Tone.start();
+    if (!engine) {
+      const text = transportControls.seedValue;
+      const seed = text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31);
+      engine = await activateEngine(seed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    engine.fadeIn();
+    transportControls.setPlaying(true);
+  } catch (error) {
+    console.error(error);
+    setStatus('播放失败：' + error.message);
+    transportControls.setPlaying(false);
+  } finally {
+    transition = false;
+    transportControls.setBusy(false);
+  }
+};
+
+const stopCurrent = () => {
+  if (!engine) return;
+  const old = engine;
+  engine = null;
+  old.fadeOut();
+  window.setTimeout(() => {
+    old.deactivate();
+    transportControls.setPlaying(false);
+    setStatus('已停止');
+  }, 380);
+};
+
+const restartCurrent = async randomize => {
+  if (transition) return;
+  transition = true;
+  transportControls.setBusy(true);
+  const old = engine;
+  engine = null;
+  try {
+    if (old) {
+      old.fadeOut();
+      await new Promise(resolve => window.setTimeout(resolve, 380));
+      old.deactivate();
+    }
+    if (randomize) transportControls.clearSeed();
+  } finally {
+    transition = false;
+    transportControls.setBusy(false);
+    transportControls.setPlaying(false);
+  }
+  await playCurrent();
+};
+
+transportControls.addEventListener('exercise-play', playCurrent);
+transportControls.addEventListener('exercise-stop', stopCurrent);
+transportControls.addEventListener('exercise-regenerate', () => restartCurrent(true));
+transportControls.addEventListener('exercise-seed-apply', () => restartCurrent(false));
+window.addEventListener('pagehide', event => {
+  if (event.persisted) return;
+  engine?.deactivate();
+});
+
+window.exercise = { activate: activateEngine };
+</script>
+</body>
+</html>
