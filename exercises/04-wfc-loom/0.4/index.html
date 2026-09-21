@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>04 · Minimal WFC 0.4</title>
+<style>
+  :root {
+    color-scheme:dark;
+    --bg:#12110e; --panel:#1b1915; --line:#3a3429; --ink:#eee7d6; --muted:#8f866f;
+    --accent:#b58b47; --hit:#d8cfb7;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  .wrap { max-width:1120px; margin:0 auto; padding:22px 20px 40px; }
+  h1 { font-size:20px; margin:0 0 8px; font-weight:650; }
+  h1 small { color:var(--muted); font:500 12px/1 Consolas,"Courier New",monospace; vertical-align:3px; }
+  .lead { margin:0 0 12px; color:#aaa08d; font-size:12.5px; line-height:1.7; max-width:80ch; }
+  .lead b { color:var(--ink); }
+  .rules { margin:0 0 16px; padding:10px 12px; border:1px solid var(--line); border-radius:6px;
+    background:rgba(27,25,21,.6); color:#aaa08d; font-size:12px; line-height:1.85; }
+  .rules code { color:var(--ink); font-family:Consolas,"Courier New",monospace; }
+  .bar { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; margin-bottom:18px; }
+  exercise-controls {
+    --exercise-control-radius:4px; --exercise-control-primary:#eee7d6; --exercise-control-primary-fg:#12110e;
+    --exercise-control-secondary:#2a261f; --exercise-control-focus:#b58b47;
+  }
+  .status { flex:1 1 340px; color:#aaa08d; font:12px/1.75 Consolas,"Courier New",monospace; }
+  .status b { color:var(--ink); }
+  .cells { display:grid; grid-template-columns:repeat(16, minmax(0,1fr)); gap:4px; }
+  .cell { display:flex; flex-direction:column; align-items:center; gap:3px; min-height:106px;
+    padding:7px 3px 8px; border:1px solid var(--line); border-radius:5px; background:#171612;
+    transition:border-color .14s ease, background .14s ease; }
+  .idx { color:#6b6354; font:10px/1 Consolas,"Courier New",monospace; }
+  .body { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .cand { color:var(--muted); font:11px/1.2 Consolas,"Courier New",monospace; }
+  .val { color:var(--accent); font:700 19px/1.2 Consolas,"Courier New",monospace; }
+  .cell.done { background:#221f19; border-color:#5a513f; }
+  .cell.collapsing { border-color:var(--accent); background:#2a2519; }
+  .cell.hit { border-color:var(--hit); background:#2f2b22; }
+  .cell.hit .val { color:var(--hit); }
+  @media (max-width:860px) { .cells { grid-template-columns:repeat(8, minmax(0,1fr)); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>04 · Minimal WFC <small>0.4</small></h1>
+  <p class="lead">最小版实验：每个 <b>Cell</b> 是时间轴上的一个八分音符位置，候选音<b>只由调与音阶派生</b>（下面是 A 小调的 7 个音），所以不会有调外音。<b>边坍缩边发声</b> —— 每个八分音符走一步：挑<b>候选最少且大于 1</b> 的格子（第一版把"候选数量"当熵，开局 16 格都是 7 个候选，等于随机挑起点），从它的候选里等概率选一个音，<b>这个音就在这一拍响</b>，然后立刻按两条规则削减邻居的候选；<b>只剩一个候选的格子算已被推出，直接确定并继续向外约束</b>。第 1 圈听到的是这个"生成过程"（熵顺序），坍缩完之后进入<b>成品旋律</b>：按时间顺序循环演奏。这一版<b>只生成 Pitch Sequence</b> —— 不处理和声、节奏变化、力度、音色与段落（规格见本目录 <b>实验说明.md</b>）。</p>
+  <div class="rules">
+    调与音阶：<b>A minor</b>（A B C D E F G，A4–G5）—— 候选音全部由它派生，改调只动 <code>KEY_ROOT</code> / <code>KEY_MODE</code> / <code>OCTAVE</code><br>
+    规则① <code>max interval = 5</code> 半音：相邻音的音程 ≤ 5 个半音（关掉 = <code>Infinity</code>）<br>
+    规则② <code>max repeat = 2</code>：同一个音最多连续出现 2 次（关掉 = <code>Infinity</code>）<br>
+    固定：16 个 Cell · 每 Cell = 一个八分音符 · BPM 112 · Velocity 90/127
+  </div>
+  <div class="bar">
+    <exercise-controls id="transportControls" apply-seed></exercise-controls>
+    <div class="status" id="status">待机：按播放就开始边坍缩边发声（第 1 圈 = 生成过程，之后 = 成品旋律循环）。</div>
+  </div>
+  <div class="cells" id="cells"></div>
+</div>
+<script src="../../../shared/exercise-controls.js"></script>
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+// ═══ 固定参数（规格 §7：除 Pitch 之外全部固定，第一版不处理 duration / velocity 变化 / 节奏 / 和弦 / 音色）═══
+const BPM = 112;
+const CELL_COUNT = 16;              // 规格写「8 或 16」；取 16 = 2 小节
+const CELL_S = 60 / BPM / 2;        // 一个 Cell = 一个八分音符（112 BPM → 0.268s）
+const VELOCITY = 90 / 127;          // 规格的 Velocity = 90 是 MIDI 力度（0–127），Tone 用 0–1
+const START_LEAD_S = 0.25;          // 第一次发声的提前量
+const RELEASE_S = 0.2;              // 音色的包络（音色本身不在这一版的验证范围内）
+const SYNTH_VOLUME_DB = -6;
+const MASTER_VOLUME_DB = 6;
+
+// ═══ 调与音阶：候选音**只**从这里派生（"限定在相应调内"的唯一来源）═══════════════════
+// 规格 §2 给的是 A minor 的 {A,B,C,D,E,F,G}。这里**不写死一张音名表**，而是写成
+// 「主音 + 调式结构 + 八度」：候选集合由 SCALE_MIDIS 生成，于是"调外音"在结构上不可能出现；
+// 换调 / 换调式只动 KEY_ROOT / KEY_MODE / OCTAVE 三个常量（离线探针会断言"调外音 = 0"）。
+const KEY_ROOT = 'A';                 // 主音
+const KEY_MODE = 'minor';             // 调式
+const OCTAVE = 4;                     // 起始八度（A4 = 69 = 440Hz）
+const SCALE_STEPS = { minor:[0,2,3,5,7,8,10], major:[0,2,4,5,7,9,11] };   // 相对主音的半音数
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const midiToName = midi => NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);   // 69 → A4
+const ROOT_MIDI = 12 * (OCTAVE + 1) + NOTE_NAMES.indexOf(KEY_ROOT);               // A4 = 69
+const SCALE_MIDIS = SCALE_STEPS[KEY_MODE].map(step => ROOT_MIDI + step);
+// 候选音：id 是音名（不带八度，界面上要短），name 是交给 Tone 的完整音名
+const NOTES = SCALE_MIDIS.map(midi => ({ id: NOTE_NAMES[midi % 12], name: midiToName(midi), midi }));
+const SCALE_IDS = new Set(NOTES.map(note => note.id));
+const NOTE_BY_ID = new Map(NOTES.map(note => [note.id, note]));
+const keyLabel = () => KEY_ROOT + ' ' + KEY_MODE + '（' + NOTES.map(note => note.id).join(' ') + ' · ' +
+  midiToName(SCALE_MIDIS[0]) + '–' + midiToName(SCALE_MIDIS[SCALE_MIDIS.length - 1]) + '）';
+
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i += 1) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h >>> 0;
+};
+
+// ═══ 两条规则 ═══════════════════════════════════════════════════════════════════
+// ★ 0.4 的规矩（见 0.4/README.md「一条规则一验」）：**每条规则都必须能单独关掉**，否则出问题无法归因。
+//   关 = Infinity。`createModel(seed, { maxInterval, maxRepeat })` 接受覆盖，
+//   离线探针 tools/offline-minimal.mjs 就用这两个参数做「单独开 / 关」的对照。
+// ★ 与 0.1–0.3 最大的不同：这里是一维**时间序列** —— Cell 的 index 就是它在时间上的位置，
+//   所以"相邻"同时是空间相邻与时间相邻，不存在 0.2/0.3 那个「空间坐标被当成音乐时间用」的坑。
+const MAX_INTERVAL = 5;   // 相邻音之间允许的最大音程（半音）
+const MAX_REPEAT = 2;     // 同一个音最多连续出现几次
+
+// 一个候选音能不能放在 index 这个位置（只看**已经确定**的格子 —— WFC 的传播就是这么工作的）
+const allowedFor = (index, note, state, opts) => {
+  // 规则① max interval：和左右两个已确定的邻居比音程
+  for (const j of [index - 1, index + 1]) {
+    const neighbor = state[j];
+    if (!neighbor || !neighbor.value) continue;
+    if (Math.abs(note.midi - neighbor.value.midi) > opts.maxInterval) return false;
+  }
+  // 规则② max repeat：把这个候选当成"已经放下"，看左右会不会连成 maxRepeat + 1 个同音
+  if (opts.maxRepeat !== Infinity) {
+    let run = 1;
+    for (let j = index - 1; j >= 0 && state[j].value && state[j].value.midi === note.midi; j -= 1) run += 1;
+    for (let j = index + 1; j < state.length && state[j].value && state[j].value.midi === note.midi; j += 1) run += 1;
+    if (run > opts.maxRepeat) return false;
+  }
+  return true;
+};
+
+// 传播：某个 Cell 确定之后，把"受它影响"的格子重新筛一遍，并把**只剩一个候选**的格子当场定下来。
+// 受影响的范围：紧邻（音程规则）+ 同音连击能波及的跨度（重复规则最多影响 maxRepeat + 1 格）。
+// ★ 一条候选被划掉，只代表"局部不兼容"；它还留在候选里、但最后没被选中，是另一回事（权重问题，这一版没有权重）。
+// ★★「只剩一个候选」必须**当场确定并继续向外传播**，它不算一次坍缩（规格的选格条件是"候选最少**且大于 1**"）。
+//   这不是可选的实现细节：若把单候选格晾着不传播，max repeat 会漏判 —— 例如 A 格 = C、B 格被推成 C 但不继续约束，
+//   于是后一格还能选 C，出现三个连续同音。
+const settle = (index, state, opts, report) => {
+  const span = opts.maxRepeat === Infinity ? 1 : opts.maxRepeat + 1;
+  const queue = [index];
+  const touched = new Set();
+  while (queue.length) {
+    const at = queue.shift();
+    for (let d = -span; d <= span; d += 1) {
+      const j = at + d;
+      if (j < 0 || j >= state.length || j === at) continue;
+      const cell = state[j];
+      if (cell.value) continue;
+      const before = cell.candidates.size;
+      const allowed = [...cell.candidates].filter(id => allowedFor(j, NOTE_BY_ID.get(id), state, opts));
+      if (!allowed.length) {
+        // 兜底：两条规则把这一格的候选清空了（一维 + 7 个音阶音里没实测到，但不能假设不存在）。
+        // 做法是**跳过这次削减并记一次「放宽」**，而不是让算法崩掉或偷偷硬塞一个音 —— 计数会显示在状态栏。
+        report.relaxations += 1;
+        continue;
+      }
+      if (allowed.length !== before) {
+        cell.candidates = new Set(allowed);
+        report.removed += before - allowed.length;
+        touched.add(cell);
+        queue.push(j);
+      }
+      if (cell.candidates.size === 1) {
+        cell.value = NOTE_BY_ID.get([...cell.candidates][0]);
+        report.forced += 1;
+        touched.add(cell);
+        queue.push(j);        // 它现在是一个确定音，继续约束自己的邻居
+      }
+    }
+  }
+  return touched;
+};
+
+// ═══ 坍缩与生成 ═════════════════════════════════════════════════════════════════
+// 选格 = 熵顺序：候选数量最少**且大于 1** 的 Cell 先塌；并列时用种子随机打散
+// （开局 16 格都是 7 个候选，所以第一次等于随机挑一个起点）。
+// ★ 这个顺序是**信息论顺序**，与时间顺序无关 —— 所以"第 k 次坍缩"不是"第 k 个 Cell"。
+//   先把整条序列解出来、再按 index 顺序演奏，就能把这两件事彻底分开（0.2/0.3 在二维网格上把它们混在一起，
+//   才引出"重音/和声不能挂在 row/col 上"那一串教训）。
+const chooseCell = (state, rng) => {
+  const open = state.filter(cell => !cell.value && cell.candidates.size > 1);
+  if (!open.length) return null;
+  let best = [];
+  let bestSize = Infinity;
+  open.forEach(cell => {
+    if (cell.candidates.size < bestSize) { bestSize = cell.candidates.size; best = [cell]; }
+    else if (cell.candidates.size === bestSize) best.push(cell);
+  });
+  return best[Math.floor(rng() * best.length)];
+};
+
+// 模型：**一次只走一步**。stepOnce() = 挑候选最少且 > 1 的格子 → 等概率选一个音 → 传播 → 返回这一步的快照。
+// 没有可挑的格子时返回 null（序列已完成）。
+// ★ 它是纯函数：不发声音、不碰 DOM、不看时钟 —— 所以页面上"边坍缩边发声"和离线探针跑的是同一份代码，
+//   只是页面上每走一步就顺势发一个音（见 createEngine 的 tick）。
+const createModel = (seed, options = {}) => {
+  const opts = {
+    maxInterval: options.maxInterval === undefined ? MAX_INTERVAL : options.maxInterval,
+    maxRepeat: options.maxRepeat === undefined ? MAX_REPEAT : options.maxRepeat,
+  };
+  const rng = makeRng(seed);
+  const state = Array.from({ length: CELL_COUNT }, (_, index) => ({
+    index,
+    candidates: new Set(NOTES.map(note => note.id)),
+    value: null,
+  }));
+  const report = { removed: 0, relaxations: 0, forced: 0, steps: [] };
+  const snapshot = () => state.map(cell => [...cell.candidates]);
+  return {
+    opts,
+    report,
+    snapshot,
+    notes: () => state.map(cell => (cell.value ? cell.value.id : null)),
+    stepOnce() {
+      const cell = chooseCell(state, rng);
+      if (!cell) return null;
+      const ids = [...cell.candidates];
+      const value = NOTE_BY_ID.get(ids[Math.floor(rng() * ids.length)]);   // 这一版没有权重：候选里等概率
+      cell.value = value;
+      cell.candidates = new Set([value.id]);
+      const touched = settle(cell.index, state, opts, report);
+      const step = {
+        index: cell.index,
+        value: value.id,
+        touched: [...touched].map(item => item.index),
+        candidates: snapshot(),
+      };
+      report.steps.push(step);
+      return step;
+    },
+  };
+};
+
+// ═══ 视图：16 个 Cell（候选列表 → 一个音），播放时高亮正在发声的那一格 ═════════════
+const cellsEl = document.getElementById('cells');
+const statusEl = document.getElementById('status');
+const transportControls = document.getElementById('transportControls');
+const setStatus = html => { statusEl.innerHTML = html; };
+
+const cellViews = Array.from({ length: CELL_COUNT }, (_, index) => {
+  const el = document.createElement('div');
+  el.className = 'cell';
+  const idx = document.createElement('span');
+  idx.className = 'idx';
+  idx.textContent = String(index + 1);
+  const body = document.createElement('div');
+  body.className = 'body';
+  el.appendChild(idx);
+  el.appendChild(body);
+  cellsEl.appendChild(el);
+  return { el, body };
+});
+
+// 画一次候选快照：只剩 1 个候选 = 已确定（显示音名），否则列出候选（划掉的不显示）
+const paint = (candidates, collapsing = -1) => {
+  candidates.forEach((ids, index) => {
+    const view = cellViews[index];
+    const done = ids.length === 1;
+    view.el.classList.toggle('done', done);
+    view.el.classList.toggle('collapsing', index === collapsing);
+    view.body.innerHTML = done
+      ? '<span class="val">' + ids[0] + '</span>'
+      : ids.map(id => '<span class="cand">' + id + '</span>').join('');
+  });
+};
+const setActive = index => {
+  cellViews.forEach((view, i) => view.el.classList.toggle('hit', i === index));
+};
+const paintIdle = () => paint(Array.from({ length: CELL_COUNT }, () => NOTES.map(note => note.id)));
+const releaseAllClasses = () => cellViews.forEach(view => view.el.classList.remove('done', 'collapsing', 'hit'));
+
+// 序列的体检数字：放进状态栏，这样"规则有没有生效"在听的时候也看得见
+const sequenceStats = notes => {
+  let maxInterval = 0;
+  let longestRun = 1;
+  let run = 1;
+  for (let i = 1; i < notes.length; i += 1) {
+    const step = Math.abs(NOTE_BY_ID.get(notes[i]).midi - NOTE_BY_ID.get(notes[i - 1]).midi);
+    if (step > maxInterval) maxInterval = step;
+    run = notes[i] === notes[i - 1] ? run + 1 : 1;
+    if (run > longestRun) longestRun = run;
+  }
+  return { maxInterval, longestRun };
+};
+
+// ═══ 声音：一个 Tone.Synth + 母带链（音色不在这一版的验证范围内，故意只留最小的）═══════
+const makeMaster = () => {
+  const limiter = new Tone.Limiter(-1).connect(Tone.Destination);
+  const masterGain = new Tone.Gain(0).connect(limiter);
+  return { masterGain, limiter };
+};
+
+const createEngine = async seed => {
+  const { masterGain, limiter } = makeMaster();
+  // ★ 把 Transport 的 BPM 设成本曲**固定的** 112（它不是可调参数，整首只有一个速度）：
+  //   `scheduleRepeat` 是按 tick 网格排的，默认 120 BPM 下 0.2679s 会被量化成 103 tick = 0.2682s
+  //   （每步差 0.3ms，实测到的间隔就是 0.2682）。112 BPM 下八分音符正好是 96 tick，间隔精确。
+  //   ★ 这与"不要用改 Transport.bpm 代替自己的速度换算"不冲突：那条讲的是**播放中改速度**会让
+  //     已排好的事件被重新解释；这里只在建引擎时设一次常量，之后再不动它。
+  //   ★ `Tone.Transport.bpm` 是**只读 getter**（返回一个 TickParam），必须写 `Tone.Transport.bpm.value`；
+  //     在严格模式下直接赋值 `= 112` 会抛 `Cannot assign to read only property 'bpm'`（真机检查抓到的第二个坑）。
+  Tone.Transport.bpm.value = BPM;
+  const synth = new Tone.Synth({
+    oscillator: { type:'triangle' },
+    envelope: { attack:0.008, decay:0.18, sustain:0.22, release:RELEASE_S },
+    volume: SYNTH_VOLUME_DB,
+  }).connect(masterGain);
+
+  // ★ **边坍缩边发声**（用户要求：不是先解完再播）：每个八分音符走一步模型，那一步确定下来的音就在这一拍发声。
+  //   坍缩顺序由熵决定、不是时间顺序 —— 所以第 1 圈听到的是"生成过程"；坍缩完之后（默认参数下正好 16 步）
+  //   进入第 2 圈起：成品旋律按**时间顺序**循环演奏。
+  let model = null;
+  const signal = { cancelled:false };
+  let repeatId = null;
+  let phase = 'collapsing';     // 'collapsing'（熵顺序，边塌边响）→ 'playing'（成品，按时间顺序循环）
+  let playIndex = 0;
+  let finalNotes = null;
+  let stats = null;
+  let sequenceText = '';
+  let collapseOrder = [];
+
+  const resetModel = () => {
+    model = createModel(seed);
+    phase = 'collapsing';
+    playIndex = 0;
+    finalNotes = null;
+    stats = null;
+    sequenceText = '';
+    collapseOrder = [];
+  };
+
+  const summaryHtml = () => '最大音程 <b>' + stats.maxInterval + '</b> · 最长连击 <b>' + stats.longestRun +
+    '</b> · 主动坍缩 <b>' + model.report.steps.length + '</b> 次 · 传播推出 <b>' + model.report.forced +
+    '</b> 格 · 削减 ' + model.report.removed + ' 处 · 放宽 ' + model.report.relaxations + ' 次';
+
+  // 用 Transport.scheduleRepeat 而不是递归 scheduleOnce：这一版是**无限循环**，递归排程会让待清理的事件 id
+  // 一直增长；scheduleRepeat 只有一个 id，边界清楚。步号用回调里的自增计数器，不去换算时间（不跨时间轴比时间）。
+  const tick = audioTime => {
+    if (signal.cancelled) return;
+    if (phase === 'collapsing') {
+      const step = model.stepOnce();
+      if (step) {
+        const note = NOTE_BY_ID.get(step.value);
+        synth.triggerAttackRelease(note.name, CELL_S, audioTime, VELOCITY);
+        Tone.Draw.schedule(() => {
+          paint(step.candidates, step.index);
+          setStatus('坍缩中 · 第 <b>' + model.report.steps.length + '</b> / ' + CELL_COUNT +
+            ' 步（熵顺序：先塌候选最少的格子）· Cell ' + (step.index + 1) + ' = <b>' + note.name +
+            '</b> · 传播改动 ' + step.touched.length + ' 格');
+        }, audioTime);
+        return;
+      }
+      // 没有可坍缩的格子了 → 本拍直接进入成品循环（不留空拍）
+      finalNotes = model.notes();
+      stats = sequenceStats(finalNotes);
+      sequenceText = finalNotes.join(' ');
+      collapseOrder = model.report.steps.map(item => item.index + 1);
+      phase = 'playing';
+      playIndex = 0;
+      if (finalNotes.some(id => !id)) console.warn('[生成] 成品里有未确定的格子');
+      Tone.Draw.schedule(() => { paint(model.snapshot()); }, audioTime);
+    }
+    const index = playIndex % CELL_COUNT;
+    playIndex += 1;
+    const id = finalNotes[index];
+    if (id) {
+      const note = NOTE_BY_ID.get(id);
+      synth.triggerAttackRelease(note.name, CELL_S, audioTime, VELOCITY);
+    }
+    Tone.Draw.schedule(() => {
+      setActive(index);
+      setStatus('成品循环（时间顺序）· 第 <b>' + (index + 1) + '</b> 格 = ' + (id || '—') + '<br>' + sequenceText +
+        '<br>' + summaryHtml() + '<br>（坍缩顺序 ' + collapseOrder.join(' → ') + '）');
+    }, audioTime);
+  };
+
+  const schedule = () => {
+    if (repeatId !== null) { Tone.Transport.clear(repeatId); repeatId = null; }
+    Tone.Draw.cancel(0);
+    setActive(-1);
+    paintIdle();
+    resetModel();
+    // ★ 停止用的是 `end()`（它把 signal.cancelled 置真），而这一版的停止是**暂停**：引擎与种子都留着，
+    //   再按播放会重新调 schedule()。所以这里既要把取消标志复位，也要把模型退回起点（同一种子 ⇒ 同一首）。
+    signal.cancelled = false;
+    // startAt 是**传输时间**轴上的位置（Transport 停止时 seconds 读 0）
+    const startAt = Tone.Transport.seconds + START_LEAD_S;
+    repeatId = Tone.Transport.scheduleRepeat(tick, CELL_S, startAt);
+  };
+  const end = () => {
+    signal.cancelled = true;
+    // ★ 顺序很重要：**先停调度再收声音**。真机检查抓到过这个：原来先调 `synth.releaseAll(...)`，
+    //   而 Tone.Synth（单音）**没有 releaseAll**（那是 PolySynth / Sampler 的接口），于是抛错，
+    //   后面的 Transport.stop/cancel 全被跳过 —— 表现是"按了停止还在响"。先停传输，异常就再也不会挡住建制。
+    if (repeatId !== null) { Tone.Transport.clear(repeatId); repeatId = null; }
+    Tone.Draw.cancel(0);
+    Tone.Transport.stop();
+    Tone.Transport.cancel();
+    setActive(-1);
+    try { synth.triggerRelease(Tone.now() + 0.04); } catch (error) { console.warn('[停止] 释放音源失败：', error.message); }
+  };
+  const fadeIn = () => masterGain.gain.linearRampToValueAtTime(Math.pow(10, MASTER_VOLUME_DB / 20), Tone.now() + 0.45);
+  const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.35);
+  const deactivate = () => {
+    end();
+    synth.dispose();
+    [masterGain, limiter].forEach(node => node.dispose());
+    // Tone 对超过 lookAhead 的音用 context.setTimeout 排 release，dispose 不会取消它们 —— 清掉，
+    // 否则停止后控制台会刷 "Synth was already disposed"（私有 API，与 _ticker 同类，升级 Tone.js 要复查）
+    try {
+      const timeouts = Tone.getContext()._timeouts;
+      if (timeouts && Array.isArray(timeouts._timeline)) timeouts._timeline.length = 0;
+    } catch (error) {
+      console.warn('[引擎] 清理待执行回调失败：', error.message);
+    }
+  };
+
+  return { seed, schedule, end, fadeIn, fadeOut, deactivate, describe: () => sequenceText };
+};
+
+// ═══ 生命周期与控件 ═════════════════════════════════════════════════════════════
+let engine = null;
+let lastSeed = null;
+let pendingSeed = null;
+let transition = false;
+
+const playCurrent = async () => {
+  if (transition) return;
+  transition = true;
+  transportControls.setBusy(true);
+  try {
+    await Tone.start();
+    if (!engine) {
+      const text = transportControls.seedValue;
+      const seed = pendingSeed != null ? pendingSeed : (text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31));
+      pendingSeed = null;
+      lastSeed = seed;
+      engine = await createEngine(seed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    engine.fadeIn();
+    transportControls.setPlaying(true);
+  } catch (error) {
+    console.error(error);
+    setStatus('播放失败：' + error.message);
+    transportControls.setPlaying(false);
+  } finally {
+    transition = false;
+    transportControls.setBusy(false);
+  }
+};
+
+// 停止 = 暂停：**保留引擎与种子**，再按播放会把同一首从头（从坍缩起点）重放一遍，便于反复听
+const stopCurrent = () => {
+  if (!engine) return;
+  engine.fadeOut();
+  window.setTimeout(() => {
+    engine.end();
+    transportControls.setPlaying(false);
+    const done = engine.describe();
+    setStatus('已停止（暂停）· ' + (done ? '序列：<b>' + done + '</b> · ' : '') +
+      '按播放会把同一首从坍缩起点重放一遍；换一版才重新生成。');
+  }, 380);
+};
+
+const restartCurrent = async randomize => {
+  if (transition) return;
+  transition = true;
+  transportControls.setBusy(true);
+  const old = engine;
+  engine = null;
+  try {
+    if (old) {
+      old.fadeOut();
+      await new Promise(resolve => window.setTimeout(resolve, 380));
+      old.deactivate();
+    }
+    if (randomize) transportControls.clearSeed();
+    releaseAllClasses();
+    paintIdle();
+  } finally {
+    transition = false;
+    transportControls.setBusy(false);
+    transportControls.setPlaying(false);
+  }
+  await playCurrent();
+};
+
+transportControls.addEventListener('exercise-play', playCurrent);
+transportControls.addEventListener('exercise-stop', stopCurrent);
+transportControls.addEventListener('exercise-regenerate', () => restartCurrent(true));
+transportControls.addEventListener('exercise-seed-apply', () => restartCurrent(false));
+
+window.addEventListener('pagehide', event => {
+  if (event.persisted) return;
+  engine?.deactivate();
+});
+
+paintIdle();
+
+// 统一激活接口：一行赋值，不引入加载器或构建
+window.exercise = { activate: createEngine };
+</script>
+</body>
+</html>
