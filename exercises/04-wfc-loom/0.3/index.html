@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
-<title>04 · Note Tile Collapse 0.2</title>
+<title>04 · Note Tile Collapse 0.3</title>
 <style>
   :root {
     color-scheme:dark;
@@ -817,6 +817,12 @@ const activateEngine = async seed => {
     noteState.ringing.length = 0;
     noteState.prevMidi = null;
     noteState.prevNonChord = false;
+    // ★ 时间上的重复降权（`recent`）也要清 —— 整曲跑完之后 `engine` **不会**被销毁（只 Transport.stop/cancel），
+    //   所以"放完再按播放"会在**同一个引擎**上第二次调 schedule()。漏掉这一条时，新一轮头 1–3 个音会带着
+    //   上一轮末尾那 3 个音高的降权（×0.2 / 0.5 / 0.75），于是同一颗种子听出的是另一首：
+    //   离线桩实测 30 个种子里 **12 个**第 2 场与"全新引擎"不同（第 1 场 30/30 逐位相同），分歧就出现在第 1–3 个音。
+    //   修掉之后 30/30 逐位相同（纯加固，不改音乐）。★ 通用规矩：重置状态时，凡是"跨场会残留"的派生量都要一起清。
+    noteState.recent.length = 0;
     noteState.chordPlan = chordPlanFor(seed, CHORD_SLOTS);   // 每 CHORD_BEATS 拍一个和弦
     // startAt 是**传输时间**轴上的位置。Transport 停止时 `Transport.seconds` 读 0（实测：页面开着
     // 30 秒、从未播放过时它仍是 0），所以这里得到的就是「从 0 起 0.25 秒」。两套时间轴的区别见 collapseLine。
