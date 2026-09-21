@@ -21,7 +21,7 @@
 
 - Chrome 用 `--headless=new --autoplay-policy=no-user-gesture-required --mute-audio`。不加第一个：没有用户手势时音频链停在 suspended，`Tone.start()` 永不 resolve；不加 `--mute-audio`：会**真的从扬声器出声**（无头没有窗口，用户听得见却找不到来源）。
 - 沙箱下 Chrome 起不来（IPC 要命名管道）→ 这一条命令需要 `danger-full-access`。
-- **启动时拿 PID、结束确认已 kill**：PowerShell 不等 GUI 程序，后台任务显示"完成"时 Chrome 其实还在放。不要用"杀掉所有 chrome.exe"这种粗暴办法（会连用户自己的浏览器一起关）。
+- **启动时拿 PID、结束确认已 kill**：PowerShell 不等 GUI 程序，后台任务显示"完成"时 Chrome 其实还在放。不要用"杀掉所有 chrome.exe"这种粗暴办法（会连用户自己的浏览器一起关）。★ 同理：`job_kill` 掉 `python -m http.server` 的后台任务只杀掉 pwsh，**python 子进程会活下来继续占端口**（探针跑完再访问 8765 仍然是 200）；收尾要按端口找 PID —— `netstat -ano | Select-String ':8765\s'` 然后只 kill 那一个 PID。
 - 本地页面 URL 必须带 cache-buster（`?cb=Date.now()`）：`python -m http.server` 只给 `Last-Modified`，启发式缓存会让你测到**改动前**的页面。
 - 设种子：`exercise-controls.seedValue` **只有 getter**（赋值是空操作），要写 shadow root 里的 `input` 再派发 `exercise-seed-apply`（它自己就会开始播放，别再补发 `exercise-play`）。
 - `Tone.now()` 含 `lookAhead`（默认 0.1s）：量"画面对不对齐"要减掉它。
@@ -80,8 +80,9 @@
 - `PolySynth.set({ envelope:{ release } })` 会改**所有** voice（与 Sampler 的逐音语义相反）。
 - `new Tone.PolySynth(voice, options)` 的第二个参数是音色选项，写在里面的 `maxPolyphony` **不生效**，要构造之后 `synth.maxPolyphony = n`。
 - **单音 `Tone.Synth` 没有 `releaseAll`**（那是 `PolySynth` / `Sampler` 的接口），松开要用 `triggerRelease`；而且**停止时要先停传输再收声音** —— 顺序反过来时，一次抛错就会把 `Transport.stop()` 一起跳过，表现是"按了停止还在响"（04 0.4 真机检查抓到）。
-- **`Tone.Transport.bpm` 是只读 getter**：要写 `Tone.Transport.bpm.value = 112`；严格模式下直接赋值会抛 `Cannot assign to read only property 'bpm'`。另外 `scheduleRepeat` 按 tick 网格排程，Transport 的 BPM 与曲子不一致时会被量化（120 BPM 下 0.2679s → 0.2682s）。
+- **`Tone.Transport.bpm` 是只读 getter**：要写 `Tone.Transport.bpm.value = 112`；严格模式下直接赋值会抛 `Cannot assign to read only property 'bpm'`。另外 `scheduleRepeat` 按 tick 网格排程，Transport 的 BPM 与曲子不一致时会被量化（120 BPM 下 0.2679s → 0.2682s）。★ **反过来用**：把 `Transport.bpm.value = bpm` 与"排程用的秒数"取自同一个 bpm 时，`60/bpm/2` 秒换算成 tick **恒为 96**（bpm 在换算里约掉了）⇒ 八分音符网格永远精确；而且 repeat 的间隔是**按 tick 存的**，播放中改 `Transport.bpm` 网格会自己变快变慢，**不用重排也不用重播**（04 0.5 的 BPM 输入框就是这么做的，离线桩量不到这条 —— 桩里存的是秒数，必须真机量）。代价是：**音的时值、画面位移时长、任何以秒为单位的东西都要在用到的那一刻按当前 bpm 现算**，留一个"建引擎时算死"的旧值就会漂（0.3 的延迟时间踩过）。
 - 效果器的延迟时间不要按"建引擎时的 BPM"算死：播放中改 BPM 会让它漂到错误的拍位上。
+- **"音头像敲桌子"要先量、再改，量完常常发现无事可做**（04 0.5）：采样起点是否在零点（`attack: 0` 不做淡入，非零起点才是每音一记爆音）、起始 5 ms 的电平、音头的单频频谱、直流偏移 —— 这套读数已经在 `exercises/04-wfc-loom/tools/browser-check.mjs` 里，直接跑就有。实测 `vsco2-piano-mf` 起点就在零点、前 5 ms 是 −36 dB、能量在基频，于是 250 Hz 低切（整段只动 1.7 dB 能量）与 3 ms 淡入都被否掉、已回退。★ 量法上的坑：`raw − HPF(raw)` **不是**"低频频段能量"（相位会让基频成规模混入差值，看着像低频占一大半），要量频段就用单频 DFT 或配对带通。
 
 **可复现与单一来源**
 
@@ -94,6 +95,8 @@
 ## 跨练习音量约定
 
 参见根 [README「总音量与母带链约定」](README.md#总音量与母带链约定)。03 0.3 已对齐 02 0.4 的 `MASTER_VOLUME_DB = 6`：压缩 / 滤波之后、最终限幅之前提升总增益。**淡入终点必须为 `10 ** (MASTER_VOLUME_DB / 20)`，不能写死为 1**；淡出仍到 0。默认 +6 dB 是参考起点，不代表各练习听感等响；支路音量、压缩和总增益分开考虑。
+
+★ **支路增益的标定语境包含它后面挂的效果器**：`Tone.Effect`（Reverb 等）的干路会被 `×(1−wet)` 缩放，所以"在带混响的链路末端标定"的采样音量（例如 04 的 `PIANO_VOLUME_DB = 14`）搬到干链里会整体偏响 —— 04 0.5 实测差 **2.6 dB**（0.665 vs 0.492，2.6 dB 正好是 −20·log10(1−0.26)）。把音色/增益在版本之间搬动时，要么连效果链一起搬，要么重新标定，别只搬数字。
 
 ## 各练习入口与文档指针
 

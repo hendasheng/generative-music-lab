@@ -9,11 +9,12 @@
 //   ① 硬规则在**无限音流**上仍然成立：相邻两个音的音程 ≤ max interval、不被休止打断的同音连续 ≤ max repeat、无调外音。
 //      （休止是"时间上的空位"，不参与音高约束 —— 所以它会打断音程链与连击，这正是判定口径。）
 //   ② register drift：中心开/关 → 音高是否跟着中心走（平均 |音−中心|、corr、中心低/高两半的平均音高）。
-//   ③ density drift：疏密开/关 → 窗口音数是否跟着目标走（|窗口音数 − density×16|、corr、低/高两半的窗口音数），
+//   ③ density drift：疏密开/关 → 最近16步发声音数是否跟着目标走（|最近16步发声音数 − density×16|、corr、低/高两半的最近16步发声音数），
 //      以及"窗口级配额"有没有把空洞控制住（最长休止段、实际发声比例）。
 //   ④ 决定性：同一颗种子两次跑出的音流逐位相同。
 // ★ 假环境在 ./harness.mjs；它只证明模型，证明不了"真的响了 / 画面对不对齐"（那要真机）。
 import path from 'node:path';
+import assert from 'node:assert/strict';
 import { loadExercise } from './harness.mjs';
 
 const ROOT = process.cwd();
@@ -70,20 +71,39 @@ const halvesByKey = (ticksList, keyOf) => {
 
 // 与页面**完全一致**的驱动方式：页面每拍调一次 stepOnce()（顺便发那个音），探针就在循环里逐步调它
 const runStream = (seed, count, options) => {
-  const stream = createStream(seed, options);
+  const stream = createStream(seed, { motif:false, ...options }); // 单独量旧规则，motif 用 offline-motif.mjs 验证
   const notes = [];       // 音名 id 或 null（休止）
   const centers = [];
   const densities = [];
   const windowNotes = [];
   const unresolved = [];
   let stalls = 0;
+  let restRun = 0;
   for (let i = 0; i < count; i += 1) {
     const step = stream.stepOnce();
     if (!step) { stalls += 1; continue; }
+    assert.equal(step.audibleSnapshot[0].value, step.note || 'rest', '画面当前格必须等于本次输出');
+    restRun = step.note ? 0 : restRun + 1;
+    assert.ok(restRun <= 4, '连续休止不能超过四格');
+    assert.equal(stream.report.relaxations, 0, '不能静默放宽硬规则');
+    for (const cell of stream.window) {
+      if (!cell.value) {
+        assert.equal(cell.mark, 'pending', '不能预先指定 note/rest');
+        assert.ok(cell.candidates.size > 1, '唯一候选必须完成传播');
+      } else {
+        assert.equal(cell.candidates.size, 1);
+        assert.equal(cell.mark, cell.value.id === 'rest' ? 'rest' : 'note');
+      }
+    }
+    const newest = stream.window.at(-1);
+    if (!newest.value && options.density !== false) {
+      if (!newest.candidates.has('rest')) assert.ok(stream.window.slice(-5, -1).every(cell => cell.mark === 'rest'), '只有连续休止约束能删掉新格的休止候选');
+      assert.ok([...newest.candidates].some(id => id !== 'rest'), '新格保留音高候选');
+    }
     notes.push(step.note);
     centers.push(step.center);
     densities.push(step.density);
-    windowNotes.push(step.windowNotes);
+    windowNotes.push(notes.slice(-WINDOW).filter(Boolean).length); // 未来窗口尚未定完，不能把其已定音数当完整密度
     unresolved.push(step.unresolved);
   }
   return { notes, centers, densities, windowNotes, unresolved, report: stream.report, stalls };
@@ -176,8 +196,8 @@ const configs = [
   { id:'② 只开 register drift', register: true, density: false },
   { id:'③ 只开 density drift', register: false, density: true },
   { id:'④ 两个都开（默认）', register: true, density: true },
-  // ⑤ 机制检查：有 rest 配额但疏密值冻在 0.5 —— 把"配平精度"和"漂移滞后"分开量
-  { id:'⑤ 配额精度检查（疏密冻结 0.5）', register: false, density: true, densityDrift: false },
+  // ⑤ 机制检查：休止参与坍缩但疏密值冻在 0.5 —— 把"配平精度"和"漂移滞后"分开量
+  { id:'⑤ 固定疏密检查（疏密冻结 0.5）', register: false, density: true, densityDrift: false },
 ];
 
 const rows = configs.map(config => {
@@ -189,6 +209,7 @@ const rows = configs.map(config => {
   seeds.forEach(seed => {
     const run = runStream(seed, ticks, { register: config.register, density: config.density, densityDrift: config.densityDrift });
     const m = streamMetrics(run);
+    assert.equal(m.overInterval + m.overRepeat + m.outOfScale + m.stalls, 0, '音程、重复、调内音与连续输出约束');
     agg.overInterval += m.overInterval;
     agg.overRepeat += m.overRepeat;
     agg.longestRun = Math.max(agg.longestRun, m.longestRun);
@@ -236,7 +257,7 @@ seeds.forEach(seed => {
 console.log(`文件: ${path.relative(ROOT, file)}`);
 console.log(`音阶 ${KEY_MODE}（根音 midi ${ROOT_MIDI}）· 窗口 ${WINDOW} 格 · 每颗种子 ${ticks} 拍 · ${seeds.length} 颗种子\n`);
 console.log('**A 硬规则与结构**（全部从播放出来的音流上量；休止会打断音程链与连击）\n');
-console.log('| 配置 | 音程超限 | 连击超限 | 最长连击 | 调外音 | 空转 | 发声比例 | 最长休止段 | 休止段均长 | 连续发声段均长 | 未定音格 均/最小 | 未定音=0 的拍占比 |');
+console.log('| 配置 | 音程超限 | 连击超限 | 最长连击 | 调外音 | 空转 | 发声比例 | 最长休止段 | 休止段均长 | 连续发声段均长 | 未确定格 均/最小 | 未确定=0 的拍占比 |');
 console.log('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
 rows.forEach(({ config, agg }) => {
   console.log('| ' + config.id +
@@ -253,8 +274,8 @@ rows.forEach(({ config, agg }) => {
     ' | ' + (mean(agg.unresolvedEmpty) * 100).toFixed(1) + '% |');
 });
 
-console.log('\n**B density drift：窗口音数有没有跟着疏密目标走**（第 ⑤ 行是"疏密冻结"的配平精度检查，用来把漂移滞后分开）\n');
-console.log('| 配置 | 平均疏密 | \\|窗口音数−当前疏密×16\\| 均/最大 | corr(疏密,窗口音数) | 疏密低半·窗口音数 | 疏密高半·窗口音数 | 疏密范围 | 每拍\\|Δ疏密\\| 均/最大 |');
+console.log('\n**B density drift：最近16步发声音数有没有跟着疏密目标走**（第 ⑤ 行是"疏密冻结"的固定疏密检查，用来把漂移滞后分开）\n');
+console.log('| 配置 | 平均疏密 | \\|最近16步发声音数−当前疏密×16\\| 均/最大 | corr(疏密,最近16步发声音数) | 疏密低半·最近16步发声音数 | 疏密高半·最近16步发声音数 | 疏密范围 | 每拍\\|Δ疏密\\| 均/最大 |');
 console.log('| --- | --- | --- | --- | --- | --- | --- | --- |');
 rows.forEach(({ config, agg }) => {
   const drifts = config.density;

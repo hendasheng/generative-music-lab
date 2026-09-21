@@ -133,12 +133,35 @@ const main = async () => {
     window.__notes = [];
     window.__pageErrors = [];
     window.addEventListener('error', e => window.__pageErrors.push(String(e.message)));
-    const proto = Tone.Synth.prototype;
+    const proto = typeof PIANO_SAMPLE_BASE !== 'undefined' ? Tone.Sampler.prototype : Tone.Synth.prototype;
     const orig = proto.triggerAttackRelease;
     proto.triggerAttackRelease = function (note, duration, time, velocity) {
       window.__notes.push({ note, duration, time, velocity, at: Tone.getContext().currentTime });
-      return window.__notes.length;
+      return orig.call(this, note, duration, time, velocity);
     };
+    window.__visualCheck = { frames:0, mismatches:0, reused:0, moving:0 };
+    if (document.querySelector('.cell[data-cell-id]')) {
+      const draw = Tone.Draw.schedule.bind(Tone.Draw);
+      let previous = new Map();
+      Tone.Draw.schedule = (fn, time) => draw(() => {
+        fn();
+        const check = window.__visualCheck;
+        check.frames++;
+        const now = document.querySelector('.cell.now');
+        const actual = now?.querySelector('.val')?.textContent || null;
+        const sound = window.__notes.find(n => Math.abs(n.time - time) < 0.00001);
+        const expected = sound ? sound.note.replace(/[0-9]/g, '') : null;
+        if (actual !== expected || Boolean(now?.classList.contains('hit')) !== Boolean(sound)) check.mismatches++;
+        const current = new Map([...document.querySelectorAll('.cell')].map(el => [el.dataset.cellId, el]));
+        for (const [id, el] of current) {
+          if (previous.get(id) === el) check.reused++;
+          for (const animation of el.getAnimations()) {
+            if (animation.effect.getKeyframes().some(frame => frame.transform)) check.moving++;
+          }
+        }
+        previous = current;
+      }, time);
+    }
     const readDrift = () => {
       const value = document.getElementById('driftValue');
       const marker = document.getElementById('driftMarker');
@@ -155,6 +178,8 @@ const main = async () => {
     const input = controls.shadowRoot.querySelector('input');
     input.value = ${JSON.stringify(seed)};
     input.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter', bubbles:true }));
+    for (let i=0;i<350 && !window.__notes.length;i++) await new Promise(r=>setTimeout(r,100));
+    if (!window.__notes.length) throw new Error('音源未触发：' + document.getElementById('status').textContent);
     await new Promise(r => setTimeout(r, 2400));
     const midStatus = document.getElementById('status').textContent.slice(0, 120);
     const midCount = window.__notes.length;
@@ -165,6 +190,7 @@ const main = async () => {
     const vals = [...document.querySelectorAll('.cell .val')].map(el => el.textContent);
     const letters = window.__notes.map(n => n.note.replace(/[0-9]/g, ''));
     return {
+      visualCheck: window.__visualCheck,
       notes: window.__notes.length,
       first: window.__notes.slice(0, 6).map(n => n.note + '@' + n.time.toFixed(3) + ' v' + n.velocity.toFixed(2)),
       gaps: window.__notes.slice(1, 6).map((n, i) => +(n.time - window.__notes[i].time).toFixed(4)),
@@ -178,6 +204,80 @@ const main = async () => {
       status: document.getElementById('status').textContent.slice(0, 170),
       pageErrors: window.__pageErrors.slice(),
     };
+  }`);
+
+  // ①b 钢琴采样：把"音头听起来像敲桌子"里**能量的那一半**量出来（剩下的只能靠耳朵）。
+  //     它回答的是三个问题，每一个都能否掉一整类改法：
+  //       ① 起点是否在零点 —— Tone 的 `attack: 0` 不做淡入，非零起点才是"每音一记爆音"
+  //       ② 音头的能量在哪个频段 —— 低频闷响可以用低切，宽带/基频就不能
+  //       ③ 电平：采样峰值 × 各级增益，对比母带链 Limiter(-1) 的天花板
+  //     ★ 数字怎么读：dB 都是相对同一窗口里的最强分 bin。
+  const piano = await evaluate(`async () => {
+    if (typeof PIANO_SAMPLE_BASE === 'undefined') return null;
+    const raw = await Tone.getContext().rawContext.decodeAudioData(
+      await (await fetch(PIANO_SAMPLE_BASE + 'a4.wav')).arrayBuffer());
+    const source = raw.getChannelData(0);
+    const sr = raw.sampleRate;
+    const rms = (data, from, to) => { let sum = 0; for (let i = from; i < to; i++) sum += data[i] * data[i]; return Math.sqrt(sum / Math.max(1, to - from)); };
+    const mean = (data, from, to) => { let sum = 0; for (let i = from; i < to; i++) sum += data[i]; return sum / Math.max(1, to - from); };
+    const dB = ratio => 20 * Math.log10(Math.max(ratio, 1e-12));
+    const ms = t => Math.round(sr * t);
+    // 单频能量：汉宁窗单点 DFT（频率不必落在整数 bin 上；各频点用同一套窗，相对值可比）
+    const bin = (from, to, frequency) => {
+      let re = 0, im = 0; const n = to - from;
+      for (let i = 0; i < n; i++) {
+        const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1));
+        const phase = 2 * Math.PI * frequency * (from + i) / sr;
+        re += source[from + i] * w * Math.cos(phase);
+        im -= source[from + i] * w * Math.sin(phase);
+      }
+      return Math.sqrt(re * re + im * im) / (n / 2);
+    };
+    const FREQUENCIES = [60, 100, 150, 200, 300, 440, 600, 880, 1320, 2000];
+    const band = (from, to) => {
+      const values = FREQUENCIES.map(f => bin(from, to, f));
+      const max = Math.max(...values);
+      return FREQUENCIES.map((f, i) => f + ':' + dB(values[i] / max).toFixed(0));
+    };
+    // ★ 不能写 Math.max(...source)：几十万个采样会直接爆栈
+    let peak = 0, min = 0;
+    for (const value of source) { if (value > peak) peak = value; if (value < min) min = value; }
+    const windows = [[0.005, '0-5ms'], [0.01, '5-10ms'], [0.02, '10-20ms'], [0.05, '20-50ms'], [0.1, '50-100ms'], [0.2, '100-200ms'], [0.4, '200-400ms']];
+    const reference = Math.max(...windows.map(w => rms(source, 0, ms(w[0]))));
+    const envelope = windows.map((w, i) => w[1] + ' ' + dB(rms(source, i === 0 ? 0 : ms(windows[i - 1][0]), ms(w[0])) / reference).toFixed(1));
+    return {
+      channels: raw.numberOfChannels, sampleRate: sr, duration: +raw.duration.toFixed(2),
+      first: [source[0], source[1], source[2], source[3]].map(v => +v.toFixed(6)),
+      peak: +peak.toFixed(4), min: +min.toFixed(4),
+      dcOnset: +mean(source, 0, ms(0.04)).toFixed(6), dcAll: +mean(source, 0, source.length).toFixed(6),
+      envelope, attackBand: band(0, ms(0.04)), bodyBand: band(ms(0.2), ms(0.4)),
+      level: { volumeDb: PIANO_VOLUME_DB, velocity: VELOCITY, masterDb: MASTER_VOLUME_DB,
+        wet: typeof PIANO_REVERB_WET === 'undefined' ? null : PIANO_REVERB_WET },
+    };
+  }`);
+
+  // ①c BPM 是演出参数：播放中改它必须立刻改变步长，而且**不重播**（步数继续涨、音流继续走）。
+  //     ★ "改 BPM 后网格自己跟着走"是 Tone 把秒数换算成 tick 的**内部行为**，离线桩量不到，只能在这里量。
+  const tempo = await evaluate(`async () => {
+    const input = document.getElementById('bpmInput');
+    const hint = document.getElementById('bpmHint');
+    if (!input) return null;
+    const readTick = () => {
+      const match = document.getElementById('status').textContent.match(/第\\s*(\\d+)\\s*拍/);
+      return match ? Number(match[1]) : null;
+    };
+    const before = { value: input.value, hint: hint.textContent, tick: readTick(), notes: window.__notes.length };
+    input.value = '180';
+    input.dispatchEvent(new Event('change', { bubbles:true }));
+    const mark = window.__notes.length;
+    await new Promise(r => setTimeout(r, 2600));
+    const after = { value: input.value, hint: hint.textContent, tick: readTick(), notes: window.__notes.length };
+    const notes = window.__notes.slice(mark);
+    const gaps = notes.slice(1).map((n, i) => +(n.time - notes[i].time).toFixed(6));
+    input.value = '112';
+    input.dispatchEvent(new Event('change', { bubbles:true }));
+    await new Promise(r => setTimeout(r, 600));
+    return { before, after, gaps, expected: +(60 / 180 / 2).toFixed(6), count: notes.length };
   }`);
 
   // ② 停止 → 淡出 380ms 之后必须彻底不再出声。
@@ -200,6 +300,8 @@ const main = async () => {
 
   console.log('=== 04 真机批量检查 ===');
   console.log(`URL: ${url}\n`);
+  console.log('滚动与音画对应: ' + JSON.stringify(play.visualCheck));
+  if (play.visualCheck.frames && (play.visualCheck.mismatches || !play.visualCheck.reused || !play.visualCheck.moving)) throw new Error('滚动或音画对应检查失败');
   console.log('① 播放（种子文本 ' + seed + '）');
   console.log(`   2.4s 处: 已发声 ${play.midCount} 个 · 界面已确定 ${play.midDone} / ${play.cells} 格`);
   console.log(`     状态栏: ${play.midStatus.replace(/\\s+/g, ' ')}`);
@@ -218,6 +320,33 @@ const main = async () => {
   console.log(`   DOM: ${play.cells} 个 cell · 已确定 ${play.done} · 高亮 ${play.hit}`);
   console.log(`   状态栏: ${play.status.replace(/\\s+/g, ' ')}`);
   console.log(`   页面 error 监听: ${play.pageErrors.length}`);
+  if (piano) {
+    const gain = Math.pow(10, piano.level.volumeDb / 20) * piano.level.velocity * Math.pow(10, piano.level.masterDb / 20);
+    const dry = piano.level.wet === null ? 1 : 1 - piano.level.wet;
+    console.log('\n①b 钢琴采样（A4.wav 原始解码 · 用来定位"音头听起来不对"到底是哪一类问题）');
+    console.log(`   ${piano.channels} 声道 · ${piano.sampleRate} Hz · ${piano.duration}s · 首采样 [${piano.first.join(', ')}] · 峰值 ${piano.peak} / ${piano.min}`);
+    console.log(`   直流：音头 40ms ${piano.dcOnset} · 整段 ${piano.dcAll}（都在噪声量级才正常）`);
+    console.log('   音头包络（dB rel 最强窗口）: ' + piano.envelope.join(' · '));
+    console.log('   音头 40ms 频谱（相对最高分 bin）: ' + piano.attackBand.join(' '));
+    console.log('   200-400ms 频谱（相对最高分 bin）: ' + piano.bodyBand.join(' '));
+    console.log(`   电平推算：${piano.peak} × ${gain.toFixed(2)}（+${piano.level.volumeDb} dB 采样 · velocity ${piano.level.velocity.toFixed(3)} · +${piano.level.masterDb} dB 母带）` +
+      ` = ${(piano.peak * gain).toFixed(3)}${piano.level.wet === null ? '' : `　→ 过 Reverb 干路 ×${dry.toFixed(2)} = ${(piano.peak * gain * dry).toFixed(3)}`}` +
+      '　（Limiter(-1) 天花板 0.891）');
+  }
+  if (tempo) {
+    // 改 BPM 时已经在飞的那一步仍按旧间隔，所以第一个间隔跳过
+    const ratios = tempo.gaps.slice(1).map(gap => +(gap / tempo.expected).toFixed(3));
+    const offGrid = ratios.filter(ratio => Math.abs(ratio - Math.round(ratio)) > 0.05);
+    console.log('\n①c BPM 演出参数（播放中 112 → 180，随后改回 112）');
+    console.log(`   提示行: ${tempo.before.hint} → ${tempo.after.hint}`);
+    console.log(`   步数: 第 ${tempo.before.tick} 拍 → 第 ${tempo.after.tick} 拍（继续涨 = 没有重播）· 改后 ${tempo.count} 个音`);
+    console.log(`   改后间隔 ÷ 期望 ${tempo.expected}s: ${ratios.join(', ') || '（没有新音）'}`);
+    if (!ratios.length) throw new Error('改 BPM 之后没有继续发声');
+    if (offGrid.length) throw new Error('改 BPM 后的间隔没有落在八分音符网格上：' + offGrid.join(', '));
+    if (typeof tempo.before.tick === 'number' && typeof tempo.after.tick === 'number' && tempo.after.tick <= tempo.before.tick) {
+      throw new Error('改 BPM 之后步数没有继续涨（像是重播了）');
+    }
+  }
   console.log('\n② 停止后（1000ms 已过淡出，再等 900ms）');
   console.log(`   发声次数 ${stopped.settled} → ${stopped.later}${stopped.settled === stopped.later ? '（冻结 ✓）' : '（**还在响** ✗）'}`);
   console.log('\n③ 再按播放（暂停语义）');

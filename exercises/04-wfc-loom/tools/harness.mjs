@@ -44,7 +44,13 @@ const inlineScriptOf = file => {
 export const loadExercise = ({ file, exportCode = '' }) => {
   const triggers = [];        // 记录每一次 triggerAttackRelease：桩的"输出"
   const consoleLines = [];
-  const context = { currentTime: 0, _timeouts: { _timeline: [] } };
+  // 0.5 的引擎会先 fetch + decodeAudioData 再建节点，所以桩要给一份最小的假音频环境
+  // （只够把链路搭起来；采样内容本身不在这里验 —— 那是真机探针的事）。
+  const fakeAudioBuffer = () => ({
+    duration: 0.5, numberOfChannels: 1, sampleRate: 48000, length: 24000,
+    getChannelData: () => new Float32Array(24000),
+  });
+  const context = { currentTime: 0, _timeouts: { _timeline: [] }, rawContext: { decodeAudioData: async () => fakeAudioBuffer() } };
 
   const elements = new Map();
   const elementById = id => {
@@ -65,6 +71,9 @@ export const loadExercise = ({ file, exportCode = '' }) => {
 
   const transport = {
     _queue: new Map(), _id: 1, seconds: 0,
+    // ★ Tone 的 bpm 是**只读 getter**（返回 TickParam），页面写的是 `.value`；桩必须留出这一层，
+    //   否则 `Tone.Transport.bpm.value = x` 会因为 bpm 是 undefined 而抛错。
+    bpm: { value: 120 },
     scheduleOnce(fn, time) { const id = this._id++; this._queue.set(id, { time, fn }); return id; },
     scheduleRepeat(fn, interval, startTime) { const id = this._id++; this._queue.set(id, { time: startTime, fn, interval }); return id; },
     clear(id) { this._queue.delete(id); },
@@ -105,6 +114,12 @@ export const loadExercise = ({ file, exportCode = '' }) => {
   const sandbox = {
     document,
     Tone,
+    // 页面用 fetch + AbortController（加载超时）取钢琴采样；桩只回一份空音频，够把引擎建起来就行。
+    fetch: async url => ({ ok: true, status: 200, url, arrayBuffer: async () => new ArrayBuffer(8) }),
+    AbortController: class { constructor() { this.signal = {}; } abort() {} },
+    // ★ 定时器保持"不触发"：页面里的 `setTimeout` 只用于加载超时与停止后的淡出收尾，
+    //   让它们真的跑起来会把离线探针挂在事件循环上（与 `window.setTimeout` 的既有桩一致）。
+    setTimeout: () => 0, clearTimeout: () => {},
     window: { setTimeout: () => 0, clearTimeout() {}, addEventListener() {} },
     console: {
       log: (...a) => consoleLines.push(a.join(' ')),
