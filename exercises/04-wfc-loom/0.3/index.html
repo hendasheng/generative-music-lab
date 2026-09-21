@@ -77,24 +77,7 @@
   .cell.collapsed { background:var(--tile-bg, #c9bea4); border-color:rgba(37,32,24,.48); transform:translateY(-2px); }
   .cell.collapsed .options { opacity:0; }
   .cell.collapsed .chosen { opacity:1; transform:scale(1.03); }
-  .time-lane {
-    position:absolute; left:7px; right:7px; bottom:7px; height:5px;
-    border-top:1px solid rgba(37,32,24,.24);
-    /* 5 拍线性标尺（120 BPM = 2.5s）：深刻度每 1 拍、浅刻度每半拍 —— 10 等份。
-       半拍刻度是第十二轮补的：拍内延迟只剩 0 与 0.5 拍两档，没有半拍刻度时
-       那 0.5 拍（10%）会正好落在两根刻度中间，读起来像"没对齐"。*/
-    background:
-      repeating-linear-gradient(90deg, rgba(37,32,24,.32) 0 1px, transparent 1px 20%),
-      repeating-linear-gradient(90deg, rgba(37,32,24,.14) 0 1px, transparent 1px 10%);
-  }
-  .time-mark {
-    position:absolute; left:var(--time-x, 0%); top:-2px; width:var(--time-w, 5%); height:5px;
-    background:rgba(37,32,24,.58);
-    transform:translateX(0);
-    /* 注意：width 不能有 CSS transition —— 生长是逐帧写 --time-w 驱动的，过渡会和它打架 */
-    transition:background .2s ease;
-  }
-  .cell.collapsed .time-mark { background:color-mix(in srgb, var(--tile-ink, #252018) 72%, transparent); }
+  /* 0.3：**没有** .time-lane / .time-mark —— 时值线整套去掉（连同它的标尺与逐帧生长逻辑）。 */
   .cell.observing {
     border-color:var(--ink);
     transform:translateY(-4px);
@@ -146,7 +129,6 @@
     .cells { inset:28px 18px 26px; }
     .options { left:4px; right:4px; top:5px; bottom:16px; gap:2px; }
     .candidate { width:min(100%, 9px); }
-    .time-lane { left:5px; right:5px; bottom:6px; }
     .intro { left:14px; top:14px; }
     .intro .sub { display:none; }
     .controls { left:14px; right:14px; top:82px; width:auto; }
@@ -165,8 +147,8 @@
 </main>
 
 <header class="hud intro">
-  <h1>04 · Note Tile Collapse <small>0.2</small></h1>
-  <div class="sub">最小二维 WFC：每个 cell 至少占一拍（= 60/BPM 秒），音越长、下一次坍缩等得越久（×0.6 后<b>向上取整到整拍</b>）——所以坍缩<b>每一次都踩在拍上</b>，只是有时等一两拍；音高由 F 小调的和声进行约束，<b>强拍锁在和弦音上</b>，所以织出来的是一块有和声的织物。</div>
+  <h1>04 · Note Tile Collapse <small>0.3</small></h1>
+  <div class="sub">最小二维 WFC：每个 cell 占<b>一拍</b>（= 60/BPM 秒），坍缩<b>固定每拍一次</b>，所以 64 格正好是 <b>64 拍 = 16 小节 = 4 句</b>。每个音都<b>落在拍点上、也都持续一拍</b>。音高由 F 小调的和声进行约束，<b>强拍锁在和弦音上</b>，所以织出来的是一块有和声的织物。</div>
 </header>
 
 <section class="hud controls">
@@ -193,9 +175,10 @@
   <div>
     <b>候选</b>：8×8 cell，每个 cell 的候选是 F 小调内 8 个音高（F4 G4 Ab4 Bb4 C5 Db5 Eb5 F5）加一个休止；未坍缩时显示为 9 个小方块，坍缩后整个 cell 被该 tile 填满。
     <br><b>和声</b>：和弦挂在时间轴上，每 <b>8 拍</b>（2 小节）换一次，沿进行图走（Fm → Db / Ab / Bbm / Cm → …）。选音时强拍（<b>小节第 1 拍</b>）锁和弦音、弱拍放开经过音与辅助音；上一个音若是「当时的非和弦音」，优先走到它的解决目标（Db→C、Eb→F、G→Ab、Bb→Ab / C）。<b>最近 3 个发过的音高按远近降权</b>（越近降得越狠），所以不会卡在同一个音上反复弹。当前和弦显示在状态栏。
-    <br><b>时间</b>：每个 cell 下方的横条是一条 <b>5 拍</b>标尺（120 BPM 时 = 2.5s；<b>深刻度每 1 拍、浅刻度每半拍</b>）。标记的起点 = 这个音接进来的延迟，长度 = 它<b>实际响多久</b>；音一开始响，这条线就从左往右长出来，长满即结束。休止的线保持 0。延迟只有两档：<b>0（正拍点）</b>或 <b>0.5 拍（推后半拍，正好落在浅刻度上）</b>。
-    <br><b>坍缩不是等距的，但每次都在拍上</b>：下一个 cell 在 <b>max(1 拍, ceil(（延迟 + 实际时长）× 0.6)) 拍</b>之后才坍缩 —— 步长只会是 <b>1 / 2 / 3 拍</b>：短音是一拍的脉冲，长音后面等两三拍。因为步长取整，整首曲子始终落在拍网格上，小节重音与乐句留白也就真的落在小节和乐句上。
-    <br><b>时值</b>：与上一个音构成同音或级进（≤2 半音）→ <b>2.4 拍</b>连成一条线，跳进 → 用基本时值断开，终止列 → <b>4 拍</b>收句。每句（<b>16 拍</b> = 4 小节）末尾 <b>2 拍</b>不再有新起音（留白）—— 正在响的音<b>不会被打断</b>，按自己的时值走完、自然衰减进去。与仍在响的音撞上小 2 度 / 三全音 / 大 7 度时，这个音高几乎不会被选中。
+    <br><b>时间</b>：<b>0.3 没有时值线</b>（0.2 格底那条 5 拍标尺与它的标记整套去掉了）。时间只说两件事：每个音都<b>正好落在拍点上</b>（没有拍内延迟），而且<b>每个音都持续一拍</b>（没有长短音之分 —— 0.2 的时值系统整套去掉了）。
+    <br><b>坍缩固定每拍一次</b>：第 k 次坍缩正好落在第 <b>k 拍</b>（★ 是第几步，不是哪一格 —— 哪一格坍缩仍由熵决定），所以 64 次坍缩 = <b>64 拍 = 16 小节 = 4 句</b>，120 BPM 约 <b>32 秒</b>。小节重音（每 4 拍）与乐句留白（每 16 拍的最后 2 拍）因此精确落在它们该在的位置。
+    <br><b>留白</b>：每句（<b>16 拍</b> = 4 小节）末尾 <b>2 拍</b>不再有新起音 —— 正在响的音<b>不会被打断</b>，按自己的时值走完、自然衰减进去，留白由「这两拍没有新起音」给出。
+    <br><b>协和兜底暂时派不上用场</b>：每个音只响一拍、坍缩又正好每拍一次，所以下一个音出现时上一个音刚结束（在响列表会被清空）—— 没有叠置，也就没有"撞上仍在响的音"这回事。那条「与仍在响的音构成小 2 度 / 三全音 / 大 7 度就几乎不选它」的规则仍留在代码里，等时值加回来时才会重新生效。（0.3 暂时没有把时值画出来；以后换一种形式表示，先不加回时值线。）
     <br><b>两个演出参数</b>：音色（钢琴采样 / 合成器）与 BPM（40–240）。BPM 缩放的是整条时间基准，所以叠置关系、乐句与重音都不变；换音色也不改任何音符 —— 两者都只为对比听感。
   </div>
 </details>
@@ -249,29 +232,23 @@ const hashSeed = str => {
   return h >>> 0;
 };
 
-// 时间网格：最小间隔 1 拍。下面所有 offset / dur 的单位都是**秒**（120 BPM 时 1 拍 = 0.5s），
-// 播放时统一乘 timeScale() = 120 / BPM —— BPM 只改绝对速度，音乐结构（叠置关系、乐句、重音）不变。
+// 时间网格：一格 = 1 拍。STEP_S 是 120 BPM 下 1 拍的秒数，是全文件**唯一**的"拍 ↔ 秒"基准，
+// 播放时统一乘 timeScale() = 120 / BPM —— BPM 只改绝对速度，音乐结构（乐句、重音、和声周期）不变。
 // ★ 不要改 Tone.Transport.bpm 来代替这个缩放：本练习用**绝对秒数**排事件，改 Transport 的 BPM 会
-//   把它已经排好的事件按新速度重新解释（tick↔秒 的换算是排程时做的），正在飞的下一步会跳。
+//   把它已经排好的事件按新速度重新解释（拍↔秒的换算是排程时做的），正在飞的下一步会跳。
+// ★ 0.3 的音乐判断全部在**拍**域（`stepBeat` / `NOTE_BEATS`），秒只在 `secPerBeat` 那一处出现。
 const STEP_S = 0.5;
-// 坍缩节奏跟着音长走（2026-09-20 第三轮）：下一个 cell 在
-//   max(1 拍, ceil((本次延迟 + 实际时长) × WAIT_SCALE)) 拍
-// 之后才坍缩 —— 短音仍保持一拍的脉冲，长音后面明显停顿一下。
-// 取 0.6 而不是 1.0：等满就没有叠置了（实测那会退回单音线）；0.6 让长音与下一个音重叠约 40%，
-// 和声还在，同时坍缩速度真的跟着音乐呼吸。
-// ★ 取整到整拍是第九轮加的，见 collapseLine 里 waitBeats 的注释：不取整就永远偏离拍点。
-const WAIT_SCALE = 0.6;
-// time-lane 的横轴跨度：5 拍（120 BPM 时 = 2.5s；最大延迟 0.75 拍 + 最长时值 4 拍 ≈ 4.75 拍，取 5）；
-// 刻度每 1 拍，于是"跨了几拍"可以直接数刻度。标尺以**拍**为单位，所以 BPM 改了它也不变。
-const LANE_SPAN_BEATS = 5;
-const laneBeats = beats => beats / LANE_SPAN_BEATS * 100;
-// 秒 → 拍（RHYTHM_CELLS 里写的是 120 BPM 下的秒数，除以 STEP_S 就是拍数）
-const toBeats = seconds => seconds / STEP_S;
-// 一拍（模型的最小步长，同时也是"1 拍"这个单位本身）
-const STEP_BEATS = 1;
-// ★ 小节 / 乐句一律按**拍**算，不能按"第几个格子"算（第九轮）：坍缩步长是 1–3 拍不等，
-//   所以"每 4 格"根本不是"每 4 拍" —— 重音会落在 0.5s/0.72s/1.2s… 这些互不成倍数的时刻上，
-//   乐句留白也一样跑偏。凡是"音乐上的时间结构"都只能数拍（stepBeat），不能数 step。
+// ★ 0.3（第二步，用户指令"2 的时值也不要"）：**连 0.2 的时值系统也去掉** —— 每个音统一 `NOTE_BEATS` 拍。
+//   0.2 那套是：cell 的基本时值（0.25 / 0.5 / 1 / 1.5 拍，由 row/col 选型）+ 级进 2.4 拍 + 终止列 4 拍，
+//   再用 `waitBeats = max(1 拍, ceil(时值 × WAIT_SCALE 0.6))` 把下一步推后 2–3 拍。
+//   现在时值恒为 1 拍 ⇒ `max(1, ceil(1 × 0.6)) = 1` ⇒ **坍缩固定每 1 拍一次**，句尾留白的钳制也随之失效
+//   （每步只走 1 拍，不可能跨过留白窗口），一并删掉。
+//   ★ 副作用（有利）：64 次坍缩 × 1 拍 = **64 拍 = 16 小节 = 4 句** —— 第 k 次坍缩正好落在第 k 拍，
+//     "第几步"从此等于"第几拍"（★ 注意是**第几步**，不是格子编号：哪一格坍缩仍由熵决定）。
+//   ★ 要恢复"长音 + 呼吸"就照 0.2 的公式回来（`max(1, ceil(时值 × 0.6))`），别改成不等距的连续值。
+const NOTE_BEATS = 1;
+// ★ 小节 / 乐句一律按**拍**算，不能按"第几个格子"算（第九轮，0.2 的教训）。
+//   0.3 里步长恒为 1 拍，二者恰好等价，但结构仍按"拍"写：将来步长一变，`step % n` 就又不等价了。
 const BAR_BEATS = 4;       // 4 拍一小节，重音在小节第 1 拍
 const PHRASE_BEATS = 16;   // 4 小节一句
 const PHRASE_REST_BEATS = 2; // 每句最后 2 拍留白
@@ -279,19 +256,14 @@ const START_LEAD_S = 0.25; // 排第一步的提前量
 const BEAT_ACCENT = [0.22, 0, 0.10, 0]; // 小节内第 1/2/3/4 拍的重音加成
 const BREATH_DEPTH = 0.14;              // 一句（16 拍）内的呼吸弧幅度
 
-// 时值与句法（2026-09-20 第二轮：单音线太"点"，加入长音与呼吸）
-//  · 级进延长：这个音与**上一个发声的音**构成同音或级进（≤2 半音）→ 用 LEGATO_S 铺开，
-//    于是连续级进会串成一条线；跳进 → 保持 cell 自己的短时值，让线断开。
-//    ★ 用"进入音程"决定当前音的长短，而不是去延长上一个音：上一个音的 release 已经排好了，
-//      延后释放要改 triggerAttackRelease 为 attack+release 两次调用，既脆又依赖 voice 池内部状态。
-//  · 终止延长：col === 7 那一列是终止列 → CADENCE_S 长音收句。
+// 句法（0.3 只留"句尾留白"这一条）
 //  · 句尾留白：每句最后 PHRASE_REST_BEATS 拍强制休止（不再有新起音）。
-//    ★ **不放掉正在响的音**（第十一轮）：放掉会把横跨乐句末尾的长音掐断，听感是"下一个是空拍时前一个音被突然截断"。
+//    ★ **不放掉正在响的音**（第十一轮，0.2 的教训）：放掉会把横跨乐句末尾的长音掐断，听感是"下一个是空拍时前一个音被突然截断"。
 //    现在它们按自己的时值走完、用自己的 release（钢琴 1.5s / 合成器 1.15s）自然衰减进留白。
-const LEGATO_S = 1.2;
-const LEGATO_STEP_SEMITONES = 2;
-const CADENCE_S = 2.0;
-// 与仍在响的音构成小 2 度 / 三全音 / 大 7 度时几乎排除该候选（长音一叠，这三类音程会打拍子）。
+// 与仍在响的音构成小 2 度 / 三全音 / 大 7 度时几乎排除该候选（0.2 里长音一叠，这三类音程会打拍子）。
+// ★ 0.3 时值恒为 1 拍、步长也是 1 拍 ⇒ 每个音在下一步就被 `pruneRinging` 剔除，**任何两个音都不叠置**，
+//   所以这条协和兜底（以及下面 collapseLine 里的同音退场 tieOver）在 0.3 里是**恒不触发**的。
+//   保留它们是为了"将来把时长加回来时不用重写"，但不要把它们当成本版还在生效的规则。
 const HARSH_INTERVALS = new Set([1, 6, 11]);
 
 // ── 和声：F 小调的六个三和弦 + 进行图（借 0.1 的 `CHORDS` / `next`）─────────────────
@@ -383,38 +355,12 @@ const BPM_MAX = 240;
 let bpm = DEFAULT_BPM;
 const timeScale = () => DEFAULT_BPM / bpm;
 
-// cellTime() 只会取到索引 0（乐句重音）与 1..4（其余由 row/col 派生）。
-// ★ 第十二轮：拍内延迟**只剩两档** —— 0（正拍点）与 0.25s = 0.5 拍（推后半拍）。
-//   原来有四档 0 / 0.125 / 0.25 / 0.375s（= 0 / 0.25 / 0.5 / 0.75 拍），而**坍缩顺序是熵顺序**，
-//   于是这些由 row/col 派生的延迟落在随机时刻上：实测 24% 的音头落在十六分位（+0.25 / +0.75 拍），
-//   听觉上的起音间隔**只有 38% 是整拍**（其余是 1.25 / 1.5 / 1.75 / 2.5 拍这类半拍错位），最小间隔 0.25 拍
-//   —— 听感就是"很多音根本不在拍子上"。这是"拿空间坐标当音乐时间用"的第四例（前三例：重音不能来自 col、
-//   和声不挂 row/col、同音降权不能只看左邻格）。
-//   现在：音头 87% 在正拍点、0% 在十六分位、听觉间隔 75% 是整拍、最小间隔 0.5 拍 —— 网格清楚，
-//   还留一点八分切分。名字也改成如实描述（旧的 '1/8' / '3/8' 说的是"拍内第几个位置"，已经不成立）。
-//   型 1 与型 2 现在等价（都是正拍点半拍），保留两格只是不想动 pattern 公式。
-//   早先列过的 'skip'（索引 5）从未被选中，已删除；要加节奏型必须同时改 cellTime() 的 pattern 公式。
-const RHYTHM_CELLS = [
-  { name:'正拍·1拍',  offset:0,    dur:0.5 },
-  { name:'正拍·半拍', offset:0,    dur:0.25 },
-  { name:'正拍·半拍', offset:0,    dur:0.25 },
-  { name:'推后·16分', offset:0.25, dur:0.125 },
-  { name:'正拍·1.5拍', offset:0,   dur:0.75 },
-];
-
-const cellTime = index => {
-  const row = Math.floor(index / GRID);
-  const col = index % GRID;
-  const phraseAccent = col === 0 || col === 4;
-  const cadence = col === GRID - 1;
-  const pattern = phraseAccent ? 0 : cadence ? 4 : (row * 2 + col * 3) % 4 + 1;
-  const unit = RHYTHM_CELLS[pattern];
-  // 横轴以**拍**为单位：延迟 + 基本时值。标尺与标记都不随 BPM 变。
-  // 坍缩那一刻会再按**实际时长**重画一次（级进/终止会改写时值），所以这里只是"基本值"。
-  const x = laneBeats(toBeats(unit.offset));
-  const w = laneBeats(toBeats(unit.dur));
-  return { ...unit, x, w };
-};
+// ★ 0.3：`RHYTHM_CELLS`（0.2 的五个基本时值，由 row/col 选型）与 `cellTime()` **整套删掉** ——
+//   每个音统一 `NOTE_BEATS` 拍，cell 不再带任何时间属性（只剩"候选集合 → 坍缩值"）。
+//   0.2 的延迟也早已归零：0.2 实测 24% 的音头在十六分位、听觉间隔只有 38% 是整拍（最小 0.25 拍）；
+//   0.3 直接归零 → **音头 = 步时刻**，起音间隔 = 步长 = 1 拍。
+//   ★ 这也是"拿空间坐标当音乐时间用"这条坑的收尾（前四例：重音不能来自 col、和声不挂 row/col、
+//     同音降权不能只看左邻格、拍内延迟不能由 row/col 派生）—— 现在 cell 上不再有任何时间量。
 
 // 力度只来自时钟。observe 顺序由熵决定、和格子的 row/col 无关，所以重音**不能**用 col 当节拍位置
 //（那会把重音撒在随机时刻）。这里只用两个时间尺度：小节内第 1 拍最重、第 3 拍次之；再叠一层
@@ -428,13 +374,8 @@ const stepVelocity = beat => {
 
 const beatIsPhraseRest = beat => (beat % PHRASE_BEATS) >= PHRASE_BEATS - PHRASE_REST_BEATS;
 
-// 一个音实际响多久。**返回「拍」**（不是秒）：模型全部在拍域里算，只在排程时乘 timeScale()，
-// 这样同一颗种子在任何 BPM 下都是逐位相同的音乐（在秒域里比较会因为浮点在最边界处翻一位）。
-const noteDuration = (cell, midi, prevMidi) => {
-  if (cell.col === GRID - 1) return toBeats(CADENCE_S);
-  if (prevMidi != null && Math.abs(midi - prevMidi) <= LEGATO_STEP_SEMITONES) return toBeats(LEGATO_S);
-  return toBeats(cell.time.dur);
-};
+// ★ 0.3：`noteDuration()` 删掉了 —— 0.2 那三个分支（终止列 4 拍 / 级进 2.4 拍 / cell 基本时值）
+//   连同"时值也要按拍域返回"的说明一起消失，每个音就是 `NOTE_BEATS` 拍。
 
 // 演奏状态：仍在响的音 + 上一个发声的音。**都以「拍」为单位**（BPM 无关）。
 // 剔除已经响完的，返回仍在响的那一份。
@@ -449,7 +390,7 @@ const cells = Array.from({ length:CELL_COUNT }, (_, index) => {
   const el = document.createElement('div');
   el.className = 'cell';
   cellsEl.appendChild(el);
-  return { index, row:Math.floor(index / GRID), col:index % GRID, time:cellTime(index), el, candidates:new Set(NOTES.map(note => note.id)), value:null, marks:new Map(), chosen:null, timeMark:null };
+  return { index, row:Math.floor(index / GRID), col:index % GRID, el, candidates:new Set(NOTES.map(note => note.id)), value:null, marks:new Map(), chosen:null };
 });
 
 const renderCell = cell => {
@@ -466,15 +407,7 @@ const renderCell = cell => {
     options.appendChild(mark);
     cell.marks.set(note.id, mark);
   });
-  const lane = document.createElement('div');
-  lane.className = 'time-lane';
-  const timeMark = document.createElement('i');
-  timeMark.className = 'time-mark';
-  timeMark.style.setProperty('--time-x', cell.time.x.toFixed(3) + '%');
-  timeMark.style.setProperty('--time-w', cell.time.w.toFixed(3) + '%');
-  lane.appendChild(timeMark);
-  cell.el.appendChild(lane);
-  cell.timeMark = timeMark;
+  // 0.3：这里原来还有 .time-lane（5 拍标尺）+ .time-mark（时值线），已整套去掉。
   const chosen = document.createElement('b');
   chosen.className = 'chosen';
   cell.el.appendChild(chosen);
@@ -634,7 +567,7 @@ const chooseValue = (cell, rng, ringing = [], phraseRest = false, harmony = null
   return weighted[weighted.length - 1].id;
 };
 
-// 一次 observe = 一个时间步，步与步之间固定 STEP_S，全部排在 Tone.Transport 上。
+// 一次 observe = 一个时间步，0.3 里步与步之间**恒为 1 拍**，全部排在 Tone.Transport 上。
 // 三条硬规矩：
 //  ① 绝不用 setTimeout 做音乐调度（见 notes/piece-zed-注解版.md：它跟着主线程漂移）；
 //  ② **两套时间轴不能混用**：`Transport.scheduleOnce(fn, time)` 的 `time` 是**传输时间**，
@@ -642,10 +575,10 @@ const chooseValue = (cell, rng, ringing = [], phraseRest = false, harmony = null
 //     喂给 `Tone.Draw.schedule`）。所以下一步用自己维护的 `stepAt`（传输时间轴）来排，回调的
 //     `audioTime` 只用来排声音和画面 —— 反过来把 audioTime 当传输时间用，第一步之后要等 30 秒才响
 //    （实测：上下文时间 30.5 被当成传输时刻 30.5，而此刻传输位置只有 0.5）。
-//  ③ 下一步用**绝对时刻** stepAt += STEP_S，不用 '+0.5' —— 回调受 lookAhead 影响会提前执行，
+//  ③ 下一步用**绝对时刻** stepAt += 步长 × 1 拍的秒数，不用 '+0.5' —— 回调受 lookAhead 影响会提前执行，
 //     相对时间会把执行抖动逐句累加。
-// 算法（候选、坍缩、传播）在回调里同步推进；所有 DOM 改动都交给 Tone.Draw 排到真正的发声时刻，
-// 音符的闪光再往后挪到它自己的拍内偏移上。
+// 算法（候选、坍缩、传播）在回调里同步推进；所有 DOM 改动都交给 Tone.Draw 排到真正的发声时刻。
+// ★ 0.3 里音头就在步时刻（没有拍内延迟），所以画与声都排在同一个 `audioTime`。
 const collapseLine = (seed, startAt, signal, eventIds, noteState, onStep, onCollapse) => new Promise(resolve => {
   const rng = makeRng(seed);
   // 派生量不要留空：页面自己的 schedule() 建的是完整对象，但直接调 collapseLine 的路径
@@ -665,9 +598,8 @@ const collapseLine = (seed, startAt, signal, eventIds, noteState, onStep, onColl
     }
     const scale = timeScale();
     const secPerBeat = STEP_S * scale;   // 拍 → 秒（唯一的换算点）
-    const offsetBeats = toBeats(cell.time.offset);
-    const noteStartBeat = stepBeat + offsetBeats;
-    const ringing = pruneRinging(noteState, noteStartBeat);
+    // 0.3：没有拍内延迟 —— 每个音都正好落在这一拍的拍点上，所以"在响的音"按 stepBeat 判。
+    const ringing = pruneRinging(noteState, stepBeat);
     const phraseRest = beatIsPhraseRest(stepBeat);
     // 当前和弦（挂在**拍**上，每 CHORD_BEATS 拍换一次）+ 这一拍是不是强拍 + 上一个发声的音
     const chordName = noteState.chordPlan[Math.floor(stepBeat / CHORD_BEATS) % noteState.chordPlan.length];
@@ -684,21 +616,22 @@ const collapseLine = (seed, startAt, signal, eventIds, noteState, onStep, onColl
     cell.candidates = new Set([value]);
     const note = NOTE_BY_ID.get(value);
     // 演奏上的两个决定：这个音响多久、同音时要不要让旧音退场。
-    let durationBeats = 0;
+    // ★ 0.3：时长恒为 `NOTE_BEATS`；又因为步长也是 1 拍，`pruneRinging` 会在下一步剔掉它，
+    //   所以 tieOver（同音退场）在 0.3 里恒为 null —— 保留是为了时长加回来时不用重写。
+    const durationBeats = value === 'rest' ? 0 : NOTE_BEATS;
     let tieOver = null;
     if (value !== 'rest') {
-      durationBeats = noteDuration(cell, note.midi, noteState.prevMidi);
       // ★ 同音重复必须让前一个音**在新音起音处**退场。原因在 Tone.Sampler 的实现里：
       //   `triggerRelease(note, t)` 会停掉该音高**全部**活动 source（并且 `triggerAttack` 每次都新建
       //   source 堆在同一音高下），所以后一个同音自己的释放点会把前一个还在响的长音一起停掉 ——
-      //   实测这一组的衰减比对照组快 4 倍（250ms 掉 11.5 dB vs 2.8 dB），听感就是"有的音断得特别突然"。
+      //   实测（0.2，长音叠置时）这一组的衰减比对照组快 4 倍（250ms 掉 11.5 dB vs 2.8 dB）。
       //   钢琴上这正是"重新按下同一个键"：旧音从新音起音处自然退场，而不是被后面某个时刻连坐。
       const samePitch = ringing.filter(item => item.midi === note.midi);
       if (samePitch.length) {
         tieOver = value;
-        samePitch.forEach(item => { item.endsBeat = Math.min(item.endsBeat, noteStartBeat); });   // 它到此为止
+        samePitch.forEach(item => { item.endsBeat = Math.min(item.endsBeat, stepBeat); });   // 它到此为止
       }
-      noteState.ringing.push({ name: value, midi: note.midi, endsBeat: noteStartBeat + durationBeats });
+      noteState.ringing.push({ name: value, midi: note.midi, endsBeat: stepBeat + durationBeats });
       noteState.prevMidi = note.midi;
       noteState.prevNonChord = !chord.pcs.includes(note.midi % 12);   // 供下一步的"倾向解决"判断
       // 时间上的重复降权只看**发声的**音：休止不进这个列表（隔着一个休止再回来是同音呼应，
@@ -708,21 +641,13 @@ const collapseLine = (seed, startAt, signal, eventIds, noteState, onStep, onColl
     }
     const touched = propagate(cell.index);
     const velocity = stepVelocity(stepBeat);
-    // 这个 cell 占用多久（拍）：延迟 + 实际时长，再乘 WAIT_SCALE，然后**向上取整到整拍**。
-    // ★★ 取整是第九轮的关键（用户的第三次同类反馈："还是觉得坍缩没有在节奏上"）：不取整时
-    //    `(延迟+时长)×0.6` 算出 1 / 1.44 / 1.59 / 1.74 / 1.89 / 2.4 拍这些非整拍值，于是
-    //    **一旦出现一个长音，后面每一次坍缩都永久偏离拍点**（实测 90% 的步偏离拍点、中位 0.23 拍、
-    //    最大 0.49 拍，步间隔有 6 个互不成倍数的取值）—— 听不出脉冲，坍缩听起来像随意撒的。
-    //    取整后步长 ∈ {1,2,3} 拍，整首曲子都落在拍网格上，而"跟着音长呼吸"变成"这一步等几拍"：
-    //    长短变化还在（不是等距），而且每一次坍缩都踩在拍上。
-    const desired = Math.max(STEP_BEATS, Math.ceil((offsetBeats + durationBeats) * WAIT_SCALE));
-    // 句尾留白是**结构标点**，长音不许跨过它：否则 16 拍的乐句会被一步跳过去、乐句周期就散了。
-    const toRest = PHRASE_BEATS - PHRASE_REST_BEATS - (stepBeat % PHRASE_BEATS);
-    const waitBeats = toRest > 0 ? Math.min(desired, toRest) : desired;
-    // 视觉的「激活」必须落在**这个音真正发声的时刻**上：延迟最大 0.375s，若把坍缩画在拍点上，
-    // 带延迟的音就会「先亮后响」（用户实测：视觉永远在第一下被激活，而有的音要等）。休止不发声，
-    // 所以它仍然画在拍点上，让网格本身继续可读。
-    const paintAt = audioTime + (value === 'rest' ? 0 : offsetBeats * secPerBeat);
+    // ★ 0.3：坍缩固定每 1 拍一次 —— 时值恒 1 拍 ⇒ 0.2 的 `max(1 拍, ceil(时值 × 0.6))` 恒等于 1，
+    //   而"长音不许跨过句尾留白"的钳制也随之失效（每步只走 1 拍，不可能跳过去），所以两者都删了。
+    //   于是 stepBeat 恒等于 step —— **第几步 = 第几拍**（64 次坍缩 = 64 拍 = 16 小节 = 4 句）。
+    //   ★ 是"第几步"，不是"哪一格"：选格仍由熵决定，格子编号与时间无关。
+    const waitBeats = NOTE_BEATS;
+    // 视觉的「激活」与发声**同刻**：0.3 没有拍内延迟，所以坍缩画面就排在步时刻上。
+    const paintAt = audioTime;
     Tone.Draw.schedule(() => {
       cell.el.style.setProperty('--tile-bg', note.color);
       cell.el.style.setProperty('--tile-ink', note.ink);
@@ -739,10 +664,8 @@ const collapseLine = (seed, startAt, signal, eventIds, noteState, onStep, onColl
       });
     }, paintAt);
     onCollapse(value, cell.index, step, audioTime, velocity, {
-      startAt: audioTime + (value === 'rest' ? 0 : offsetBeats * secPerBeat),
+      startAt: audioTime,                    // 0.3：音就在拍点上（= 这一步的时刻）
       duration: durationBeats * secPerBeat,
-      markTarget: laneBeats(durationBeats),   // 时值线的目标宽度（%，拍域 → 与 BPM 无关）
-      offsetPercent: laneBeats(offsetBeats),
       phraseRest,
       tieOver,   // 同音还在响时的旧音名：在 startAt 处放掉它，别让它被后一个音的释放点连坐
     });
@@ -878,52 +801,8 @@ const activateEngine = async seed => {
   // 否则任何直接调用 collapseLine 的路径都会在取和弦时炸掉。
   const noteState = { ringing: [], prevMidi: null, prevNonChord: false, recent: [], chordPlan: chordPlanFor(seed, CHORD_SLOTS) };
 
-  // ── 时值线的动态生长 ──────────────────────────────────────────────
-  // 线的宽度必须**跟着音一起长出来**，而不是坍缩瞬间跳到一个固定长度：
-  //   ① 音一开始响（`startAt`）就把这条线清成 0 并登记进生长队列；
-  //   ② 每帧按音频时钟（`getContext().currentTime`，和音符用的是同一条轴）算进度，写 `--time-w`；
-  //   ③ 长满即结束，之后保持为这次演奏的记录；
-  //   ④ 唯一的例外是**同音退场**（`releaseNotes`）：旧音在新音起音处被放掉，它的线也要**停在截断处**。
-  // 宽度只有一个来源（`--time-w`）：静态渲染写基本值，这里写生长值。
-  const growing = [];
-  let markFrame = null;
-  const writeMark = (item, percent) => item.mark.style.setProperty('--time-w', percent.toFixed(3) + '%');
-  const stepMarks = () => {
-    const now = Tone.getContext().currentTime;
-    for (let i = growing.length - 1; i >= 0; i -= 1) {
-      const item = growing[i];
-      const progress = (now - item.startAt) / (item.endAt - item.startAt);
-      if (progress >= 1) {
-        writeMark(item, item.target);
-        growing.splice(i, 1);
-      } else {
-        writeMark(item, item.target * Math.max(0, progress));
-      }
-    }
-    markFrame = growing.length ? requestAnimationFrame(stepMarks) : null;
-  };
-  const growMark = (index, name, startAt, duration, target, offsetPercent) => {
-    const mark = cells[index].timeMark;
-    mark.style.setProperty('--time-x', offsetPercent.toFixed(3) + '%');
-    writeMark({ mark }, 0);
-    if (!(duration > 0)) return;   // 休止：线停在 0 = 这一格不发声
-    growing.push({ mark, name, startAt, endAt: startAt + duration, target });
-    if (markFrame === null) markFrame = requestAnimationFrame(stepMarks);
-  };
-  // 提前放掉某个音时，把它的线冻结在当前进度
-  const freezeMarks = (names, at) => {
-    for (let i = growing.length - 1; i >= 0; i -= 1) {
-      const item = growing[i];
-      if (!names.includes(item.name)) continue;
-      const progress = Math.min(1, Math.max(0, (at - item.startAt) / (item.endAt - item.startAt)));
-      writeMark(item, item.target * progress);
-      growing.splice(i, 1);
-    }
-  };
-  const stopMarks = () => {
-    if (markFrame !== null) { cancelAnimationFrame(markFrame); markFrame = null; }
-    growing.length = 0;
-  };
+  // 0.3：这里原来是「时值线的动态生长」整段（growing 队列 / 逐帧写 --time-w / growMark / freezeMarks /
+  // stopMarks）。0.3 不再把时值画出来，所以整段删掉 —— 只保留音符本身的调度。
 
   let finishTimer = null;
   let eventIds = [];
@@ -931,7 +810,6 @@ const activateEngine = async seed => {
   const schedule = () => {
     resetVisual();
     Tone.Draw.cancel(0);
-    stopMarks();
     // ★ 先把上一批排程清掉再重置数组：否则重复调用 schedule()（例如外部播放器连发两次 play）
     //   会让旧坍缩链继续在 Transport 上飞，而它的 id 已经不在 eventIds 里、end() 永远清不掉。
     eventIds.forEach(id => Tone.Transport.clear(id));
@@ -943,12 +821,12 @@ const activateEngine = async seed => {
     // startAt 是**传输时间**轴上的位置。Transport 停止时 `Transport.seconds` 读 0（实测：页面开着
     // 30 秒、从未播放过时它仍是 0），所以这里得到的就是「从 0 起 0.25 秒」。两套时间轴的区别见 collapseLine。
     const startAt = Tone.Transport.seconds + START_LEAD_S;
-    setStatus('坍缩中 · seed <b>' + seed + '</b> · ' + voiceLabel() + voiceNote + ' · 每个 cell 至少一拍');
+    setStatus('坍缩中 · seed <b>' + seed + '</b> · ' + voiceLabel() + voiceNote + ' · 每格一拍');
     collapseLine(seed, startAt, signal, eventIds, noteState, (step, index, value, changed, duration, chordName) => {
       const tile = NOTE_BY_ID.get(value);
-      const time = cells[index].time;
+      // 0.3 时值恒为 1 拍，所以状态栏不再显示时值（0.2 那里显示的是每步现算的实际时长）。
       setStatus('坍缩中 · <b>' + step + '</b> / 64 · 和声 <b>' + chordName + '</b> · cell ' + (index + 1) + ' = ' + tile.label +
-        ' · 延迟 +' + toBeats(time.offset).toFixed(2) + ' 拍 · 时值 ' + (duration ? duration.toFixed(2) + ' 拍' : '休止') + ' · 传播 ' + changed);
+        (value === 'rest' ? ' · 休止' : '') + ' · 传播 ' + changed);
     }, (value, index, step, at, velocity, plan) => {
       if (value === 'rest') {
         // ★ 留白只表示"不再有新起音"，**不**去放掉正在响的音（第十一轮）。
@@ -956,17 +834,12 @@ const activateEngine = async seed => {
         //   那些音本来还要再响最多 2 拍（终止列 4 拍长音常常横跨乐句末尾），听感就是"下一个是空拍时前一个音被突然截断"。
         //   现在让它们按自己的时值走完、用自己的 release 自然衰减进留白；两句之间的气息由"这 2 拍没有新起音"给出。
         //   实测（浏览器，同一颗种子）：修复前每个留白窗口有 1–4 个音被提前放掉（最多提前 2 拍），修复后 0 个。
-        Tone.Draw.schedule(() => growMark(index, value, plan.startAt, 0, 0, plan.offsetPercent), plan.startAt);
         return;
       }
       // 同音重复：先让旧音在这个新音的起音处退场（钢琴=重新按同一个键；合成器=干净地重发音）
-      if (plan.tieOver) {
-        voice.releaseNotes([plan.tieOver], plan.startAt);
-        freezeMarks([plan.tieOver], plan.startAt);
-      }
+      if (plan.tieOver) voice.releaseNotes([plan.tieOver], plan.startAt);
       voice.trigger(value, plan.startAt, plan.duration, velocity);
-      // 线的生长与声音同刻开始（`Tone.Draw` 到点才动）
-      Tone.Draw.schedule(() => growMark(index, value, plan.startAt, plan.duration, plan.markTarget, plan.offsetPercent), plan.startAt);
+      // 0.3 没有时值线，所以这里不再有 growMark / freezeMarks —— 发声就是全部。
     }).then(sequence => {
       if (!sequence || signal.cancelled) return;
       setStatus('坍缩完成 · 每个 tile 都在自己的时刻发声。');
@@ -987,7 +860,6 @@ const activateEngine = async seed => {
     eventIds.forEach(id => Tone.Transport.clear(id));
     eventIds = [];
     Tone.Draw.cancel(0);
-    stopMarks();   // 停止时冻结时值线的生长进程（下一次播放由 resetVisual 恢复基本值）
     if (finishTimer) window.clearTimeout(finishTimer);
     voice.releaseAll(Tone.now() + 0.04);
     Tone.Transport.stop();
@@ -1075,12 +947,14 @@ transportControls.addEventListener('exercise-regenerate', () => restartCurrent(t
 transportControls.addEventListener('exercise-seed-apply', () => restartCurrent(false));
 
 // BPM 输入框：改的是**绝对速度**（timeScale = 120 / BPM），音乐结构不变。
-// 播放中改也有效 —— 每个 cell 的时长与下一步的间隔都是现算的，所以从下一次坍缩开始生效。
+// 播放中改也有效 —— 下一步的间隔是排程时现算的（0.3 里恒为 1 拍，但一拍多少秒跟着 BPM 走），
+// 所以从下一次坍缩开始生效。
 // 非法输入（空、非数字、越界）就回到上一个合法值并在状态栏点名，不把 NaN 带进调度。
 const bpmInput = document.getElementById('bpmInput');
 const bpmHint = document.getElementById('bpmHint');
-// 实测：整曲 79–92 拍（16 个种子，均值 86；120 BPM 时约 40–46 秒），用它给输入框一个量级参考。
-const PIECE_BEATS = 86;
+// ★ 0.3：坍缩步长恒为 1 拍，所以整曲拍数**不随种子变**，就是格子数 —— 64 拍（16 小节 / 4 句，
+//   120 BPM 时 32 秒）。用它给输入框一个量级参考。
+const PIECE_BEATS = CELL_COUNT;
 const updateTempoHint = () => {
   bpmHint.textContent = '1 拍 = ' + (60 / bpm).toFixed(3) + 's · 整曲约 ' + Math.round(PIECE_BEATS * 60 / bpm) + 's';
 };
