@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>04 · Minimal WFC 0.5</title>
+<style>
+  :root {
+    color-scheme:dark;
+    --bg:#12110e; --panel:#1b1915; --line:#3a3429; --ink:#eee7d6; --muted:#8f866f;
+    --accent:#b58b47; --hit:#d8cfb7; --drift:#6c8790; --density:#a87157;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:Inter,"Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+  .wrap { max-width:1120px; margin:0 auto; padding:22px 20px 40px; }
+  h1 { font-size:20px; margin:0 0 8px; font-weight:650; }
+  h1 small { color:var(--muted); font:500 12px/1 Consolas,"Courier New",monospace; vertical-align:3px; }
+  .lead { margin:0 0 12px; color:#aaa08d; font-size:12.5px; line-height:1.7; max-width:84ch; }
+  .lead b { color:var(--ink); }
+  .rules { margin:0 0 14px; padding:10px 12px; border:1px solid var(--line); border-radius:6px;
+    background:rgba(27,25,21,.6); color:#aaa08d; font-size:12px; line-height:1.85; }
+  .rules code { color:var(--ink); font-family:Consolas,"Courier New",monospace; }
+  .bar { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; margin-bottom:12px; }
+  exercise-controls {
+    --exercise-control-radius:4px; --exercise-control-primary:#eee7d6; --exercise-control-primary-fg:#12110e;
+    --exercise-control-secondary:#2a261f; --exercise-control-focus:#b58b47;
+  }
+  .status { flex:1 1 340px; color:#aaa08d; font:12px/1.75 Consolas,"Courier New",monospace; }
+  .status b { color:var(--ink); }
+  .reads { margin:0 0 16px; display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:6px 22px; }
+  .read { display:flex; align-items:center; gap:9px; color:var(--muted); font:11px/1 Consolas,"Courier New",monospace; }
+  .read .track { position:relative; flex:1 1 auto; height:6px; border-radius:3px; background:#241f18; border:1px solid var(--line); }
+  .read .marker { position:absolute; top:-3px; width:3px; height:10px; border-radius:2px; background:var(--drift); left:50%; }
+  .read.density .marker { background:var(--density); }
+  .read .num { color:var(--ink); min-width:4ch; text-align:right; }
+  .cells { display:grid; grid-template-columns:repeat(16, minmax(0,1fr)); gap:4px; }
+  .cell { display:flex; flex-direction:column; align-items:center; gap:3px; min-height:104px;
+    padding:7px 3px 8px; border:1px solid var(--line); border-radius:5px; background:#171612;
+    transition:border-color .14s ease, background .14s ease; }
+  .cell .idx { color:#6b6354; font:10px/1 Consolas,"Courier New",monospace; }
+  .cell .body { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .cand { color:var(--muted); font:11px/1.2 Consolas,"Courier New",monospace; }
+  .val { color:var(--accent); font:700 19px/1.2 Consolas,"Courier New",monospace; }
+  .rest { color:#5c5546; font:700 19px/1.2 Consolas,"Courier New",monospace; }
+  .cell.done { background:#221f19; border-color:#5a513f; }
+  .cell.rested { background:#141310; border-color:#2b2721; }
+  .cell.hit { border-color:var(--hit); background:#2f2b22; }
+  .cell.hit .val { color:var(--hit); }
+  .cell.now .idx { color:var(--hit); }
+  @media (max-width:860px) { .cells { grid-template-columns:repeat(8, minmax(0,1fr)); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>04 · Minimal WFC <small>0.5 · rolling window + register drift + density drift</small></h1>
+  <p class="lead">在 0.4（已验证的最小 WFC）之上加三个机制。<b>① rolling window</b>：始终维护 <b>16 格未来窗口</b> —— 最左格播完退出、其余前移、右端补入一个全新未确定的 Cell，再从已确定的邻居按 <b>max interval / max repeat</b> 传播。<b>② register drift</b>：缓慢漂移的<b>音区中心</b>，只给合法候选加权（越近越容易被选中，远的不会被删）。<b>③ density drift</b>：缓慢漂移的<b>全局疏密</b> —— 它不决定某个 Cell 发不发音的独立概率（那会形成随机空洞），而是控制<b>当前窗口整体应该有多少个 note</b>，再让 note/rest 的分布去贴近这个目标；只有判定为 note 的 Cell 才进入音高坍缩，rest 只是时间上的空位。两个 drift 都不设"段落"，只是持续缓慢变化的全局参数。</p>
+  <div class="rules">
+    调与音阶：<b>A minor</b>（A B C D E F G · A4–G5）—— 音高候选只由它派生<br>
+    硬规则（决定"哪些音可以出现"）：<code>max interval = 5</code> 半音 · <code>max repeat = 2</code><br>
+    机制① 滚动窗口：<code>WINDOW = 16</code> 格 · 每拍退出 1 格、补入 1 格 · 起步播种到一半音格已定<br>
+    机制② register drift：中心在 <code>68–80</code> 连续漂移 · 权重 <code>1/(1+(d/3)²)</code><br>
+    机制③ density drift：疏密在 <code>0.20–0.80</code> 连续漂移（≈ 3–13 个音 / 16 格）· 新格进入时按目标音数配平 note/rest<br>
+    固定：每 Cell = 一个八分音符 · BPM 112 · Velocity 90/127
+  </div>
+  <div class="bar">
+    <exercise-controls id="transportControls" apply-seed></exercise-controls>
+    <div class="status" id="status">待机：按播放开始滚动 —— 每拍播窗口最左格，右侧补一格；音区中心与疏密同时在缓慢漂移。</div>
+  </div>
+  <div class="reads">
+    <div class="read">
+      <span>音区中心 68–80</span>
+      <span class="track"><span class="marker" id="driftMarker"></span></span>
+      <span class="num" id="driftValue">—</span>
+    </div>
+    <div class="read density">
+      <span>疏密 0.20–0.80</span>
+      <span class="track"><span class="marker" id="densityMarker"></span></span>
+      <span class="num" id="densityValue">—</span>
+    </div>
+  </div>
+  <div class="cells" id="cells"></div>
+</div>
+<script src="../../../shared/exercise-controls.js"></script>
+<script src="https://unpkg.com/tone@14.7.58/build/Tone.js"></script>
+<script>
+'use strict';
+
+if (typeof Tone === 'undefined') {
+  document.getElementById('status').textContent = '无法从 CDN 加载 Tone.js，请联网后刷新。';
+  throw new Error('Tone.js not loaded');
+}
+
+// ═══ 固定参数 ═══════════════════════════════════════════════════════════════════
+const BPM = 112;
+const CELL_S = 60 / BPM / 2;        // 一个 Cell = 一个八分音符（112 BPM → 0.268s）
+const VELOCITY = 90 / 127;
+const START_LEAD_S = 0.25;
+const RELEASE_S = 0.2;
+const SYNTH_VOLUME_DB = -6;
+const MASTER_VOLUME_DB = 6;
+
+// ═══ 调与音阶：音高候选**只**从这里派生 ═══════════════════════════════════════════
+const KEY_ROOT = 'A';
+const KEY_MODE = 'minor';
+const OCTAVE = 4;
+const SCALE_STEPS = { minor:[0,2,3,5,7,8,10], major:[0,2,4,5,7,9,11] };
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const midiToName = midi => NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+const ROOT_MIDI = 12 * (OCTAVE + 1) + NOTE_NAMES.indexOf(KEY_ROOT);
+const SCALE_MIDIS = SCALE_STEPS[KEY_MODE].map(step => ROOT_MIDI + step);
+const NOTES = SCALE_MIDIS.map(midi => ({ id: NOTE_NAMES[midi % 12], name: midiToName(midi), midi }));
+const NOTE_BY_ID = new Map(NOTES.map(note => [note.id, note]));
+
+const makeRng = seed => {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+const hashSeed = str => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i += 1) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h >>> 0;
+};
+
+// ═══ 硬规则（决定"哪些音可以出现"）—— 只作用于 note 格；rest 是时间上的空位，不参与音高约束 ═══
+// ★ 窗口左边的格子播完就退出了，所以"连续同音"必须能看见历史：把最近播放过的音高记进 history
+//   （最新的在前，rest 记 null），窗口 index −1 就取历史。没有它实测会出现 3–4 连击。
+const MAX_INTERVAL = 5;
+const MAX_REPEAT = 2;
+const HISTORY = MAX_REPEAT + 1;
+
+const valueMidiAt = (state, history, index) => {
+  if (index >= 0) {
+    const cell = state[index];
+    if (!cell || !cell.value) return null;          // 未定音 / rest 都当"没有音高信息"
+    return cell.value.midi;
+  }
+  const k = -index - 1;
+  return k < history.length ? history[k] : null;
+};
+
+const allowedFor = (index, note, state, opts, history) => {
+  for (const j of [index - 1, index + 1]) {
+    const midi = valueMidiAt(state, history, j);
+    if (midi === null || midi === undefined) continue;
+    if (Math.abs(note.midi - midi) > opts.maxInterval) return false;
+  }
+  if (opts.maxRepeat !== Infinity) {
+    let run = 1;
+    for (let j = index - 1; j >= -HISTORY; j -= 1) {
+      if (valueMidiAt(state, history, j) !== note.midi) break;
+      run += 1;
+    }
+    for (let j = index + 1; j < state.length; j += 1) {
+      if (valueMidiAt(state, history, j) !== note.midi) break;
+      run += 1;
+    }
+    if (run > opts.maxRepeat) return false;
+  }
+  return true;
+};
+
+// 传播：某个 Cell 定音后重新筛它附近的 note 格，并把只剩一个候选的当场确定。rest 格直接跳过。
+const settle = (index, state, opts, report, history) => {
+  const span = opts.maxRepeat === Infinity ? 1 : opts.maxRepeat + 1;
+  const queue = [index];
+  const touched = new Set();
+  while (queue.length) {
+    const at = queue.shift();
+    for (let d = -span; d <= span; d += 1) {
+      const j = at + d;
+      if (j < 0 || j >= state.length || j === at) continue;
+      const cell = state[j];
+      if (cell.mark === 'rest' || cell.value) continue;
+      const before = cell.candidates.size;
+      const allowed = [...cell.candidates].filter(id => allowedFor(j, NOTE_BY_ID.get(id), state, opts, history));
+      if (!allowed.length) { report.relaxations += 1; continue; }
+      if (allowed.length !== before) {
+        cell.candidates = new Set(allowed);
+        report.removed += before - allowed.length;
+        touched.add(cell);
+        queue.push(j);
+      }
+      if (cell.candidates.size === 1) {
+        cell.value = NOTE_BY_ID.get([...cell.candidates][0]);
+        report.forced += 1;
+        touched.add(cell);
+        queue.push(j);
+      }
+    }
+  }
+  return touched;
+};
+
+// ═══ 机制①：滚动窗口（index 0 = 下一步要播，index 15 = 最远的未来）═══════════════════
+const WINDOW = 16;
+
+// ═══ 机制②：register drift（音区中心）═══════════════════════════════════════════
+const REGISTER_ENABLED = true;
+const REGISTER_MIN = SCALE_MIDIS[0] - 1;                                   // 68
+const REGISTER_MAX = SCALE_MIDIS[SCALE_MIDIS.length - 1] + 1;              // 80
+const REGISTER_START = (REGISTER_MIN + REGISTER_MAX) / 2;                  // 74
+const REGISTER_WIDTH = 3;      // 吸引力尺度（半音）：d = 3 时权重降到 1/2
+const DRIFT_ACCEL = 0.12;      // 每拍给"中心速度"的随机推力（半音/拍）
+const DRIFT_DAMPING = 0.9;     // 速度每拍衰减（< 1 ⇒ 缓慢来回，不会单向跑掉）
+
+// ═══ 机制③：density drift（全局疏密）════════════════════════════════════════════
+// 它**不是**"每个 Cell 独立以 density 为概率发音"（那样会出现成片的随机空洞）。做法是
+// **误差反馈**：每进入一格就 `credit += 当前 density`，然后以 `p = clamp(credit)` 抽一次 note/rest，
+// 判定为 note 就把 credit 扣 1。于是：
+//   · 长期比例精确跟着 density 走（credit 有界 ⇒ 任意 16 格窗口里的音数都在目标 ±1 以内）；
+//   · 短期不会连成大片空洞（低疏密时 gap 上界约 1/density 格，而不是几何分布的长尾）；
+//   · 仍然有随机性（credit 恰好落在中间时是概率判定），不是机械的等分。
+// ★ 只读"这一刻"的全局 density：格子进入窗口时读一次，之后它的 mark 就定了。
+const DENSITY_ENABLED = true;
+const DENSITY_MIN = 0.2;
+const DENSITY_MAX = 0.8;
+const DENSITY_START = 0.5;
+const DENSITY_ACCEL = 0.04;    // 每拍给"疏密速度"的随机推力
+const DENSITY_DAMPING = 0.9;   // 与 register drift 同一套写法：有惯性 + 会自然回落
+
+// ═══ 生成器：滚动窗口 + 两个缓慢漂移的全局参数 ═══════════════════════════════════
+// 纯函数：不发声音、不碰 DOM、不看时钟。页面每拍调一次 stepOnce()，离线探针也调同一个方法。
+const createStream = (seed, options = {}) => {
+  const opts = {
+    maxInterval: options.maxInterval === undefined ? MAX_INTERVAL : options.maxInterval,
+    maxRepeat: options.maxRepeat === undefined ? MAX_REPEAT : options.maxRepeat,
+    register: options.register === undefined ? REGISTER_ENABLED : options.register,
+    density: options.density === undefined ? DENSITY_ENABLED : options.density,
+    // densityDrift = false 表示"有 rest 配额，但疏密值冻在 DENSITY_START" —— 用来单独量配平精度
+    densityDrift: options.densityDrift === undefined ? true : options.densityDrift,
+  };
+  // ★ 四条独立随机流：选音/选格、音区漂移、疏密漂移、note/rest 判定。
+  //   分开的意义是"调一个机制不会打乱另一个机制的随机序列"，本仓库的硬规矩。
+  const ruleRng = makeRng(seed);
+  const registerRng = makeRng((seed ^ 0x9e3779b9) >>> 0);
+  const densityRng = makeRng((seed ^ 0x85ebca6b) >>> 0);
+  const markRng = makeRng((seed ^ 0xc2b2ae35) >>> 0);
+
+  const window_ = [];
+  const played = [];         // 播放流：音名 id 或 null（休止）
+  const history = [];        // 最近播放过的音高 midi（休止记 null），窗口左边界之外就是它
+  const report = { tick: 0, forcedNow: 0, ahead: 0, prime: 0, removed: 0, relaxations: 0, forced: 0 };
+  let center = REGISTER_START;
+  let centerVelocity = 0;
+  let density = DENSITY_START;
+  let densityVelocity = 0;
+  let noteCredit = 0;        // 机制③的误差反馈：长期比例 = density，短期偏差有界（见文件头的说明）
+
+  // 机制③的判定：新格进入窗口时读**当前这一刻**的 density。
+  // ★ 先说一个被实测否掉的做法：直接"按窗口现有音数与目标的缺口"决定 note/rest —— 它确实把窗口音数
+  //   稳在目标附近，但**不控制间隔**：note 可以在窗口里聚成一堆，播放出来就是前面连着 **13 格休止**
+  //   （3.5 秒空洞）。误差反馈同时管住了"总量"和"间隔"，所以改成下面这种写法。
+  const decideMark = () => {
+    if (!opts.density) return 'note';
+    noteCredit += density;
+    const p = Math.max(0, Math.min(1, noteCredit));
+    if (markRng() < p) { noteCredit -= 1; return 'note'; }
+    return 'rest';
+  };
+  const enterCell = () => {
+    const mark = decideMark();
+    const cell = {
+      mark,
+      candidates: mark === 'note' ? new Set(NOTES.map(note => note.id)) : new Set(),
+      value: null,
+    };
+    window_.push(cell);
+    return cell;
+  };
+  for (let i = 0; i < WINDOW; i += 1) enterCell();
+
+  const unresolvedNotes = () => window_.reduce((sum, cell) => sum + (cell.mark === 'note' && !cell.value ? 1 : 0), 0);
+  const noteCount = () => window_.reduce((sum, cell) => sum + (cell.mark === 'note' ? 1 : 0), 0);
+  const snapshot = () => window_.map(cell => ({
+    mark: cell.mark,
+    ids: [...cell.candidates],
+    value: cell.value ? cell.value.id : null,
+  }));
+
+  const advanceRegister = () => {
+    if (!opts.register) return;
+    centerVelocity = centerVelocity * DRIFT_DAMPING + (registerRng() * 2 - 1) * DRIFT_ACCEL;
+    center += centerVelocity;
+    if (center < REGISTER_MIN) { center = REGISTER_MIN + (REGISTER_MIN - center); centerVelocity = -centerVelocity; }
+    if (center > REGISTER_MAX) { center = REGISTER_MAX - (REGISTER_MAX - center); centerVelocity = -centerVelocity; }
+    center = Math.min(REGISTER_MAX, Math.max(REGISTER_MIN, center));
+  };
+  const advanceDensity = () => {
+    if (!opts.density || !opts.densityDrift) return;
+    densityVelocity = densityVelocity * DENSITY_DAMPING + (densityRng() * 2 - 1) * DENSITY_ACCEL;
+    density += densityVelocity;
+    if (density < DENSITY_MIN) { density = DENSITY_MIN + (DENSITY_MIN - density); densityVelocity = -densityVelocity; }
+    if (density > DENSITY_MAX) { density = DENSITY_MAX - (density - DENSITY_MAX); densityVelocity = -densityVelocity; }
+    density = Math.min(DENSITY_MAX, Math.max(DENSITY_MIN, density));
+  };
+  const registerWeight = id => {
+    if (!opts.register) return 1;
+    const d = NOTE_BY_ID.get(id).midi - center;
+    return 1 / (1 + (d / REGISTER_WIDTH) * (d / REGISTER_WIDTH));
+  };
+
+  const collapseAt = index => {
+    const cell = window_[index];
+    const ids = [...cell.candidates];
+    const weights = ids.map(registerWeight);
+    let total = 0;
+    weights.forEach(weight => { total += weight; });
+    let pick = ruleRng() * total;
+    let chosen = ids[ids.length - 1];
+    for (let k = 0; k < ids.length; k += 1) { pick -= weights[k]; if (pick <= 0) { chosen = ids[k]; break; } }
+    cell.value = NOTE_BY_ID.get(chosen);
+    cell.candidates = new Set([chosen]);
+    settle(index, window_, opts, report, history);
+    return cell.value;
+  };
+
+  // 熵顺序：候选最少且 > 1 的 **note** 格先塌（index 0 除外 —— 它有"必须能播"的截止时间）
+  const collapseMinEntropy = () => {
+    const open = [];
+    for (let i = 1; i < WINDOW; i += 1) {
+      const cell = window_[i];
+      if (cell.mark === 'note' && !cell.value && cell.candidates.size > 1) open.push(i);
+    }
+    if (!open.length) return null;
+    let best = [];
+    let bestSize = Infinity;
+    open.forEach(i => {
+      const size = window_[i].candidates.size;
+      if (size < bestSize) { bestSize = size; best = [i]; }
+      else if (size === bestSize) best.push(i);
+    });
+    return collapseAt(best[Math.floor(ruleRng() * best.length)]);
+  };
+
+  // 播种：让窗口里**一半的音格**先有音高（最左格优先，它马上要播）
+  const prime = () => {
+    const want = Math.floor(noteCount() / 2);
+    let guard = 0;
+    while (unresolvedNotes() > want && guard < WINDOW * 4) {
+      guard += 1;
+      report.prime += 1;
+      if (window_[0].mark === 'note' && !window_[0].value) collapseAt(0);
+      else if (!collapseMinEntropy()) break;
+    }
+  };
+  prime();
+
+  // 一拍 = 播放窗口最左格 + 窗口滚动一格。返回这一拍要发的音（休止返回 null）。
+  // ★ 坍缩的触发条件是「**未定音的 note 格数 > 目标**」（目标 = 窗口音格数的一半，与播种一致）。
+  //   原来写成"每拍固定坍缩一次"，在有 rest 的窗口里会出事：note 格流入只有 density 个/拍（0.5 时约 0.5），
+  //   而坍缩是 1 次/拍 ⇒ 未定音格被**抽干**。实测（30 种子 × 400 拍）：density 一开就有 **98.3% 的拍**上
+  //   未定音格 = 0 —— 新格一进来就被定音，它周围只有一个已确定的左邻，"部分确定的未来"名存实亡。
+  //   改成按目标水位触发后，未定音格稳定在目标附近，坍缩时左右都可能有已确定的邻居。
+  const targetUnresolved = () => Math.floor(noteCount() / 2);
+  const stepOnce = () => {
+    advanceRegister();
+    advanceDensity();
+    const head = window_[0];
+    let wasForced = false;
+    if (head.mark === 'note' && !head.value) { collapseAt(0); wasForced = true; report.forcedNow += 1; }
+    const noteId = head.mark === 'note' ? head.value.id : null;
+    played.push(noteId);
+    history.unshift(head.mark === 'note' ? head.value.midi : null);   // 休止记 null：它会打断连续同音与音程链
+    if (history.length > HISTORY) history.length = HISTORY;
+    window_.shift();
+    enterCell();
+    settle(WINDOW - 2, window_, opts, report, history);
+    if (!wasForced && unresolvedNotes() > targetUnresolved()) {
+      if (collapseMinEntropy()) report.ahead += 1;
+    }
+    report.tick += 1;
+    return {
+      note: noteId,
+      wasForced,
+      center,
+      density,
+      windowNotes: noteCount(),
+      unresolved: unresolvedNotes(),
+      determined: WINDOW - unresolvedNotes(),
+    };
+  };
+
+  return {
+    opts,
+    report,
+    window: window_,
+    snapshot,
+    center: () => center,
+    density: () => density,
+    noteCount,
+    unresolvedNotes,
+    playedNotes: () => played.slice(),
+    registerWeights: () => NOTES.map(note => ({ id: note.id, midi: note.midi, w: registerWeight(note.id) })),
+    stepOnce,
+  };
+};
+
+// ═══ 视图：16 个槽位（0 = 现在，15 = 最远的未来）═════════════════════════════════
+const cellsEl = document.getElementById('cells');
+const statusEl = document.getElementById('status');
+const transportControls = document.getElementById('transportControls');
+const driftMarker = document.getElementById('driftMarker');
+const driftValue = document.getElementById('driftValue');
+const densityMarker = document.getElementById('densityMarker');
+const densityValue = document.getElementById('densityValue');
+const setStatus = html => { statusEl.innerHTML = html; };
+
+const slots = Array.from({ length: WINDOW }, (_, index) => {
+  const el = document.createElement('div');
+  el.className = 'cell';
+  const idx = document.createElement('span');
+  idx.className = 'idx';
+  idx.textContent = index === 0 ? '▶ 现在' : '+' + index;
+  const body = document.createElement('div');
+  body.className = 'body';
+  el.appendChild(idx);
+  el.appendChild(body);
+  cellsEl.appendChild(el);
+  return { el, body };
+});
+
+const paint = (snapshot, playing) => {
+  snapshot.forEach((cell, index) => {
+    const slot = slots[index];
+    const isRest = cell.mark === 'rest';
+    slot.el.classList.toggle('rested', isRest);
+    slot.el.classList.toggle('done', !isRest && cell.ids.length === 1);
+    slot.el.classList.toggle('hit', index === 0 && Boolean(playing));
+    slot.el.classList.toggle('now', index === 0);
+    if (isRest) slot.body.innerHTML = '<span class="rest">·</span>';
+    else if (cell.ids.length === 1) slot.body.innerHTML = '<span class="val">' + cell.ids[0] + '</span>';
+    else slot.body.innerHTML = cell.ids.map(id => '<span class="cand">' + id + '</span>').join('');
+  });
+};
+const paintIdle = () => paint(Array.from({ length: WINDOW }, () => ({ mark:'note', ids: NOTES.map(note => note.id), value: null })), false);
+const setReadouts = (center, density) => {
+  driftValue.textContent = center.toFixed(1);
+  driftMarker.style.left = (((center - REGISTER_MIN) / (REGISTER_MAX - REGISTER_MIN)) * 100).toFixed(1) + '%';
+  densityValue.textContent = density.toFixed(2);
+  densityMarker.style.left = (((density - DENSITY_MIN) / (DENSITY_MAX - DENSITY_MIN)) * 100).toFixed(1) + '%';
+};
+
+// ═══ 声音：一个 Tone.Synth + 母带链（音色不在验证范围内）══════════════════════════
+const makeMaster = () => {
+  const limiter = new Tone.Limiter(-1).connect(Tone.Destination);
+  const masterGain = new Tone.Gain(0).connect(limiter);
+  return { masterGain, limiter };
+};
+
+const createEngine = async seed => {
+  const { masterGain, limiter } = makeMaster();
+  // Transport 的 BPM 设成本曲固定的 112：scheduleRepeat 按 tick 网格排程，112 BPM 下八分音符正好 96 tick。
+  // ★ bpm 是只读 getter，必须写 .value。
+  Tone.Transport.bpm.value = BPM;
+  const synth = new Tone.Synth({
+    oscillator: { type:'triangle' },
+    envelope: { attack:0.008, decay:0.18, sustain:0.22, release:RELEASE_S },
+    volume: SYNTH_VOLUME_DB,
+  }).connect(masterGain);
+
+  let stream = null;
+  const signal = { cancelled:false };
+  let repeatId = null;
+
+  const statusHtml = step => {
+    const text = stream.playedNotes().slice(-16).map(id => id || '·').join(' ');
+    return '第 <b>' + stream.report.tick + '</b> 拍 · 本拍 <b>' +
+      (step.note ? NOTE_BY_ID.get(step.note).name : '休止') + '</b>（' +
+      (step.note ? (step.wasForced ? '强制坍缩最左格' : '超前坍缩未来格') : '这一格是休止') + '）' +
+      '<br>' + text +
+      '<br>窗口 <b>' + step.windowNotes + '</b> 音 / 16（未定音 ' + step.unresolved + '）· 疏密 <b>' +
+      step.density.toFixed(2) + '</b> · 音区中心 <b>' + step.center.toFixed(1) +
+      '</b> · 强制 ' + stream.report.forcedNow + ' · 超前 ' + stream.report.ahead;
+  };
+
+  const tick = audioTime => {
+    if (signal.cancelled) return;
+    const step = stream.stepOnce();
+    if (step.note) {
+      const note = NOTE_BY_ID.get(step.note);
+      synth.triggerAttackRelease(note.name, CELL_S, audioTime, VELOCITY);
+    }
+    Tone.Draw.schedule(() => {
+      paint(stream.snapshot(), true);
+      setReadouts(step.center, step.density);
+      setStatus(statusHtml(step));
+    }, audioTime);
+  };
+
+  const schedule = () => {
+    if (repeatId !== null) { Tone.Transport.clear(repeatId); repeatId = null; }
+    Tone.Draw.cancel(0);
+    paintIdle();
+    setReadouts(REGISTER_START, DENSITY_START);
+    stream = createStream(seed);        // 暂停后再播 = 用同一颗种子从窗口起点重来（同一首）
+    signal.cancelled = false;
+    const startAt = Tone.Transport.seconds + START_LEAD_S;
+    repeatId = Tone.Transport.scheduleRepeat(tick, CELL_S, startAt);
+  };
+  const end = () => {
+    signal.cancelled = true;
+    // ★ 先停调度再收声音：Tone.Synth（单音）没有 releaseAll，异常若挡在 Transport.stop() 之前就是"停止还在响"
+    if (repeatId !== null) { Tone.Transport.clear(repeatId); repeatId = null; }
+    Tone.Draw.cancel(0);
+    Tone.Transport.stop();
+    Tone.Transport.cancel();
+    try { synth.triggerRelease(Tone.now() + 0.04); } catch (error) { console.warn('[停止] 释放音源失败：', error.message); }
+  };
+  const fadeIn = () => masterGain.gain.linearRampToValueAtTime(Math.pow(10, MASTER_VOLUME_DB / 20), Tone.now() + 0.45);
+  const fadeOut = () => masterGain.gain.linearRampToValueAtTime(0, Tone.now() + 0.35);
+  const deactivate = () => {
+    end();
+    synth.dispose();
+    [masterGain, limiter].forEach(node => node.dispose());
+    try {
+      const timeouts = Tone.getContext()._timeouts;
+      if (timeouts && Array.isArray(timeouts._timeline)) timeouts._timeline.length = 0;
+    } catch (error) {
+      console.warn('[引擎] 清理待执行回调失败：', error.message);
+    }
+  };
+
+  return {
+    seed, schedule, end, fadeIn, fadeOut, deactivate,
+    describe: () => stream.playedNotes().slice(-16).map(id => id || '·').join(' '),
+  };
+};
+
+// ═══ 生命周期与控件 ═════════════════════════════════════════════════════════════
+let engine = null;
+let pendingSeed = null;
+let transition = false;
+
+const playCurrent = async () => {
+  if (transition) return;
+  transition = true;
+  transportControls.setBusy(true);
+  try {
+    await Tone.start();
+    if (!engine) {
+      const text = transportControls.seedValue;
+      const seed = pendingSeed != null ? pendingSeed : (text ? hashSeed(text) : Math.floor(Math.random() * 2 ** 31));
+      pendingSeed = null;
+      engine = await createEngine(seed);
+    }
+    engine.schedule();
+    Tone.Transport.start();
+    engine.fadeIn();
+    transportControls.setPlaying(true);
+  } catch (error) {
+    console.error(error);
+    setStatus('播放失败：' + error.message);
+    transportControls.setPlaying(false);
+  } finally {
+    transition = false;
+    transportControls.setBusy(false);
+  }
+};
+
+// 停止 = 暂停：保留引擎与种子，再按播放从窗口起点重来同一首；换一版/应用种子才重新生成
+const stopCurrent = () => {
+  if (!engine) return;
+  engine.fadeOut();
+  window.setTimeout(() => {
+    engine.end();
+    transportControls.setPlaying(false);
+    setStatus('已停止（暂停）· 最近 ' + engine.describe() + ' · 按播放从窗口起点重放同一首，换一版才重新生成。');
+  }, 380);
+};
+
+const restartCurrent = async randomize => {
+  if (transition) return;
+  transition = true;
+  transportControls.setBusy(true);
+  const old = engine;
+  engine = null;
+  try {
+    if (old) {
+      old.fadeOut();
+      await new Promise(resolve => window.setTimeout(resolve, 380));
+      old.deactivate();
+    }
+    if (randomize) transportControls.clearSeed();
+    paintIdle();
+    setReadouts(REGISTER_START, DENSITY_START);
+  } finally {
+    transition = false;
+    transportControls.setBusy(false);
+    transportControls.setPlaying(false);
+  }
+  await playCurrent();
+};
+
+transportControls.addEventListener('exercise-play', playCurrent);
+transportControls.addEventListener('exercise-stop', stopCurrent);
+transportControls.addEventListener('exercise-regenerate', () => restartCurrent(true));
+transportControls.addEventListener('exercise-seed-apply', () => restartCurrent(false));
+
+window.addEventListener('pagehide', event => {
+  if (event.persisted) return;
+  engine?.deactivate();
+});
+
+paintIdle();
+setReadouts(REGISTER_START, DENSITY_START);
+
+window.exercise = { activate: createEngine };
+</script>
+</body>
+</html>

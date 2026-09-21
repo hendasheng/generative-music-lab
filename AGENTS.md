@@ -79,6 +79,8 @@
 - 但 `Sampler.triggerRelease(note, t)` 会停掉该音高**全部**活动的 source：同音重复时，后一个音自己的释放点会把前一个还在响的长音一起停掉。做法是让旧音在**新音的起音处**退场。
 - `PolySynth.set({ envelope:{ release } })` 会改**所有** voice（与 Sampler 的逐音语义相反）。
 - `new Tone.PolySynth(voice, options)` 的第二个参数是音色选项，写在里面的 `maxPolyphony` **不生效**，要构造之后 `synth.maxPolyphony = n`。
+- **单音 `Tone.Synth` 没有 `releaseAll`**（那是 `PolySynth` / `Sampler` 的接口），松开要用 `triggerRelease`；而且**停止时要先停传输再收声音** —— 顺序反过来时，一次抛错就会把 `Transport.stop()` 一起跳过，表现是"按了停止还在响"（04 0.4 真机检查抓到）。
+- **`Tone.Transport.bpm` 是只读 getter**：要写 `Tone.Transport.bpm.value = 112`；严格模式下直接赋值会抛 `Cannot assign to read only property 'bpm'`。另外 `scheduleRepeat` 按 tick 网格排程，Transport 的 BPM 与曲子不一致时会被量化（120 BPM 下 0.2679s → 0.2682s）。
 - 效果器的延迟时间不要按"建引擎时的 BPM"算死：播放中改 BPM 会让它漂到错误的拍位上。
 
 **可复现与单一来源**
@@ -100,7 +102,7 @@
 | 01 Ambient Pulse | `exercises/01-ambient-pulse/index.html` | 同目录 `README.md`（调式 / 层次 / 鼓型 / 动机系统 / 看门狗阈值） | 六个层次 + 氛围脉冲鼓，单文件 |
 | 02 Aisatsana Markov | `exercises/02-aisatsana-markov/0.4/index.html`（0.3 = 无涟漪基线；0.2 / 0.1 保留） | 同目录 **`视觉规则.md`**：画面规则全在里面（分层与遮挡、由音乐间隔驱动的时长公式、节点与连线的状态机、连线力学、参数总表、可量化验收清单、明确禁止的做法）+ `README.md` | 手写乐句的马尔可夫行走 + 状态图视觉 |
 | 03 Phase Loops | `exercises/03-phase-process/0.3/index.html`（3D 实现在同目录 `stage.js`） | 同目录 `README.md` 的「0.3 当前基线与衔接」 | 十条同轴环带独立旋转，音名用带面 UV 贴图 |
-| 04 Note Tile Collapse | `exercises/04-wfc-loom/0.3/index.html` | [`算法规则.md`](exercises/04-wfc-loom/算法规则.md)（现行完整规格 + 0.2 / 0.3 差异表）→ 再看 `README.md` 的演进与实测数字 | 二维单音 tile WFC，边坍缩边发声；0.3 = 0.2 去掉时值线 + 拍内延迟归零 + 时值统一 1 拍 |
+| 04 Note Tile Collapse | `exercises/04-wfc-loom/0.5/index.html`（**0.5 = 当前**：0.4 的最小 WFC + rolling window + register drift + density drift；0.4 是有已验证基线的有限 16 格版，规格见 [`0.4/实验说明.md`](exercises/04-wfc-loom/0.4/实验说明.md)；动 0.4 / 0.5 之前先读 [`0.4/README.md`](exercises/04-wfc-loom/0.4/README.md) 的「一条规则一验」与 [`0.5/README.md`](exercises/04-wfc-loom/0.5/README.md)，并知道它们**不适用** `算法规则.md`） | 0.3：[`算法规则.md`](exercises/04-wfc-loom/算法规则.md)（现行完整规格 + 0.2 / 0.3 差异表）→ 再看 `README.md` 的演进与实测数字；0.4 / 0.5：各自的 `README.md` | 0.3 二维单音 tile WFC；0.4 一维 16 格 pitch-only；0.5 滚动窗口 + 音区/疏密漂移，可一直跑 |
 
 **改规则要回同步文档**：04 改完同步 `算法规则.md`（它是**现行规格**、不是历史，开头有 0.2 / 0.3 差异表）；02 改画面同步 `视觉规则.md`；改音乐逻辑时同时检查代码注释与页面上的教学说明是否仍然准确。
 

@@ -9,7 +9,7 @@
 | 01 | [Ambient Pulse](exercises/01-ambient-pulse/) | C 自然小调、氛围合成、动机发展与呼吸型节奏 | 打开 `exercises/01-ambient-pulse/index.html` |
 | 02 | [Aisatsana Markov 0.4](exercises/02-aisatsana-markov/0.4/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture；birds 发声期间还有一层"旋转游走的线"涟漪（0.4 = 0.3 + 涟漪，形式借鉴 okazz 的 sketch，仅借动作、不搬代码；涟漪的疏密跟着素材每一段的响度，不是某一刻） | 打开 `exercises/02-aisatsana-markov/0.4/index.html`；上一版是 `0.3/index.html`（没有涟漪的基线） |
 | 03 | [Phase Loops 0.3](exercises/03-phase-process/0.3/) | 独立音符循环、3D 分层环带、固定播放头与音画同步 | 打开 `exercises/03-phase-process/0.3/index.html` |
-| 04 | [Note Tile Collapse 0.3](exercises/04-wfc-loom/0.3/) | WFC 约束坍缩、二维单音 tile 填充、**时间轴上的和声进行**（强拍锁和弦音 + 倾向解决）、**每个音都落在拍点上且时长统一 1 拍**（坍缩固定每拍一次）、钢琴采样 / 合成器双音色与 BPM（0.3 = 0.2 去掉时值线 + 拍内延迟归零 + 时值统一 1 拍） | 打开 `exercises/04-wfc-loom/0.3/index.html`；上一版是 `0.2/index.html`（有时值线与 0.5 拍延迟），更早是 `0.1/index.html`（矩阵织机实验） |
+| 04 | [Note Tile Collapse 0.5](exercises/04-wfc-loom/0.5/) | 最小 WFC（一维 16 格时间序列、A minor 7 个候选、两条硬规则 max interval / max repeat）+ **rolling window**（播完最左格就滚动、右端补新格 ⇒ 可以一直跑的时间系统）+ **register drift**（缓慢漂移的音区中心）+ **density drift**（缓慢漂移的全局疏密，控制窗口整体该有多少个 note；rest 只是时间空位） | 打开 `exercises/04-wfc-loom/0.5/index.html`；`0.4` 是它的基线（有限 16 格、边坍缩边发声），`0.3` / `0.2` / `0.1` 是更早的二维版本（和声进行 + 钢琴采样 / 矩阵织机实验） |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
 
