@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>05 · Probability Grid 0.2</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="../../../shared/exercise-controls.js" defer></script>
+  <script src="sequencer.js" defer></script>
+  <script src="audio.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body><main>
+  <header><div><a class="back" href="../../../index.html">GENERATIVE MUSIC LAB / 05</a>
+    <h1>Probability Grid <small>0.2</small></h1>
+    <p>画下音符，让每一轮有一点不同。</p></div>
+    <exercise-controls id="transportControls" apply-seed></exercise-controls>
+  </header>
+  <section class="toolbar" aria-label="音乐设置">
+    <label>速度 <input id="bpm" type="number" min="40" max="240" step="1" value="120"> BPM</label>
+    <label>根音 <select id="root" aria-label="根音"></select></label>
+    <label>音阶 <select id="scale" aria-label="音阶"></select></label>
+    <div class="tools"><button id="draw" aria-pressed="true">绘制</button><button id="erase" aria-pressed="false">擦除</button></div>
+  </section>
+  <div class="legend"><span>↓ 时间 · 16 步循环</span><span>音高 · 12 个音阶位置 →</span></div>
+  <section id="tracks" aria-label="双轨音序器"></section>
+  <footer><span id="status" role="status">准备就绪</span><span id="seedLabel"></span></footer>
+  <p class="help">点击或拖动绘制。实心点每轮触发；弱点按概率触发，越弱越轻。空格播放 / 停止。种子输入后按 Enter 应用。</p>
+</main></body></html>

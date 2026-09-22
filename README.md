@@ -1,6 +1,6 @@
 # Generative Music Lab
 
-一个用于学习、拆解和实践生成式音乐的个人实验仓库。练习以可直接在浏览器中运行的独立作品为主，目前使用 [Tone.js](https://tonejs.github.io/) 构建音频引擎。
+一个用于学习、拆解和实践生成式音乐的个人实验仓库。练习以可直接在浏览器中运行的独立作品为主，01–04 使用 [Tone.js](https://tonejs.github.io/)，05 使用原生 Web Audio 构建音频引擎。
 
 ## 练习
 
@@ -10,6 +10,7 @@
 | 02 | [Aisatsana Markov 0.4](exercises/02-aisatsana-markov/0.4/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture；birds 发声期间还有一层"旋转游走的线"涟漪（0.4 = 0.3 + 涟漪，形式借鉴 okazz 的 sketch，仅借动作、不搬代码；涟漪的疏密跟着素材每一段的响度，不是某一刻） | 打开 `exercises/02-aisatsana-markov/0.4/index.html`；上一版是 `0.3/index.html`（没有涟漪的基线） |
 | 03 | [Phase Loops 0.3](exercises/03-phase-process/0.3/) | 独立音符循环、3D 分层环带、固定播放头与音画同步 | 打开 `exercises/03-phase-process/0.3/index.html` |
 | 04 | [Note Tile Collapse 0.5](exercises/04-wfc-loom/0.5/) | 最小 WFC（一维 16 格时间序列、A minor 7 个候选、两条硬规则 max interval / max repeat）+ **rolling window**（播完最左格就滚动、右端补新格 ⇒ 可以一直跑的时间系统）+ **register drift**（缓慢漂移的音区中心）+ **density drift**（缓慢漂移的全局疏密，按窗口剩余目标分配音符/休止总权重，休止也参与坍缩，最多连续四格休止） | 打开 `exercises/04-wfc-loom/0.5/index.html`；`0.4` 是它的基线（有限 16 格、边坍缩边发声），`0.3` / `0.2` / `0.1` 是更早的二维版本（和声进行 + 钢琴采样 / 矩阵织机实验） |
+| 05 | [Probability Grid 0.2](exercises/05-probability-grid/0.2/) | 双轨 16×12 概率网格、五种可选音色（REVERIE / KALIMBA / RHODES / ACID / MACHINE）、每轨 Sound 面板与空间效果；保留 0.1 基础版 | 打开 `exercises/05-probability-grid/0.2/index.html`，无需联网 |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
 
@@ -30,6 +31,11 @@ generative-music-lab/
 │     ├─ README.md            # WFC / 约束织机的设计记录与各轮实测
 │     ├─ 算法规则.md          # 现行算法的完整规格（数据模型 / 每步顺序 / 权重表 / 边界；开头列了 0.3 的差异）
 │     └─ 0.1/ 0.2/ 0.3/       # 0.3 = 当前版本（0.2 去掉时值线、音头落在拍点、时值统一 1 拍）；0.2 = 有时值线、步长跟音长走的版本；0.1 = 矩阵织机实验
+│  └─ 05-probability-grid/
+│     ├─ README.md            # 音序规则、五种 Sound、版本差异与验证范围
+│     ├─ 0.1/                # 基础音序与短音基线
+│     ├─ 0.2/                # 当前：五种音色、每轨选择、合唱 / 延迟 / 混响
+│     └─ tools/check.cjs     # 离线调度与音色生命周期测试
 ├─ notes/                     # 跨练习的源码阅读与学习笔记
 ├─ shared/                    # 两个以上练习共用的轻量组件或工具
 │  └─ exercise-controls.js    # 公共播放/暂停、种子、reset 控件
@@ -49,7 +55,7 @@ python -m http.server 8000
 
 然后打开 <http://localhost:8000>。
 
-Tone.js 当前从 CDN 加载，因此首次运行需要联网。若以后需要完全离线，可把固定版本放入 `vendor/`，再改为相对路径引用。
+01–04 的 Tone.js 当前从 CDN 加载，因此首次运行需要联网；05 无 CDN 或外部音频依赖，可离线运行。若以后需要完全离线，可把固定版本放入 `vendor/`，再改为相对路径引用。
 
 ## 总音量与母带链约定
 
