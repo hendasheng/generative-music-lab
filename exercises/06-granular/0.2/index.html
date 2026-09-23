@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>06 · Granular / 0.2</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<main>
+  <header><div><a href="../../../index.html" class="eyebrow">GENERATIVE MUSIC LAB / 06</a><h1>Granular<span>0.2</span></h1></div><exercise-controls apply-seed></exercise-controls></header>
+  <section class="instrument">
+    <div class="toolbar"><div><span class="eyebrow">01 / SOURCE</span><p id="sampleName">内置音源 · 谐波片段</p></div><div class="actions"><button id="demo">内置音源</button><label class="file-button">导入音频<input id="file" type="file" accept="audio/*"></label></div></div>
+    <div class="stage"><canvas id="wave" aria-label="波形及正在发声的粒子"></canvas><input id="positionSurface" type="range" min="0" max="1" step="0.001" value="0.35" aria-label="在波形上选择取样位置"></div>
+    <div class="axis"><span>00:00</span><span>拖动选择取样位置 · 上下分布表示左右声像</span><span id="duration">00:08</span></div>
+    <section class="morph-section">
+      <div class="morph-copy"><span class="eyebrow">02 / XY CONTROL</span><h2>SOUND MORPH</h2><p id="morphDescription" aria-live="polite">中央 · 基础声音</p><p class="hint">拖向四角混合效果，松手保留位置。<br>中央恢复基础声音。数值和滑块显示调制结果，小字保留基础值。</p><button id="centerMorph">回到中央</button></div>
+      <div id="morphPad" class="morph-pad" tabindex="0" role="group" aria-label="XY 音色控制，方向键移动，Home 回中央">
+        <span class="corner tl">Reverse</span><span class="corner tr">Gater</span><span class="corner bl">Chorus</span><span class="corner br">Scatter</span><div class="cross horizontal"></div><div class="cross vertical"></div><div id="morphDot"></div>
+      </div>
+    </section>
+    <div id="parameters" class="parameters"></div>
+  </section>
+  <footer><span id="status" role="status">就绪 · 点击播放开始</span><span>HANN WINDOW / GRANULAR SAMPLER</span></footer>
+  <p class="note">先用旋钮设定基础声音，再拖动 XY 演奏。浅灰粒子正放，橙色粒子倒放；Gater 会使粒子随声音明暗起伏。</p>
+</main>
+<script src="../../../shared/exercise-controls.js"></script><script src="engine.js"></script><script src="app.js"></script>
+</body></html>

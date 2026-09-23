@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>06 · Granular / 0.1</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<main>
+  <header><div><a href="../../../index.html" class="eyebrow">GENERATIVE MUSIC LAB / 06</a><h1>Granular<span>0.1</span></h1></div><exercise-controls apply-seed></exercise-controls></header>
+  <section class="instrument">
+    <div class="toolbar"><div><span class="eyebrow">SOURCE AUDIO</span><p id="sampleName">内置音源 · 谐波片段</p></div><div class="actions"><button id="demo">内置音源</button><label class="file-button">导入音频<input id="file" type="file" accept="audio/*"></label></div></div>
+    <div class="stage"><canvas id="wave" aria-label="波形及正在发声的粒子"></canvas><input id="positionSurface" type="range" min="0" max="1" step="0.001" value="0.35" aria-label="在波形上选择取样位置"></div>
+    <div class="axis"><span>00:00</span><span>拖动选择取样位置 · 上下分布表示左右声像</span><span id="duration">00:08</span></div>
+    <div id="parameters" class="parameters"></div>
+  </section>
+  <footer><span id="status" role="status">就绪 · 点击播放开始</span><span>HANN WINDOW / GRANULAR SAMPLER</span></footer>
+  <p class="note">把一段声音拆成细小片段，再重叠播放。先试着改变「粒子长度」和「密度」，听颗粒怎样连成持续的声音。</p>
+</main>
+<script src="../../../shared/exercise-controls.js"></script><script src="engine.js"></script><script src="app.js"></script>
+</body></html>

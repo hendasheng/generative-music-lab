@@ -1,6 +1,6 @@
 # Generative Music Lab
 
-一个用于学习、拆解和实践生成式音乐的个人实验仓库。练习以可直接在浏览器中运行的独立作品为主，01–04 使用 [Tone.js](https://tonejs.github.io/)，05 使用原生 Web Audio 构建音频引擎。
+一个用于学习、拆解和实践生成式音乐的个人实验仓库。练习以可直接在浏览器中运行的独立作品为主，01–04 使用 [Tone.js](https://tonejs.github.io/)，05–06 使用原生 Web Audio 构建音频引擎。
 
 ## 练习
 
@@ -11,6 +11,7 @@
 | 03 | [Phase Loops 0.3](exercises/03-phase-process/0.3/) | 独立音符循环、3D 分层环带、固定播放头与音画同步 | 打开 `exercises/03-phase-process/0.3/index.html` |
 | 04 | [Note Tile Collapse 0.5](exercises/04-wfc-loom/0.5/) | 最小 WFC（一维 16 格时间序列、A minor 7 个候选、两条硬规则 max interval / max repeat）+ **rolling window**（播完最左格就滚动、右端补新格 ⇒ 可以一直跑的时间系统）+ **register drift**（缓慢漂移的音区中心）+ **density drift**（缓慢漂移的全局疏密，按窗口剩余目标分配音符/休止总权重，休止也参与坍缩，最多连续四格休止） | 打开 `exercises/04-wfc-loom/0.5/index.html`；`0.4` 是它的基线（有限 16 格、边坍缩边发声），`0.3` / `0.2` / `0.1` 是更早的二维版本（和声进行 + 钢琴采样 / 矩阵织机实验） |
 | 05 | [Probability Grid 0.2](exercises/05-probability-grid/0.2/) | 学习 SQIA 音序器：双轨 16×12 概率网格、五种可选音色（REVERIE / KALIMBA / RHODES / ACID / MACHINE）、每轨 Sound 面板与空间效果；保留 0.1 基础版 | 打开 `exercises/05-probability-grid/0.2/index.html`，无需联网 |
+| 06 | [Granular 0.2](exercises/06-granular/0.2/) | 粒子采样器：四角 XY 联动、音频导入、种子随机和声音事件可视化；保留 0.1 | 打开 `exercises/06-granular/0.2/index.html`，无需联网 |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
 
@@ -23,25 +24,35 @@ generative-music-lab/
 │  ├─ 01-ambient-pulse/
 │  │  ├─ README.md            # 本练习的目标与音乐设计
 │  │  └─ index.html           # 可直接运行的作品
-│  └─ 02-aisatsana-markov/
-│     ├─ README.md            # 本练习的演进与实测数据
-│     ├─ 视觉规则.md          # 本练习专有的视觉规范（可复用的规则文档）
-│     ├─ 0.1/ 0.2/ 0.3/ 0.4/   # 各版本的实现文件（0.4 = 当前版本）
-│  └─ 04-wfc-loom/
-│     ├─ README.md            # WFC / 约束织机的设计记录与各轮实测
-│     ├─ 算法规则.md          # 现行算法的完整规格（数据模型 / 每步顺序 / 权重表 / 边界；开头列了 0.3 的差异）
-│     └─ 0.1/ 0.2/ 0.3/       # 0.3 = 当前版本（0.2 去掉时值线、音头落在拍点、时值统一 1 拍）；0.2 = 有时值线、步长跟音长走的版本；0.1 = 矩阵织机实验
-│  └─ 05-probability-grid/
-│     ├─ README.md            # 音序规则、五种 Sound、版本差异与验证范围
-│     ├─ 0.1/                # 基础音序与短音基线
-│     ├─ 0.2/                # 当前：五种音色、每轨选择、合唱 / 延迟 / 混响
-│     └─ tools/check.cjs     # 离线调度与音色生命周期测试
+│  ├─ 02-aisatsana-markov/
+│  │  ├─ README.md            # 本练习的演进与实测数据
+│  │  ├─ 视觉规则.md          # 本练习专有的视觉规范（可复用的规则文档）
+│  │  └─ 0.1/ 0.2/ 0.3/ 0.4/  # 各版本的实现文件（0.4 = 当前版本）
+│  ├─ 03-phase-process/
+│  │  ├─ README.md            # 相位循环的设计记录与实测
+│  │  └─ 0.1/ 0.2/ 0.3/       # 0.3 = 当前版本（3D 实现在同目录 stage.js）
+│  ├─ 04-wfc-loom/
+│  │  ├─ README.md            # WFC / 约束织机的设计记录与各轮实测
+│  │  ├─ 算法规则.md          # 现行算法的完整规格（数据模型 / 每步顺序 / 权重表 / 边界；开头列了 0.3 的差异）
+│  │  ├─ 0.1/ 0.2/ 0.3/ 0.4/ 0.5/ # 0.5 = 当前版本（0.4 的最小 WFC + rolling window + 音区/疏密漂移）；0.4 = 有限 16 格基线（规格见 0.4/实验说明.md）；0.3 = 二维单音 tile WFC（规格见 算法规则.md）；0.2 = 有时值线版本；0.1 = 矩阵织机实验
+│  │  └─ tools/               # 离线桩与真机探针（offline*.mjs / browser-check.mjs）
+│  ├─ 05-probability-grid/
+│  │  ├─ README.md            # 音序规则、五种 Sound、版本差异与验证范围
+│  │  ├─ 0.1/                 # 基础音序与短音基线
+│  │  ├─ 0.2/                 # 当前：五种音色、每轨选择、合唱 / 延迟 / 混响
+│  │  └─ tools/check.cjs      # 离线调度与音色生命周期测试
+│  └─ 06-granular/
+│     ├─ README.md            # 粒子采样器的参数、音频时钟、生命周期与验证范围
+│     ├─ 0.1/                 # 基础粒子采样（内置合成素材 + 音频导入）
+│     ├─ 0.2/                 # 当前：四角 XY 音色联动、参数联动显示
+│     └─ tools/check.cjs      # 离线种子复现、边界、调度与清理测试
 ├─ notes/                     # 跨练习的源码阅读与学习笔记
 ├─ shared/                    # 两个以上练习共用的轻量组件或工具
 │  └─ exercise-controls.js    # 公共播放/暂停、种子、reset 控件
 ├─ index.html                 # 仓库作品索引
 ├─ .editorconfig
 ├─ .gitignore
+├─ AGENTS.md                  # AI 编码代理的工作约定（验证口径与跨练习硬规矩）
 └─ README.md
 ```
 
@@ -55,7 +66,7 @@ python -m http.server 8000
 
 然后打开 <http://localhost:8000>。
 
-01–04 的 Tone.js 当前从 CDN 加载，因此首次运行需要联网；05 无 CDN 或外部音频依赖，可离线运行。若以后需要完全离线，可把固定版本放入 `vendor/`，再改为相对路径引用。
+01–04 的 Tone.js 当前从 CDN 加载，因此首次运行需要联网；05–06 无 CDN 或外部音频依赖，可离线运行。若以后需要完全离线，可把固定版本放入 `vendor/`，再改为相对路径引用。
 
 ## 总音量与母带链约定
 
