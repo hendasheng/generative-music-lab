@@ -107,7 +107,7 @@
 | 03 Phase Loops | `exercises/03-phase-process/0.3/index.html`（3D 实现在同目录 `stage.js`） | 同目录 `README.md` 的「0.3 当前基线与衔接」 | 十条同轴环带独立旋转，音名用带面 UV 贴图 |
 | 04 Note Tile Collapse | `exercises/04-wfc-loom/0.5/index.html`（**0.5 = 当前**：0.4 的最小 WFC + rolling window + register drift + density drift；0.4 是有已验证基线的有限 16 格版，规格见 [`0.4/实验说明.md`](exercises/04-wfc-loom/0.4/实验说明.md)；动 0.4 / 0.5 之前先读 [`0.4/README.md`](exercises/04-wfc-loom/0.4/README.md) 的「一条规则一验」与 [`0.5/README.md`](exercises/04-wfc-loom/0.5/README.md)，并知道它们**不适用** `算法规则.md`） | 0.3：[`算法规则.md`](exercises/04-wfc-loom/算法规则.md)（现行完整规格 + 0.2 / 0.3 差异表）→ 再看 `README.md` 的演进与实测数字；0.4 / 0.5：各自的 `README.md` | 0.3 二维单音 tile WFC；0.4 一维 16 格 pitch-only；0.5 滚动窗口 + 音区/疏密漂移，可一直跑 |
 | 05 Probability Grid | `exercises/05-probability-grid/0.2/index.html` | 同目录上一级 `README.md`：版本差异、五种 Sound、调度及验证范围 | 原生 Web Audio 双轨概率网格；0.2 五种可选音色，0.1 保留基础版；测试入口 `tools/check.cjs` |
-| 06 Granular | `exercises/06-granular/0.2/index.html` | 同目录上一级 `README.md`：参数、音频时钟、生命周期与验证范围 | 原生 Web Audio 粒子采样器；0.2 四角 XY，0.1 保留；离线验证 `tools/check.cjs 0.2` |
+| 06 Granular | `exercises/06-granular/0.3/index.html` | 同目录上一级 `README.md`：参数、音频时钟、生命周期与验证范围 | 原生 Web Audio 粒子采样器；0.3 位置 × 质感 XY 与自由流动；0.2 保留；离线验证 `tools/check.cjs 0.3` |
 
 **改规则要回同步文档**：04 改完同步 `算法规则.md`（它是**现行规格**、不是历史，开头有 0.2 / 0.3 差异表）；02 改画面同步 `视觉规则.md`；改音乐逻辑时同时检查代码注释与页面上的教学说明是否仍然准确。
 

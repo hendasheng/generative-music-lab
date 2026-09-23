@@ -11,7 +11,7 @@
 | 03 | [Phase Loops 0.3](exercises/03-phase-process/0.3/) | 独立音符循环、3D 分层环带、固定播放头与音画同步 | 打开 `exercises/03-phase-process/0.3/index.html` |
 | 04 | [Note Tile Collapse 0.5](exercises/04-wfc-loom/0.5/) | 最小 WFC（一维 16 格时间序列、A minor 7 个候选、两条硬规则 max interval / max repeat）+ **rolling window**（播完最左格就滚动、右端补新格 ⇒ 可以一直跑的时间系统）+ **register drift**（缓慢漂移的音区中心）+ **density drift**（缓慢漂移的全局疏密，按窗口剩余目标分配音符/休止总权重，休止也参与坍缩，最多连续四格休止） | 打开 `exercises/04-wfc-loom/0.5/index.html`；`0.4` 是它的基线（有限 16 格、边坍缩边发声），`0.3` / `0.2` / `0.1` 是更早的二维版本（和声进行 + 钢琴采样 / 矩阵织机实验） |
 | 05 | [Probability Grid 0.2](exercises/05-probability-grid/0.2/) | 学习 SQIA 音序器：双轨 16×12 概率网格、五种可选音色（REVERIE / KALIMBA / RHODES / ACID / MACHINE）、每轨 Sound 面板与空间效果；保留 0.1 基础版 | 打开 `exercises/05-probability-grid/0.2/index.html`，无需联网 |
-| 06 | [Granular 0.2](exercises/06-granular/0.2/) | 粒子采样器：四角 XY 联动、音频导入、种子随机和声音事件可视化；保留 0.1 | 打开 `exercises/06-granular/0.2/index.html`，无需联网 |
+| 06 | [Granular 0.3](exercises/06-granular/0.3/) | 粒子采样器：位置 × 质感 XY、自由流动、音频导入、种子随机和声音事件可视化；保留 0.2 对照 | 打开 `exercises/06-granular/0.3/index.html`，无需联网 |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
 

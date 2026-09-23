@@ -56,6 +56,19 @@ if (G.effective) {
   assert(G.gateLevel(.08,1)<.1); assert.equal(G.gateLevel(.03,1),1);
   console.log('PASS: neutral identity, 100 XY/time combinations, short-source boundaries, four corner mappings and gate phase.');
 }
+if(G.fromXY) {
+  for(const x of [0,.2,.5,.9,1]) for(const y of [0,.25,.5,.75,1]) {
+    const mapped=G.fromXY(x,y), back=G.toXY(mapped);
+    assert(Math.abs(back.x-x)<1e-12 && Math.abs(back.y-y)<1e-12);
+    const p={...G.defaults,...mapped};
+    assert.equal(p.size,G.defaults.size);assert.equal(p.pitch,G.defaults.pitch);
+    const a=G.random('xy'), b=G.random('xy');
+    for(let i=0;i<50;i++) assert.equal(JSON.stringify(G.plan(p,8,a)),JSON.stringify(G.plan({...G.defaults,position:x,spray:(1-y)*.5,reverse:Math.pow(1-y,2.5)},8,b)));
+  }
+  assert.equal(G.fromXY(.5,1).spray,0);assert.equal(G.fromXY(.5,0).spray,.5);
+  assert.equal(G.fromXY(-1,2).position,0);assert.equal(G.fromXY(2,-1).spray,.5);
+  console.log('PASS: 25 XY round trips, bounds, axis directions and 1250 direct-parameter grain comparisons.');
+}
 (async()=>{
   const buffer=new AudioContext().createBuffer(2,44100,44100);
   const engine=await G.create(buffer,{...G.defaults},'test');

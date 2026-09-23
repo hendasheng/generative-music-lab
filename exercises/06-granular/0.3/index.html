@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>06 · Granular / 0.3</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<main>
+  <header><div><a href="../../../index.html" class="eyebrow">GENERATIVE MUSIC LAB / 06</a><h1>Granular<span>0.3</span></h1></div><exercise-controls apply-seed></exercise-controls></header>
+  <section class="instrument">
+    <section class="source-section" aria-label="01 音频">
+    <div class="toolbar"><div><span class="eyebrow">01 / SOURCE</span><p id="sampleName">内置音源 · 谐波片段</p></div><div class="actions"><button id="demo">内置音源</button><label class="file-button">导入音频<input id="file" type="file" accept="audio/*"></label></div></div>
+    <div class="stage"><canvas id="wave" aria-label="波形及正在发声的粒子"></canvas><input id="positionSurface" type="range" min="0" max="1" step="0.001" value="0.35" aria-label="在波形上选择取样位置"></div>
+    <div class="axis"><span>00:00</span><span>拖动选择取样位置 · 上下分布表示左右声像</span><span id="duration">00:08</span></div>
+    </section>
+    <section class="xy-section" aria-label="02 取样控制">
+      <div class="xy-copy"><span class="eyebrow">02 / SAMPLE FIELD</span><h2>POSITION × TEXTURE</h2><p class="hint">左右寻找片段，向上展开散布并加强倒放。手动操作关闭自由流动。</p><button id="freeFlow" aria-pressed="false">自由流动</button></div>
+      <div id="xyPad" class="xy-pad" tabindex="0" role="group" aria-label="取样控制：左右选择位置，上下调整散布与倒放，空格切换自由流动">
+        <span class="axis-label top">散开 / 纯倒放</span><span class="axis-label bottom">聚焦 / 正放</span><span class="axis-label left">起点</span><span class="axis-label right">终点</span><div class="cross horizontal"></div><div class="cross vertical"></div><div id="xyDot"></div>
+      </div>
+      <p id="xyDescription" class="xy-readout">位置 35% · 散布 ±12% · 倒放 0%</p>
+    </section>
+    <div id="parameters" class="parameters"></div>
+  </section>
+  <footer><span id="status" role="status">就绪 · 点击播放开始</span><span>HANN WINDOW / GRANULAR SAMPLER</span></footer>
+  <p class="note">左右寻找片段，向上散开并逐渐倒放，向下聚焦正放。XY、滑块与波形共享同一组参数；自由流动让位置、散布、长度、密度和声像以不同速度游走，倒放跟随纵轴，音高保持不变。浅灰粒子正放，橙色粒子倒放。</p>
+</main>
+<script src="../../../shared/exercise-controls.js"></script><script src="engine.js"></script><script src="flow.js"></script><script src="app.js"></script>
+</body></html>
