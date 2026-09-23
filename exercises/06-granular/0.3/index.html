@@ -6,7 +6,7 @@
   <header><div><a href="../../../index.html" class="eyebrow">GENERATIVE MUSIC LAB / 06</a><h1>Granular<span>0.3</span></h1></div><exercise-controls apply-seed></exercise-controls></header>
   <section class="instrument">
     <section class="source-section" aria-label="01 音频">
-    <div class="toolbar"><div><span class="eyebrow">01 / SOURCE</span><p id="sampleName">内置音源 · 谐波片段</p></div><div class="actions"><button id="demo">内置音源</button><label class="file-button">导入音频<input id="file" type="file" accept="audio/*"></label></div></div>
+    <div class="toolbar"><div><span class="eyebrow">01 / SOURCE</span><p id="sampleName">内置音源 · 谐波片段</p></div><div class="actions"><button id="record" aria-pressed="false">录制采样 · 30s</button><button id="demo">内置音源</button><label class="file-button">导入音频<input id="file" type="file" accept="audio/*"></label></div></div>
     <div class="stage"><canvas id="wave" aria-label="波形及正在发声的粒子"></canvas><input id="positionSurface" type="range" min="0" max="1" step="0.001" value="0.35" aria-label="在波形上选择取样位置"></div>
     <div class="axis"><span>00:00</span><span>拖动选择取样位置 · 上下分布表示左右声像</span><span id="duration">00:08</span></div>
     </section>
@@ -22,5 +22,5 @@
   <footer><span id="status" role="status">就绪 · 点击播放开始</span><span>HANN WINDOW / GRANULAR SAMPLER</span></footer>
   <p class="note">左右寻找片段，向上散开并逐渐倒放，向下聚焦正放。XY、滑块与波形共享同一组参数；自由流动让位置、散布、长度、密度和声像以不同速度游走，倒放跟随纵轴，音高保持不变。浅灰粒子正放，橙色粒子倒放。</p>
 </main>
-<script src="../../../shared/exercise-controls.js"></script><script src="engine.js"></script><script src="flow.js"></script><script src="app.js"></script>
+<script src="../../../shared/exercise-controls.js"></script><script src="engine.js"></script><script src="flow.js"></script><script src="recorder.js"></script><script src="app.js"></script>
 </body></html>

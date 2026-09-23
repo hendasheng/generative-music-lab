@@ -1,6 +1,20 @@
 # 06 · Granular
 
-独立编写的粒子采样器。讨论参照 Granula、ZYA granular 和 waa-granular 的机制，不复制其界面、代码或音频资产。
+独立编写的粒子采样器。讨论参照 [Granula](https://granula.serezhaok.com/)、[ZYA granular](https://www.zya.cc/granular) 和 [waa-granular](https://github.com/arekdurlik/waa-granular) 的机制，不复制其界面、代码或音频资产。
+
+跨项目接入前先读 [INTEGRATION.md](INTEGRATION.md)：0.3 文件依赖、接口、参数、控制规则、生命周期适配及验收清单。
+
+## 参考项目与原始链接
+
+以下是本练习讨论、对照学习的入口，不是运行依赖。参考方向描述本项目的学习范围，不代表与原项目功能完全一致。
+
+| 参考 | 原始链接 | 本练习中的参考方向 |
+| --- | --- | --- |
+| Granula · Sergei Diuzhev | [合成器页面](https://granula.serezhaok.com/) · [作者 Patreon](https://www.patreon.com/u78044153) | XY 手势与音色联动的交互思路；0.2 保留四角效果宏对照，0.3 改为位置 × 质感 |
+| ZYA granular | [在线演示](https://www.zya.cc/granular) | 浏览器粒子采样器的基础参数组织与交互对照 |
+| waa-granular · arekdurlik | [GitHub 源码仓库](https://github.com/arekdurlik/waa-granular) | Web Audio 粒子采样实现的代码阅读与机制对照 |
+
+Granula 的页面链接是用户提供的产品入口，不应把它当作开源仓库或推定有代码再分发许可。ZYA 与 waa-granular 分别记录为演示和源码参考，不将两者误记成同一个项目。06 的实际行为以本地版本代码和本文为准。
 
 ## 0.1 · 基础实现
 
@@ -108,3 +122,16 @@ XY、滑块、波形和音频引擎使用同一组实际参数，数值与滑块
 从练习目录执行 `node tools/check.cjs 0.3`：检查 XY 往返映射、轴方向、边界钳制、1250 次映射/直接参数粒子计划对比，以及随机种子、调度、停止清理。脚本语法使用 `node --check`。
 
 本轮另做离线流动检查：倒放端点和中点映射、手动覆盖平滑接入、累计 30 分钟模拟中的参数边界、音高保持。布局完成静态结构检查，确认 01/02 同级及共用固定行高；最新布局未重新进行浏览器视觉验收，代理未实际试听。
+
+
+### 0.3 麦克风采样
+
+音源区新增「录制采样 · 30s」。点击后停止合成器与自由流动，再请求麦克风；按钮显示录制秒数，可随时提前停止。30 秒自动结束，随后本地解码并载入波形，点击播放使用新采样。最大载入长度仍严格裁为 30 秒；浏览器定时器暂停可能使实际采集超过该时间，因此不是硬实时设备限时。录音小于 0.25 秒或失败时保留旧素材。
+
+等待权限可点击取消；录制中禁用播放和其他音源入口，切后台/离开页面取消录音并释放所有麦克风轨道。取消后的迟到授权也会立即释放轨道。没有实时麦克风监听，不自动播放录好的素材。录音只在本地内存中，未添加下载或持久保存。
+
+使用浏览器 MediaRecorder 支持的格式（优先 Opus WebM/Ogg，再 MP4，否则默认格式），请求关闭降噪、自动增益和回声消除，以保留采样质感。权限与设备失败显示具体提示；若本地文件方式不可用，通过 localhost 或 HTTPS 打开并允许麦克风。API 依据：[getUserMedia](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)、[MediaRecorder.stop](https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder/stop)。
+
+`node tools/record-check.cjs` 离线验证手动停止、30 秒定时结束、等待权限取消、拒绝权限、录音取消、过短拒绝及轨道/计时器释放。引擎原回归也通过；未进行真实麦克风录制、浏览器编解码兼容性及录音听感验收。
+
+录制时波形屏显示橙色实时麦克风波形（REC / LIVE INPUT），由 AnalyserNode 读取 2048 点时域数据，沿用现有画面刷新循环；不是整段录音的累计波形。停止并解码成功后切换为完整采样波形；取消/失败恢复旧波形。分析节点不连接扬声器，结束后断开节点并关闭专属分析 AudioContext。离线桩增加波形读取和分析上下文清理检查；真实设备显示尚需浏览器验证。

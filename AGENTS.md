@@ -109,6 +109,8 @@
 | 05 Probability Grid | `exercises/05-probability-grid/0.2/index.html` | 同目录上一级 `README.md`：版本差异、五种 Sound、调度及验证范围 | 原生 Web Audio 双轨概率网格；0.2 五种可选音色，0.1 保留基础版；测试入口 `tools/check.cjs` |
 | 06 Granular | `exercises/06-granular/0.3/index.html` | 同目录上一级 `README.md`：参数、音频时钟、生命周期与验证范围 | 原生 Web Audio 粒子采样器；0.3 位置 × 质感 XY 与自由流动；0.2 保留；离线验证 `tools/check.cjs 0.3` |
 
+**06 跨项目接入**：先读 [`exercises/06-granular/INTEGRATION.md`](exercises/06-granular/INTEGRATION.md)，核对上下文所有权与组件卸载，麦克风录音移植须调用 recorder.cancel 释放轨道及分析上下文；原页面不是现成的可卸载组件。
+
 **改规则要回同步文档**：04 改完同步 `算法规则.md`（它是**现行规格**、不是历史，开头有 0.2 / 0.3 差异表）；02 改画面同步 `视觉规则.md`；改音乐逻辑时同时检查代码注释与页面上的教学说明是否仍然准确。
 
 **03 的两条画面规矩**：圆环动画必须与音频共享同一套时间状态（音频预排 `scheduledFireAt`、视觉 `visibleFireAt`，只有 `Tone.Draw` 到达那一刻才推进视觉，否则播放头与触发对不上）；同心圆语义是"右侧固定播放头、彩色音段顺时针转、前端到达播放头就发声"，不要再加独立的相位圆点或初始刻度。

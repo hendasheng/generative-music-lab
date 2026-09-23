@@ -35,3 +35,11 @@
  .axis,.xy-readout{padding:12px 14px}
  .axis span:nth-child(2){white-space:normal;line-height:12px}
 }
+
+/* Keep source actions inside the fixed header, including microphone capture. */
+.toolbar{display:grid;grid-template-columns:minmax(0,1fr);gap:5px;padding-top:10px;padding-bottom:10px}
+.toolbar .actions{justify-content:flex-start;flex-direction:row;gap:6px;min-width:0}
+.toolbar .actions button,.toolbar .file-button{min-height:28px;padding:5px 8px;font-size:10px}
+.toolbar p{margin:4px 0 0}
+#record[aria-pressed="true"]{background:var(--accent);border-color:#a43e1c;color:#211e18}
+.file-button:has(input:disabled){opacity:.5;pointer-events:none}

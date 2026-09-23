@@ -141,7 +141,7 @@
     if (previous) await previous.deactivate();
   }
   async function play() {
-    if (engine || starting || loading) return;
+    if (engine || starting || loading || recorder.active || recordPreparing) return;
     const ticket = ++generation; starting = true; controls.setBusy(true);
     try {
       const created = await Granular.create(buffer, params, seed);
@@ -158,6 +158,7 @@
     seed=crypto.getRandomValues(new Uint32Array(1))[0].toString(36); controls.clearSeed(); await stop(); play();
   });
   async function load(file) {
+    recorder.cancel();
     const ticket = ++loadGeneration; loading=true; await stop();
     $('status').textContent = '正在读取音源…';
     try {
@@ -173,6 +174,39 @@
     } catch (error) { if (ticket===loadGeneration) $('status').textContent='导入失败，原音源已保留：'+error.message; }
     finally { if (ticket===loadGeneration) { loading=false; controls.setBusy(false); } }
   }
+  let recordPreparing=false,recordEpoch=0;
+  const recordButton=$('record');
+  const recorder=SampleRecorder.create({
+    onState(state,seconds){
+      const busy=state!=='idle';
+      controls.setBusy(busy || loading);$('demo').disabled=busy;$('file').disabled=busy;
+      recordButton.disabled=state==='processing';
+      recordButton.setAttribute('aria-pressed',String(state==='recording'));
+      recordButton.textContent=state==='requesting'?'取消授权等待':state==='recording'?'停止 · '+seconds.toFixed(1)+' / 30s':state==='processing'?'处理中…':'录制采样 · 30s';
+      if(state==='requesting')$('status').textContent='请允许麦克风权限 · 可点击取消';
+      if(state==='recording')$('status').textContent='正在录制麦克风 · 最长 30 秒 · 点击停止后载入';
+    },
+    onResult(blob){return load(new File([blob],'麦克风采样 · '+new Date().toLocaleTimeString(),{type:blob.type}));},
+    onError(error){
+      const messages={NotAllowedError:'麦克风权限未获允许',NotFoundError:'未找到麦克风',NotReadableError:'麦克风被占用或无法读取'};
+      $('status').textContent=(messages[error.name] || error.message)+' · 原音源已保留';
+    }
+  });
+  recordButton.addEventListener('click',async()=>{
+    if(recordPreparing)return;
+    if(recorder.active){
+      if(recordButton.getAttribute('aria-pressed')==='true')recorder.finish();
+      else{recorder.cancel();$('status').textContent='已取消录音 · 原音源已保留';}
+      return;
+    }
+    const epoch=++recordEpoch;recordPreparing=true;recordButton.disabled=true;
+    ++loadGeneration;loading=false;
+    try{await stop();if(epoch===recordEpoch && !document.hidden){recordPreparing=false;recordButton.disabled=false;void recorder.start();}}
+    finally{recordPreparing=false;recordButton.disabled=false;}
+  });
+  function cancelRecording(){++recordEpoch;recorder.cancel();}
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelRecording();});
+  window.addEventListener('pagehide',cancelRecording);
   $('file').addEventListener('change', e => { const file=e.target.files[0]; if(file) load(file); e.target.value=''; });
   $('demo').addEventListener('click', () => load(null));
   document.addEventListener('visibilitychange', () => { if(document.hidden) stop(); });
@@ -188,6 +222,17 @@
     paint.clearRect(0,0,w,h);
     paint.strokeStyle='#393939'; paint.lineWidth=1;
     for(let i=1;i<8;i++){paint.beginPath();paint.moveTo(i*w/8,22);paint.lineTo(i*w/8,h-22);paint.stroke();}
+    const live=recorder.waveform();
+    if(live){
+      paint.strokeStyle='#ed5b2a';paint.lineWidth=1.5;paint.beginPath();
+      for(let i=0;i<live.length;i++){
+        const x=i/(live.length-1)*w,y=h/2-Math.max(-1,Math.min(1,live[i]))*h*.42;
+        if(i===0)paint.moveTo(x,y);else paint.lineTo(x,y);
+      }
+      paint.stroke();paint.fillStyle='#ed5b2a';paint.font='11px monospace';
+      paint.fillText('REC / LIVE INPUT',14,22);
+      requestAnimationFrame(draw);return;
+    }
     paint.fillStyle='#969a95';
     peaks.forEach(([min,max],i)=>paint.fillRect(i*w/peaks.length,h/2-max*h*.32,Math.max(1,w/peaks.length),Math.max(1,(max-min)*h*.32)));
     paint.fillStyle='#e2e2db12';
