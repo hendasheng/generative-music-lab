@@ -38,9 +38,12 @@
   },{passive:false});
   for(const name of ['pointerup','pointercancel']) window.addEventListener(name,releaseMorph);
   pad.addEventListener('lostpointercapture',releaseMorph);
-  window.addEventListener('blur',()=>releaseMorph());
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseMorph();});
+  window.addEventListener('blur',()=>{releaseMorph();editing=null;});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){releaseMorph();editing=null;}});
   pad.addEventListener('dragstart',e=>e.preventDefault());
+  // Native text drags near the thin sliders show a no-drop cursor and block all
+  // dragging until they end; the page has no drop targets, so block drags outright.
+  document.addEventListener('dragstart',e=>e.preventDefault());
   pad.addEventListener('keydown',e=>{const d=e.shiftKey?.1:.025;if(e.key==='Home'){e.preventDefault();setMorph(.5,.5);}else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();setMorph(morph.x+(e.key==='ArrowRight'?d:e.key==='ArrowLeft'?-d:0),morph.y+(e.key==='ArrowDown'?d:e.key==='ArrowUp'?-d:0));}});
   $('centerMorph').addEventListener('click',()=>setMorph(.5,.5));
   setMorph(.5,.5);
