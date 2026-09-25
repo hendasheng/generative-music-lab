@@ -43,3 +43,5 @@
 .toolbar p{margin:4px 0 0}
 #record[aria-pressed="true"]{background:var(--accent);border-color:#a43e1c;color:#211e18}
 .file-button:has(input:disabled){opacity:.5;pointer-events:none}
+
+.output-section{grid-column:1/-1;grid-row:3;border-top:1px solid var(--line)}.output-section>.eyebrow{display:block;padding:12px 18px 0}#outputParameters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}#outputParameters .parameter{grid-column:auto;border-bottom:0}#outputParameters .parameter:last-child{border-right:0}#outputParameters .parameter::before{display:none}

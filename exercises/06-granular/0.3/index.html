@@ -11,16 +11,17 @@
     <div class="axis"><span>00:00</span><span>拖动选择取样位置 · 上下分布表示左右声像</span><span id="duration">00:08</span></div>
     </section>
     <section class="xy-section" aria-label="02 取样控制">
-      <div class="xy-copy"><span class="eyebrow">02 / SAMPLE FIELD</span><h2>POSITION × TEXTURE</h2><p class="hint">左右寻找片段，向上展开散布并加强倒放。手动操作关闭自由流动。</p><button id="freeFlow" aria-pressed="false">自由流动</button></div>
+      <div class="xy-copy"><span class="eyebrow">02 / SAMPLE FIELD</span><h2>POSITION × TEXTURE</h2><p class="hint">左右寻找片段，向下展开散布并加强倒放。手动操作关闭自由流动。</p><button id="freeFlow" aria-pressed="false">自由流动</button></div>
       <div id="xyPad" class="xy-pad" tabindex="0" role="group" aria-label="取样控制：左右选择位置，上下调整散布与倒放，空格切换自由流动">
-        <span class="axis-label top">散开 / 纯倒放</span><span class="axis-label bottom">聚焦 / 正放</span><span class="axis-label left">起点</span><span class="axis-label right">终点</span><div class="cross horizontal"></div><div class="cross vertical"></div><div id="xyDot"></div>
+        <span class="axis-label top">聚焦 / 正放</span><span class="axis-label bottom">散开 / 纯倒放</span><span class="axis-label left">起点</span><span class="axis-label right">终点</span><div class="cross horizontal"></div><div class="cross vertical"></div><div id="xyDot"></div>
       </div>
       <p id="xyDescription" class="xy-readout">位置 35% · 散布 ±12% · 倒放 0%</p>
     </section>
     <div id="parameters" class="parameters"></div>
+    <section class="output-section" aria-label="混响与输出"><span class="eyebrow">03 / SPACE &amp; OUTPUT</span><div id="outputParameters"></div></section>
   </section>
   <footer><span id="status" role="status">就绪 · 点击播放开始</span><span>HANN WINDOW / GRANULAR SAMPLER</span></footer>
-  <p class="note">左右寻找片段，向上散开并逐渐倒放，向下聚焦正放。XY、滑块与波形共享同一组参数；自由流动让位置、散布、长度、密度和声像以不同速度游走，倒放跟随纵轴，音高保持不变。浅灰粒子正放，橙色粒子倒放。</p>
+  <p class="note">左右寻找片段，向下散开并逐渐倒放，向上聚焦正放。XY、滑块与波形共享同一组参数；自由流动让位置、散布、长度、密度和声像以不同速度游走，倒放跟随纵轴，音高保持不变。浅灰粒子正放，橙色粒子倒放。</p>
 </main>
 <script src="../../../shared/exercise-controls.js"></script><script src="engine.js"></script><script src="flow.js"></script><script src="recorder.js"></script><script src="app.js"></script>
 </body></html>

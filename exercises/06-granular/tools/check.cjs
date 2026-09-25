@@ -7,11 +7,12 @@ class Param {
   constructor() { this.value=0; }
   setValueAtTime(v) { assert(Number.isFinite(v)); this.value=v; }
   linearRampToValueAtTime(v) { assert(Number.isFinite(v)); this.value=v; }
+  setTargetAtTime(v) { assert(Number.isFinite(v));this.value=v; }
   cancelScheduledValues() {}
   setValueCurveAtTime(curve,t,duration) { assert(t>=0 && duration>0); assert(curve.every(Number.isFinite)); assert.equal(curve[0],0); assert(Math.abs(curve.at(-1))<1e-7); }
 }
 class Node {
-  constructor(ctx) { this.ctx=ctx; this.gain=new Param(); this.pan=new Param(); this.playbackRate=new Param(); this.threshold=new Param();this.knee=new Param();this.ratio=new Param();this.attack=new Param();this.release=new Param();this.connected=false; ctx.nodes.push(this); }
+  constructor(ctx) { this.ctx=ctx; this.frequency=new Param();this.Q=new Param();this.gain=new Param(); this.pan=new Param(); this.playbackRate=new Param(); this.threshold=new Param();this.knee=new Param();this.ratio=new Param();this.attack=new Param();this.release=new Param();this.connected=false; ctx.nodes.push(this); }
   connect(n) { this.connected=true; return n; }
   disconnect() { this.connected=false; }
   start(t,offset) { assert(t>=this.ctx.currentTime); assert(offset>=0 && offset<this.buffer.duration); this.ctx.starts.push({t,offset,rate:this.playbackRate.value}); }
@@ -21,6 +22,8 @@ class AudioContext {
   constructor() { context=this;this.currentTime=0;this.sampleRate=44100;this.nodes=[];this.starts=[];this.destination={}; }
   async resume() {}
   async close() { this.closed=true; }
+  createBiquadFilter() { return new Node(this); }
+  createConvolver() { return new Node(this); }
   createGain() { return new Node(this); }
   createDynamicsCompressor() { return new Node(this); }
   createBufferSource() { return new Node(this); }
@@ -63,20 +66,51 @@ if(G.fromXY) {
     const p={...G.defaults,...mapped};
     assert.equal(p.size,G.defaults.size);assert.equal(p.pitch,G.defaults.pitch);
     const a=G.random('xy'), b=G.random('xy');
-    for(let i=0;i<50;i++) assert.equal(JSON.stringify(G.plan(p,8,a)),JSON.stringify(G.plan({...G.defaults,position:x,spray:(1-y)*.5,reverse:Math.pow(1-y,2.5)},8,b)));
+    for(let i=0;i<50;i++) assert.equal(JSON.stringify(G.plan(p,8,a)),JSON.stringify(G.plan({...G.defaults,position:x,spray:y*.5,reverse:Math.pow(y,2.5)},8,b)));
   }
-  assert.equal(G.fromXY(.5,1).spray,0);assert.equal(G.fromXY(.5,0).spray,.5);
-  assert.equal(G.fromXY(-1,2).position,0);assert.equal(G.fromXY(2,-1).spray,.5);
+  assert.equal(G.fromXY(.5,1).spray,.5);assert.equal(G.fromXY(.5,0).spray,0);
+  assert.equal(G.fromXY(-1,2).position,0);assert.equal(G.fromXY(2,-1).spray,0);
   console.log('PASS: 25 XY round trips, bounds, axis directions and 1250 direct-parameter grain comparisons.');
+}
+if(G.octaveEvent){
+  for(const duration of [.002,.1,8])for(const pitch of [-24,0,24])for(const position of [0,1]){
+    const base=G.plan({...G.defaults,pitch,position},duration,G.random('octave'));
+    const high=G.octaveEvent(base,duration);
+    const direct=G.dryOctaveEvent(base,duration);assert.equal(direct.rate,base.rate*2);assert(!direct.wetOnly);assert(direct.offset+direct.length*direct.rate<=duration+1e-10);
+    assert.equal(high.rate,base.rate*2);assert(high.wetOnly);assert.equal(high.reverse,base.reverse);
+    assert(high.offset>=0 && high.offset+high.length*high.rate<=duration+1e-10);
+  }
+  console.log('PASS: octave layer rate, reverse identity and short-source/end boundaries.');
+}
+if(G.inputGain){
+  const bufferOf=value=>({numberOfChannels:2,getChannelData:()=>new Float32Array(1000).fill(value)});
+  assert.equal(G.inputGain(bufferOf(0)),1);
+  assert.equal(G.inputGain(bufferOf(.0001)),1);
+  assert.equal(G.inputGain(bufferOf(.01)),4);
+  assert.equal(G.inputGain(bufferOf(.9)),1);
+  const transient=new Float32Array(1000).fill(.01);transient[0]=.8;
+  const source={numberOfChannels:1,getChannelData:()=>transient};
+  const snapshot=transient.slice();assert(G.inputGain(source)<=.85/.8+1e-7);assert.deepEqual(transient,snapshot);
+  for(const seconds of [1,8,30])assert(Math.abs(G.defaultSpray(seconds)*seconds-.25)<1e-12);
+  console.log('PASS: silence floor, +12dB gain cap, peak headroom, unchanged source, duration-independent default spread.');
 }
 (async()=>{
   const buffer=new AudioContext().createBuffer(2,44100,44100);
   const engine=await G.create(buffer,{...G.defaults},'test');
   engine.schedule(); const count=context.starts.length;assert(count>0);
+  const initialDry=engine.events.filter(e=>!e.wetOnly).map(e=>({t:e.when}));
   engine.schedule();assert.equal(context.starts.length,count);assert.equal(intervals.size,1);
   assert(context.starts.every(s=>s.t>=.035 && s.t<.12));
   context.currentTime=10; [...intervals.values()][0]();
   assert(context.starts.slice(count).every(s=>s.t>10));
+  if(G.inputGain){
+    const dry=initialDry;
+    const gaps=dry.slice(1).map((e,i)=>e.t-dry[i].t);
+    assert(gaps.every(g=>g>=.9/G.defaults.density && g<=1.1/G.defaults.density));
+    assert(gaps.some(g=>Math.abs(g-1/G.defaults.density)>1e-8));
+    const convolver=context.nodes.find(n=>n.buffer?.duration===4.5);
+    assert(convolver);assert(convolver.buffer.getChannelData(0).every(Number.isFinite));
+  }
   await engine.deactivate();assert.equal(intervals.size,0);assert.equal(engine.active,0);assert.equal(engine.events.length,0);assert(context.closed);assert(context.nodes.every(n=>!n.connected));
   await engine.deactivate();
   console.log('PASS: deterministic grains, 144 boundary combinations, finite envelopes/gain, audio scheduling, idempotency, stall recovery and cleanup.');

@@ -54,12 +54,14 @@ await engine.deactivate();
 | 键 | 范围 | 默认值 | 单位/语义 |
 | --- | --- | --- | --- |
 | position | 0–1 | 0.35 | 相对整段音源的取样中心 |
-| spray | 0–0.5 | 0.12 | 相对整段音源的起点随机半径，0.12 表示 ±12% |
+| spray | 0–0.5 | 0.03125 | 八秒初始素材对应 ±250ms；加载后由 defaultSpray(duration) 重设 |
 | reverse | 0–1 | 0 | 每颗粒子倒放概率 |
 | size | 15–1000 | 180 | 输出时长，毫秒 |
 | density | 2–60 | 24 | 每秒粒子数，可为小数 |
 | pan | 0–1 | 0.8 | 随机声像范围 ±pan，不是固定左右平衡 |
 | pitch | −24–24 | 0 | 半音，播放倍率 `2 ** (pitch / 12)` |
+| reverb | 0–1 | 0.3 | 并行混响发送量，保持干声 |
+| volume | −24–6 | 0 | dB，相对既有 +6dB master 的输出增益 |
 
 复制 defaults，不直接修改全局 defaults。引擎持有 params 的对象引用；响应式框架若替换对象，必须把更新写回引擎持有的对象，不能只刷新 UI。
 
@@ -71,11 +73,11 @@ await engine.deactivate();
 
 ```js
 position = x;
-spray = (1 - y) * 0.5;
+spray = y * 0.5;
 reverse = (2 * spray) ** 2.5;
 ```
 
-`Granular.fromXY(x,y)` 返回上述三项并钳制坐标；`toXY(params)` 只根据 position/spray 返回点位。底端纯正放、中点约 18% 倒放、顶端纯倒放。
+`Granular.fromXY(x,y)` 返回上述三项并钳制坐标；`toXY(params)` 只根据 position/spray 返回点位。顶端纯正放、中点约 18% 倒放、底端纯倒放。
 
 **fromXY 本身不处理覆盖规则。** 原 app 的 setXY 在新旧 spray 差值小于 `1e-8` 时移除映射结果中的 reverse，保留手动设定；有纵向变化才重算倒放。独立 Reverse 滑块不移动 XY。单独调整 spray 滑块会移动 XY，但保留当前 reverse。波形拖动只改 position。
 
@@ -120,7 +122,7 @@ pitch 不参与流动。reverse 跟随 spray 映射；开启时保存手动 reve
 ## 7. 调度、视觉与混音
 
 - 内部每 25ms 预排未来 120ms，参数改变不会回写已排粒子。卡顿跳过积压，不补发密集过期粒子。不要用渲染帧驱动粒子发声。
-- 声部上限 192；每颗粒子链为 BufferSource → Hann Gain → StereoPanner → bus → master → compressor → destination。
+- 声部上限 192；每颗粒子链为 BufferSource → Hann Gain → StereoPanner → bus → input 补偿 → 干声 / convolver → wet 并行 → master → output → compressor → destination。
 - master 淡入到 +6dB，末级压缩器不是严格限幅器。与宿主声音合奏时重新评估总增益，避免宿主与引擎重复加 +6dB。
 - events 字段：offset（原音源秒）、length（输出秒）、rate、reverse、pan、peak、when（该引擎音频上下文秒）。
 - 绘制令 age = engine.time − event.when；只画 `0 <= age < length`。正放读取 offset + age × rate；倒放读取 offset + (length − age) × rate。不得用 Date.now/performance.now 直接减 when。
@@ -181,3 +183,24 @@ recorder 实例另提供 `waveform()`：录制中返回重复使用的 2048 点 
 - [arekdurlik/waa-granular 源码仓库](https://github.com/arekdurlik/waa-granular)：Web Audio 粒子采样机制对照。
 
 这些链接用于追溯参考背景，不是本组件的依赖或 API 文档。移植以本地 0.3 实现和本接入说明为准；不要为复刻原项目而恢复 0.2 四角宏，也不要据产品页面推定开源许可。完整参考说明见同目录 README.md 的「参考项目与原始链接」。
+
+
+## 12. 采样增益与空间扩展
+
+0.3 引擎新增 inputGain(buffer)、defaultSpray(duration) 纯函数以及 params.reverb / params.volume。输入补偿按全素材统计 RMS/peak，最多 4 倍，RMS<0.001 不提升，响素材不变，源 buffer 不修改。不得在宿主重复执行同等归一化而无重新标定。
+
+引擎生成独立固定种子的 4.5s 双声道卷积脉冲，默认 ConvolverNode 归一化；干声保持，湿声发送为 reverb × 0.8。volume 经 10^(dB/20) 转换，两个实时音频增益以 30ms setTargetAtTime 平滑。空间与输出不参加自由流动或 XY 映射。末级压缩器前保留 +6dB master。deactivate 必须释放 input/convolver/wet/output 及原节点，停止对完整干湿输出淡出，无尾音续播。
+
+每次 load 成功设置 params.spray=defaultSpray(buffer.duration)，此策略位于 app 控制器；单独调用引擎 create 不会重设 params。fromXY/toXY 的范围和 reverse 曲线未变。粒子调度使用独立 timing 随机流产生 ±10% 间隔扰动。原听感与输出链描述以本节及参数表更新为准。新输出区不改变原三项 XY、四项独立参数分排。
+
+
+### 高八度空间层与高频衰减更新
+
+引擎新增 octaveEvent(base,duration)：rate ×2、length 最多 ×1.25 且钳制素材边界、peak ×0.4、wetOnly=true，继承原粒子声像和倒放。混响非零时用独立 seed+:shimmer 随机流以 45% 概率触发，仅连 shimmerInput（相同素材补偿）→ convolver，不连干声 bus。events 包含该声部，宿主可用 wetOnly 区分。共享 192 声部上限。convolver 返回经过 4.5kHz lowpass 再进入 wet，deactivate 清理 shimmerInput 和滤波器；离线节点桩需支持 createBiquadFilter。主 pitch 参数及 flow.js 不变。demo 移除主动添加的白噪声；导入素材未做降噪。
+
+
+### 0.3 原音与八度的音乐层次
+
+主粒子有 15% 概率直接升高八度，峰值乘 0.8，原音仍占 85%；独立 `:harmony` 随机流，不改变 pitch 滑块。湿声高八度依旧从原始粒子事件派生，不从已升八度的主声部再升，避免意外 +24 半音。混响为 0 时仍可听到少量干声八度。没有加入四度、五度或低八度。干声八度事件有 octave=12 标记，视觉按真实 rate 移动。
+
+自由流动的密度目标改为：开启时密度 × (开启时长度 / 当前长度目标)^0.45 × 0.8–1.2 随机系数，并钳制到 2–60；独立时间曲线平滑接近，因此长粒子倾向更疏、短粒子倾向更密，并非逐帧强制反比。起点保留当前值，手动操作仍关闭流动。离线边界/清理、十分钟流动模拟通过，尚未实际试听本轮改动。

@@ -88,14 +88,16 @@
     ['size','粒子长度','GRAIN SIZE',15,1000,1,v => Math.round(v)+' ms'],
     ['density','密度','DENSITY',2,60,1,v => Number(v.toFixed(1))+' /s'],
     ['pan','立体声散布','STEREO SPREAD',0,1,.01,v => Math.round(v*100)+'%'],
-    ['pitch','音高','PITCH',-24,24,1,v => (v>0?'+':'')+Number(v.toFixed(2))+' st']
+    ['pitch','音高','PITCH',-24,24,1,v => (v>0?'+':'')+Number(v.toFixed(2))+' st'],
+    ['reverb','混响','REVERB',0,1,.01,v=>Math.round(v*100)+'%'],
+    ['volume','输出音量','OUTPUT',-24,6,1,v=>(v>0?'+':'')+Math.round(v)+' dB']
   ];
   const fields = {};
   let editing=null;
   for (const [key,label,en,min,max,step,format] of specs) {
     const div = document.createElement('div'); div.className = 'parameter';
     div.innerHTML = `<label for="p-${key}">${label}<output></output></label><small>${en}</small><input id="p-${key}" type="range" min="${min}" max="${max}" step="${step}" value="${params[key]}">`;
-    $('parameters').append(div);
+    $(key==='reverb' || key==='volume'?'outputParameters':'parameters').append(div);
     const input = div.querySelector('input'), output = div.querySelector('output');
     fields[key] = { input, output, format, min, max, div };
     output.textContent = format(params[key]);
@@ -168,7 +170,7 @@
       const length = Math.min(decoded.length, Math.floor(decoded.sampleRate*30));
       const selected = decoder.createBuffer(Math.min(2,decoded.numberOfChannels),length,decoded.sampleRate);
       for (let c=0;c<selected.numberOfChannels;c++) selected.copyToChannel(decoded.getChannelData(c).subarray(0,length),c);
-      buffer=selected; analyse();
+      buffer=selected; params.spray=Granular.defaultSpray(buffer.duration); displayParameters();syncXY();analyse();
       $('sampleName').textContent=file ? file.name : '内置音源 · 谐波片段';
       $('status').textContent=(decoded.duration>30?'已取前 30 秒':'音源已就绪')+' · 点击播放';
     } catch (error) { if (ticket===loadGeneration) $('status').textContent='导入失败，原音源已保留：'+error.message; }

@@ -9,6 +9,7 @@
   };
   function create(params,seed) {
     const states={};
+    const anchorSize=params.size,anchorDensity=params.density;
     const reverseOffset=params.reverse-Granular.reverseFromSpray(params.spray);
     let elapsed=0;
     for(const key of Object.keys(lanes)) states[key]={rng:Granular.random(seed+':flow:'+key),time:0,from:params[key],to:params[key],duration:0};
@@ -19,6 +20,11 @@
       let target=s.from+(s.rng()<.5?-1:1)*distance*(.4+.6*s.rng());
       if(target<min)target=min+(min-target);
       if(target>max)target=max-(target-max);
+      if(key==='density'){
+        // A gentle inverse relationship, with independent variation and timing.
+        const sizeTarget=states.size.to;
+        target=anchorDensity*Math.pow(anchorSize/Math.max(15,sizeTarget),.45)*(.8+.4*s.rng());
+      }
       s.to=Math.max(min,Math.min(max,target));
     }
     for(const key of Object.keys(lanes))reset(key);
