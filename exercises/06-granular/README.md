@@ -10,7 +10,7 @@
 
 | 参考 | 原始链接 | 本练习中的参考方向 |
 | --- | --- | --- |
-| Granula · Sergei Diuzhev | [合成器页面](https://granula.serezhaok.com/) · [作者 Patreon](https://www.patreon.com/u78044153) | XY 手势与音色联动的交互思路；0.2 保留四角效果宏对照，0.3 改为位置 × 质感 |
+| Granula · Sergei Diuzhev | [GitHub 仓库：serezhaOk/Granula](https://github.com/serezhaOk/Granula) · [合成器页面](https://granula.serezhaok.com/) · [作者 Patreon](https://www.patreon.com/u78044153) | XY 手势与音色联动的交互思路；0.2 保留四角效果宏对照，0.3 改为位置 × 质感 |
 | ZYA granular | [在线演示](https://www.zya.cc/granular) | 浏览器粒子采样器的基础参数组织与交互对照 |
 | waa-granular · arekdurlik | [GitHub 源码仓库](https://github.com/arekdurlik/waa-granular) | Web Audio 粒子采样实现的代码阅读与机制对照 |
 
@@ -168,3 +168,8 @@ XY、滑块、波形和音频引擎使用同一组实际参数，数值与滑块
 自由流动的密度目标改为：开启时密度 × (开启时长度 / 当前长度目标)^0.45 × 0.8–1.2 随机系数，并钳制到 2–60；独立时间曲线平滑接近，因此长粒子倾向更疏、短粒子倾向更密，并非逐帧强制反比。起点保留当前值，手动操作仍关闭流动。离线边界/清理、十分钟流动模拟通过，尚未实际试听本轮改动。
 
 用户已对本轮八度与长度/密度配合的听感给出正向确认；代理验证仍限于离线检查，不将用户反馈表述为代理侧测量。
+
+
+### 0.3 混响清晰度与八度高频处理
+
+混响返回：Convolver → 180Hz 高通 → 原 4.5kHz 低通 → wet → master。只削减湿声低频堆积，原音干声仍直达 bus，不经过新增滤波。湿声高八度单独在进入卷积前通过 3.5kHz 低通；干声高八度通过更轻的 6kHz 低通后进入 bus。三处新增滤波 Q 均为 0.707，保留原增益、概率、音高和 XY 行为，无新增控件。deactivate 需释放 wetLowCut、shimmerTone、octaveTone。离线节点连接与清理检查通过；具体听感仍需实际试听。

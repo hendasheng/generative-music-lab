@@ -12,8 +12,8 @@ class Param {
   setValueCurveAtTime(curve,t,duration) { assert(t>=0 && duration>0); assert(curve.every(Number.isFinite)); assert.equal(curve[0],0); assert(Math.abs(curve.at(-1))<1e-7); }
 }
 class Node {
-  constructor(ctx) { this.ctx=ctx; this.frequency=new Param();this.Q=new Param();this.gain=new Param(); this.pan=new Param(); this.playbackRate=new Param(); this.threshold=new Param();this.knee=new Param();this.ratio=new Param();this.attack=new Param();this.release=new Param();this.connected=false; ctx.nodes.push(this); }
-  connect(n) { this.connected=true; return n; }
+  constructor(ctx) { this.ctx=ctx; this.frequency=new Param();this.Q=new Param();this.gain=new Param(); this.pan=new Param(); this.playbackRate=new Param(); this.threshold=new Param();this.knee=new Param();this.ratio=new Param();this.attack=new Param();this.release=new Param();this.connected=false;this.targets=[]; ctx.nodes.push(this); }
+  connect(n) { this.connected=true;this.targets.push(n); return n; }
   disconnect() { this.connected=false; }
   start(t,offset) { assert(t>=this.ctx.currentTime); assert(offset>=0 && offset<this.buffer.duration); this.ctx.starts.push({t,offset,rate:this.playbackRate.value}); }
   stop(t) { if(t===undefined) this.onended?.(); else assert(Number.isFinite(t)); }
@@ -110,6 +110,13 @@ if(G.inputGain){
     assert(gaps.some(g=>Math.abs(g-1/G.defaults.density)>1e-8));
     const convolver=context.nodes.find(n=>n.buffer?.duration===4.5);
     assert(convolver);assert(convolver.buffer.getChannelData(0).every(Number.isFinite));
+    const hp=context.nodes.find(n=>n.type==='highpass' && n.frequency.value===180);
+    const shimmerTone=context.nodes.find(n=>n.type==='lowpass' && n.frequency.value===3500);
+    const octaveTone=context.nodes.find(n=>n.type==='lowpass' && n.frequency.value===6000);
+    assert(hp && shimmerTone && octaveTone);
+    assert(convolver.targets.includes(hp));assert(shimmerTone.targets.includes(convolver));
+    assert(!octaveTone.targets.includes(convolver));
+    assert(hp.targets.some(n=>n.type==='lowpass' && n.frequency.value===4500));
   }
   await engine.deactivate();assert.equal(intervals.size,0);assert.equal(engine.active,0);assert.equal(engine.events.length,0);assert(context.closed);assert(context.nodes.every(n=>!n.connected));
   await engine.deactivate();

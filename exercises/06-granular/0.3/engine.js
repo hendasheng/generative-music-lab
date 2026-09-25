@@ -69,14 +69,19 @@
     const shimmerInput=ctx.createGain(),damping=ctx.createBiquadFilter();
     input.gain.value=inputGain(buffer);shimmerInput.gain.value=input.gain.value;
     damping.type='lowpass';damping.frequency.value=4500;damping.Q.value=.707;
-    shimmerInput.connect(space);
+    const wetLowCut=ctx.createBiquadFilter(),shimmerTone=ctx.createBiquadFilter(),octaveTone=ctx.createBiquadFilter();
+    wetLowCut.type='highpass';wetLowCut.frequency.value=180;wetLowCut.Q.value=.707;
+    shimmerTone.type='lowpass';shimmerTone.frequency.value=3500;shimmerTone.Q.value=.707;
+    octaveTone.type='lowpass';octaveTone.frequency.value=6000;octaveTone.Q.value=.707;
+    shimmerInput.connect(shimmerTone).connect(space);
+    octaveTone.connect(bus);
     space.buffer=impulse(ctx);
     wet.gain.value=Math.max(0,Math.min(1,params.reverb ?? .3))*.8;
     output.gain.value=10**((params.volume ?? 0)/20);
     master.gain.value = 0;
     compressor.threshold.value = -6; compressor.knee.value = 3; compressor.ratio.value = 12;
     compressor.attack.value = .003; compressor.release.value = .15;
-    bus.connect(input);input.connect(master);input.connect(space);space.connect(damping).connect(wet).connect(master);
+    bus.connect(input);input.connect(master);input.connect(space);space.connect(wetLowCut).connect(damping).connect(wet).connect(master);
     master.connect(output).connect(compressor).connect(ctx.destination);
     const voices = new Set(), events = [];
     let timer = null, next = 0, closed = false, ending = null, rng, timing, shimmer, harmony;
@@ -97,7 +102,7 @@
       for (let i = 0; i < window.length; i++) window[i] = event.peak * .5 * (1 - Math.cos(2 * Math.PI * i / (window.length - 1)));
       gain.gain.value = 0;
       gain.gain.setValueCurveAtTime(window, when, event.length);
-      source.connect(gain).connect(pan).connect(event.wetOnly?shimmerInput:bus);
+      source.connect(gain).connect(pan).connect(event.wetOnly?shimmerInput:event.octave===12?octaveTone:bus);
       const voice = { source, gain, pan };
       voices.add(voice); events.push(event);
       source.onended = () => { source.disconnect(); gain.disconnect(); pan.disconnect(); voices.delete(voice); };
@@ -133,7 +138,7 @@
       }, 50));
       return ending;
     }
-    async function deactivate() { await end(); if (closed) return; closed = true; bus.disconnect(); input.disconnect(); shimmerInput.disconnect(); damping.disconnect(); space.disconnect(); wet.disconnect(); master.disconnect(); output.disconnect(); compressor.disconnect(); await ctx.close(); }
+    async function deactivate() { await end(); if (closed) return; closed = true; bus.disconnect(); input.disconnect(); shimmerInput.disconnect(); shimmerTone.disconnect(); octaveTone.disconnect(); wetLowCut.disconnect(); damping.disconnect(); space.disconnect(); wet.disconnect(); master.disconnect(); output.disconnect(); compressor.disconnect(); await ctx.close(); }
     return { schedule, end, deactivate, events, get time() { return ctx.currentTime; }, get active() { return voices.size; } };
   }
   // The controls and XY are two views of the same position/spray values.

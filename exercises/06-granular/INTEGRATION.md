@@ -178,7 +178,7 @@ recorder 实例另提供 `waveform()`：录制中返回重复使用的 2048 点 
 
 ## 11. 原始参考入口
 
-- [Granula 合成器](https://granula.serezhaok.com/)；作者 [Sergei Diuzhev / Patreon](https://www.patreon.com/u78044153)：XY 音色联动的交互参考。
+- [Granula GitHub 仓库：serezhaOk/Granula](https://github.com/serezhaOk/Granula) · [合成器页面](https://granula.serezhaok.com/)；作者 [Sergei Diuzhev / Patreon](https://www.patreon.com/u78044153)：XY 音色联动的交互参考。
 - [ZYA granular 在线演示](https://www.zya.cc/granular)：基础粒子参数与浏览器交互对照。
 - [arekdurlik/waa-granular 源码仓库](https://github.com/arekdurlik/waa-granular)：Web Audio 粒子采样机制对照。
 
@@ -204,3 +204,8 @@ recorder 实例另提供 `waveform()`：录制中返回重复使用的 2048 点 
 主粒子有 15% 概率直接升高八度，峰值乘 0.8，原音仍占 85%；独立 `:harmony` 随机流，不改变 pitch 滑块。湿声高八度依旧从原始粒子事件派生，不从已升八度的主声部再升，避免意外 +24 半音。混响为 0 时仍可听到少量干声八度。没有加入四度、五度或低八度。干声八度事件有 octave=12 标记，视觉按真实 rate 移动。
 
 自由流动的密度目标改为：开启时密度 × (开启时长度 / 当前长度目标)^0.45 × 0.8–1.2 随机系数，并钳制到 2–60；独立时间曲线平滑接近，因此长粒子倾向更疏、短粒子倾向更密，并非逐帧强制反比。起点保留当前值，手动操作仍关闭流动。离线边界/清理、十分钟流动模拟通过，尚未实际试听本轮改动。
+
+
+### 0.3 混响清晰度与八度高频处理
+
+混响返回：Convolver → 180Hz 高通 → 原 4.5kHz 低通 → wet → master。只削减湿声低频堆积，原音干声仍直达 bus，不经过新增滤波。湿声高八度单独在进入卷积前通过 3.5kHz 低通；干声高八度通过更轻的 6kHz 低通后进入 bus。三处新增滤波 Q 均为 0.707，保留原增益、概率、音高和 XY 行为，无新增控件。deactivate 需释放 wetLowCut、shimmerTone、octaveTone。离线节点连接与清理检查通过；具体听感仍需实际试听。
