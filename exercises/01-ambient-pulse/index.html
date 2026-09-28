@@ -113,7 +113,7 @@
 
   <div class="panel">
     <div class="hint">
-      <b>怎么学：</b>页面下方的日志会实时显示每个音乐决策（和弦进行、张力、鼓形态、旋律动机）。配合教程 <code>../../notes/piece-zed-注解版.md</code>，对照真实源码 <code>generative-pieces/packages/piece-zed/src/piece.js</code> 一起看。<br>
+      <b>怎么学：</b>页面下方的日志会实时显示每个音乐决策（和弦进行、张力、鼓形态、旋律动机）。配合教程 <code>../../notes/generative-fm/piece-zed-注解版.md</code>，对照真实源码 <code>generative-pieces/packages/piece-zed/src/piece.js</code> 一起看。<br>
       <b>音轨控制（Ableton Live 风格）：</b>M = 静音本轨；S = 独奏本轨 —— 只要有任意一轨被独奏，就只有被独奏的轨发声，再点一次 S 取消独奏。<br>
       <b>随机种子：</b>输入同一个种子会<b>完整复现</b>上一次的音乐 —— 这就是 generative.fm 把随机源做成可注入的 <code>window.generativeMusic.rng</code> 的原因（前端用 Mersenne Twister 替换，见 play/src/playback/playback-middleware.js）。
     </div>

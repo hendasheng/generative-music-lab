@@ -37,7 +37,7 @@ http://localhost:8000/exercises/01-ambient-pulse/
 
 | 本练习的部件 | 学习的对象（文件） | 说明 |
 | --- | --- | --- |
-| `activateEngine` / `schedule` / `end` 生命周期 | `generative-pieces/packages/piece-zed/src/piece.js` | 核心契约：activate 分配资源、schedule 沿 Transport 安排演出、end/deactivate 释放。配套逐行中文注解：[`notes/piece-zed-注解版.md`](../../notes/piece-zed-注解版.md) |
+| `activateEngine` / `schedule` / `end` 生命周期 | `generative-pieces/packages/piece-zed/src/piece.js` | 核心契约：activate 分配资源、schedule 沿 Transport 安排演出、end/deactivate 释放。配套逐行中文注解：[`notes/piece-zed-注解版.md`](../../notes/generative-fm/piece-zed-注解版.md) |
 | `makeMasterChain`（Compressor + Gain 总线） | 同上的 `wrapActivate` | 每首曲子输出统一接压缩器与增益总线，含音量归一化思想 |
 | `playNextChord` 递归（`Transport.scheduleOnce`） | 同上的 `playRandomChord` | 随机/进行和弦 + 递归调度，音乐永不结束的核心手法 |
 | `Air` 层（LFO 套 LFO 的噪声风） | 同上的 `createNoise` | 两层 LFO 互调制造永不重复的缓慢变化 |

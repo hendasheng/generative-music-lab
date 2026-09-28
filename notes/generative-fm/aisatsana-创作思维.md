@@ -1,6 +1,6 @@
 # 怎么创作"这样的音乐"—— aisatsana 式创作思维
 
-> 配套：`notes/piece-aisatsana-注解版.js`（代码逐行）、`notes/piece-aisatsana-数据说明.md`（素材长什么样）
+> 配套：`piece-aisatsana-注解版.js`（代码逐行）、`piece-aisatsana-数据说明.md`（素材长什么样）
 > 这篇不讲代码，讲**创作方式本身**：你该怎么想、怎么动手。
 
 ## 0. 核心观点：先有音乐，再有生成

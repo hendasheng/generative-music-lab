@@ -53,7 +53,7 @@
 
 - 可运行练习放在 `exercises/编号-英文短名称/`。
 - 每个练习至少包含 `index.html` 和 `README.md`。
-- 学习笔记与源码注释放在 `notes/`。**某个练习专有的文档要放在该练习目录内**（例如 02 的视觉规范是 [`exercises/02-aisatsana-markov/视觉规则.md`](exercises/02-aisatsana-markov/视觉规则.md)，与它的 README 并列）；`notes/` 只放跨练习的源码阅读与创作方法论。02 0.3 那套状态图视觉的规则（分层与遮挡、由音乐间隔驱动的时长公式、节点/连线的状态机、连线即铰链的力学、参数总表、明确禁止的做法、可量化的验收清单）写在那份视觉规范里：复用或改动这套观感前先读它；练习 README 只记演进与实测，只有「会改变下一次怎么做」的规则才提炼进本文件。
+- 学习笔记与源码注释放在 `notes/`，**按「学习来源」分组：一个来源一个文件夹 + 一份 `README.md` 索引**（如 `notes/generative-fm/`），约定见 [`notes/README.md`](notes/README.md)。文件夹用**来源名**（项目/书/作者），不要用技法名（`markov` / `granular`）—— 同一技法常来自多个来源，同一来源常教好几个技法。**某个练习专有的文档要放在该练习目录内**（例如 02 的视觉规范是 [`exercises/02-aisatsana-markov/视觉规则.md`](exercises/02-aisatsana-markov/视觉规则.md)，与它的 README 并列）；`notes/` 只放跨练习的源码阅读与创作方法论。判断标准：只有一个练习用得上 → 放练习里；两个以上会读 → 放 `notes/<来源>/`。02 0.3 那套状态图视觉的规则（分层与遮挡、由音乐间隔驱动的时长公式、节点/连线的状态机、连线即铰链的力学、参数总表、明确禁止的做法、可量化的验收清单）写在那份视觉规范里：复用或改动这套观感前先读它；练习 README 只记演进与实测，只有「会改变下一次怎么做」的规则才提炼进本文件。
 - 新增练习时更新根目录 `README.md` 和 `index.html`。
 - 只有两个以上练习真正共用的代码或资源，才抽到根目录共享模块。
 - 页面间共用的 `播放 / 停止 / 种子 / 换一版` 控件放在 `shared/exercise-controls.js`。它只负责 UI 和事件，不承载 Tone.js 调度逻辑；各练习继续自己处理 `activate/schedule/end/deactivate` 生命周期。当前形态是一个无构建 Web Component：播放/暂停合并为左侧正方形 icon 按钮，右侧上方是窄种子输入框、下方是同宽 reset icon 按钮；新练习不要再复制旧的 `playBtn/stopBtn/seedInput/regenerateBtn` DOM 和样式。

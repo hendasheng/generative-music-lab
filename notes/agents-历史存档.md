@@ -39,7 +39,7 @@
 
 ## 04 节奏：observe 顺序不是时间轴，而且 Tone 有两套时间轴（2026-09-20）
 
-04 0.2 的触发原来跑在 `window.setTimeout(tick, value === 'rest' ? 170 : 310)` 上，`Tone.Transport` 一个事件都没排（违反 [`notes/piece-zed-注解版.md`](../notes/piece-zed-注解版.md) 第 205 行）。但用户报的「完全没有音乐性」不止这一条，实测（把 0.2 的真实脚本放进假 DOM + 虚拟时钟 + 假 Transport 里跑完 64 次 observe）是三件事叠在一起，必须一起修：
+04 0.2 的触发原来跑在 `window.setTimeout(tick, value === 'rest' ? 170 : 310)` 上，`Tone.Transport` 一个事件都没排（违反 [`generative-fm/piece-zed-注解版.md`](generative-fm/piece-zed-注解版.md) 第 205 行）。但用户报的「完全没有音乐性」不止这一条，实测（把 0.2 的真实脚本放进假 DOM + 虚拟时钟 + 假 Transport 里跑完 64 次 observe）是三件事叠在一起，必须一起修：
 
 - **触发顺序不是时间轴**：`chooseCell` 按「候选最少 / 熵最低」选格，是信息论顺序；cell 自带的 `offset` 只是「相对自己那次 observe 的延迟」。实测后果：相邻发声间隔有 **11–14 个互不成倍数的值**；以界面自己画的 0.5s 单位当拍子，落点相位**均匀**（10 个桶 25–37，理论 29.4）⇒ 没有拍感；发声时刻与 `col` 的相关在 5 个种子里从 −0.80 跳到 +0.67 ⇒ 列与时间没有稳定关系。★ 由此得出一条规则：**重音不能来自格子的 `col`**（空间坐标与播放时刻无关，用 col 当节拍位置只是在随机时刻撒重音），重音只能来自时钟或来自音乐结构。修法：一拍 `STEP_S = 0.5s`（120 BPM）=`time-lane` 的一整条宽度，`offset` 0/0.125/0.25/0.375 变成拍内第 1–4 个十六分位置，力度 0.40–0.80 由「小节第 1/3 拍 + 16 步呼吸弧」给出。
 - **单声部会抢音**：64 格共用一个 `Tone.MonoSynth`，attack 中位间隔 0.31s、时值 0.125–0.93s、release 1.15s ⇒ **73–83% 的音在走完自己时值前被抢占**，既没有旋律线也没有真正的留白。修法是按音区分 `Tone.PolySynth(Tone.MonoSynth)` 池（保留原滤波包络音色）。★ `new Tone.PolySynth(voice, options)` 的**第二个参数是音色选项**，写进里面的 `maxPolyphony` 不会生效（`optionsFromArguments` 把整个第二参数放进 `options.options`），要构造之后 `synth.maxPolyphony = n` 赋值。

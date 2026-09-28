@@ -636,7 +636,7 @@ const chooseValue = (cell, rng, ringing = [], phraseRest = false, harmony = null
 
 // 一次 observe = 一个时间步，步与步之间固定 STEP_S，全部排在 Tone.Transport 上。
 // 三条硬规矩：
-//  ① 绝不用 setTimeout 做音乐调度（见 notes/piece-zed-注解版.md：它跟着主线程漂移）；
+//  ① 绝不用 setTimeout 做音乐调度（见 notes/generative-fm/piece-zed-注解版.md：它跟着主线程漂移）；
 //  ② **两套时间轴不能混用**：`Transport.scheduleOnce(fn, time)` 的 `time` 是**传输时间**，
 //     而回调收到的 `time` 参数是**音频上下文时间**（Tone 的约定，官方示例就是把回调的 time 直接
 //     喂给 `Tone.Draw.schedule`）。所以下一步用自己维护的 `stepAt`（传输时间轴）来排，回调的

@@ -47,7 +47,10 @@ generative-music-lab/
 │     ├─ INTEGRATION.md       # 跨项目接入契约（带哪些文件 / 接口 / 所有权 / 卸载）
 │     ├─ 0.1/ 0.2/ 0.3/ 0.3.1/ 0.3.2/   # 0.3.2 = 当前版本；版本目录内不放说明文档
 │     └─ tools/               # 离线桩与真机探针（check / record-check / live-check / layout-check / camera-layout-check / engine-sync-check）
-├─ notes/                     # 跨练习的源码阅读与学习笔记
+├─ notes/                     # 跨练习的源码阅读与学习笔记，按「学习来源」分组
+│  ├─ README.md               # notes 约定与来源索引
+│  ├─ agents-历史存档.md       # 仓库自身的元文档（AGENTS.md 精简时移出的原文）
+│  └─ generative-fm/          # 来源：Generative.fm 一族源码；别的来源另开同级文件夹
 ├─ shared/                    # 两个以上练习共用的轻量组件或工具
 │  └─ exercise-controls.js    # 公共播放/暂停、种子、reset 控件
 ├─ index.html                 # 仓库作品索引
@@ -123,12 +126,15 @@ pwsh tools/serve-public.ps1 -Port 8800
 
 ### 本仓库笔记
 
+`notes/` 按**学习来源**分组（一个来源一个文件夹），约定见 [`notes/README.md`](notes/README.md)。
+
 - [02 视觉规则](exercises/02-aisatsana-markov/视觉规则.md) —— **练习专有的视觉规范**（放在该练习目录内）：02 「持续存在的状态图」的完整规则 —— 分层与遮挡、由音乐间隔驱动的时长公式、节点与连线的状态机、连线即铰链的力学、参数总表、明确禁止的做法、可量化的验收清单（参考实现 `0.4/index.html`；§14.6 是 birds 涟漪那层，§15 是"什么时候允许用随机"）。要在别的练习里复用同一套观感，直接读这份
-- [piece-zed 中文注解](notes/piece-zed-注解版.md) —— 对照 pieces-alex-bainter 仓库内 `packages/piece-zed/src/piece.js` 逐段阅读
-- [piece-aisatsana 中文注解（代码注释版）](notes/piece-aisatsana-注解版.js) —— 对照 `packages/piece-aisatsana/src/piece.js` 逐行阅读（记忆 + 重排范式，对应 02 练习）
-- [piece-aisatsana 素材数据说明](notes/piece-aisatsana-数据说明.md) —— instructions.json 的结构、真实示例与量化演示
-- [aisatsana 创作过程实录](notes/aisatsana-创作过程实录.md) —— 用原曲 355 个音符的真实数据把「素材 → 网格 → 乐句 → 衔接」完整走一遍（所有数字由脚本算出）
-- [aisatsana 式创作思维](notes/aisatsana-创作思维.md) —— **创作方法论**：怎么想、怎么动手（素材 → 网格 → 乐句块 → 衔接 → 重组），不讲代码
+- **Generative.fm 一族**（文件夹索引：[`notes/generative-fm/`](notes/generative-fm/README.md)）：
+  - [piece-zed 中文注解](notes/generative-fm/piece-zed-注解版.md) —— 对照 pieces-alex-bainter 仓库内 `packages/piece-zed/src/piece.js` 逐段阅读
+  - [piece-aisatsana 中文注解（代码注释版）](notes/generative-fm/piece-aisatsana-注解版.js) —— 对照 `packages/piece-aisatsana/src/piece.js` 逐行阅读（记忆 + 重排范式，对应 02 练习）
+  - [piece-aisatsana 素材数据说明](notes/generative-fm/piece-aisatsana-数据说明.md) —— instructions.json 的结构、真实示例与量化演示
+  - [aisatsana 创作过程实录](notes/generative-fm/aisatsana-创作过程实录.md) —— 用原曲 355 个音符的真实数据把「素材 → 网格 → 乐句 → 衔接」完整走一遍（所有数字由脚本算出）
+  - [aisatsana 式创作思维](notes/generative-fm/aisatsana-创作思维.md) —— **创作方法论**：怎么想、怎么动手（素材 → 网格 → 乐句块 → 衔接 → 重组），不讲代码
 
 ## 许可
 
