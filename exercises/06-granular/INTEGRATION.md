@@ -43,7 +43,7 @@ await engine.deactivate();
 - `deactivate()` 等待 end，然后断开总线并关闭引擎自己的 AudioContext。停止后需要重新 create 才能再播放；不是暂停/继续接口。
 - `time` 是只读音频上下文当前秒数；`active` 包含待播放与活动声部，不等于当前可听见粒子数。
 - `events` 为引擎维护的事件数组，可只读用于显示；不要 splice 或更改事件，不要把它当完整录制历史。
-- `Granular.random(seed)`、`plan(params, durationSeconds, rng)` 为纯计算；`demo(context)` 生成八秒双声道内置素材。
+- `Granular.random(seed)`、`plan(params, durationSeconds, rng)` 为纯计算；`demo(context, index = 0)` 生成内置素材，`Granular.demoNames` 是名字表（0 号 8 秒双声道，其余 6–8 秒，索引取模回绕）。
 
 **当前不支持传入 AudioContext、输出节点、宿主主音量或外部 transport。** 引擎自行创建上下文，输出直连其 destination。目标项目若需要统一混音/效果器，必须先扩展工厂以接收上下文和输出，明确所有权：只有自建上下文才能在销毁时 close；宿主借出的上下文不能关闭。不得把尚未实现的参数当现有 API 调用。
 
