@@ -11,7 +11,7 @@
 | 03 | [Phase Loops 0.3](exercises/03-phase-process/0.3/) | 独立音符循环、3D 分层环带、固定播放头与音画同步 | 打开 `exercises/03-phase-process/0.3/index.html` |
 | 04 | [Note Tile Collapse 0.5](exercises/04-wfc-loom/0.5/) | 最小 WFC（一维 16 格时间序列、A minor 7 个候选、两条硬规则 max interval / max repeat）+ **rolling window**（播完最左格就滚动、右端补新格 ⇒ 可以一直跑的时间系统）+ **register drift**（缓慢漂移的音区中心）+ **density drift**（缓慢漂移的全局疏密，按窗口剩余目标分配音符/休止总权重，休止也参与坍缩，最多连续四格休止） | 打开 `exercises/04-wfc-loom/0.5/index.html`；`0.4` 是它的基线（有限 16 格、边坍缩边发声），`0.3` / `0.2` / `0.1` 是更早的二维版本（和声进行 + 钢琴采样 / 矩阵织机实验） |
 | 05 | [Probability Grid 0.2](exercises/05-probability-grid/0.2/) | 学习 SQIA 音序器：双轨 16×12 概率网格、五种可选音色（REVERIE / KALIMBA / RHODES / ACID / MACHINE）、每轨 Sound 面板与空间效果；保留 0.1 基础版 | 打开 `exercises/05-probability-grid/0.2/index.html`，无需联网 |
-| 06 | [Granular 0.3.1](exercises/06-granular/0.3.1/) | 粒子采样器：位置 × 质感 XY、自由流动、音频导入、30 秒麦克风采样与实时波形、种子随机和声音事件可视化；新增摄像头双窗口与前后切换；保留 0.3 | 打开 `exercises/06-granular/0.3.1/index.html`，无需联网 |
+| 06 | [Granular 0.3.2](exercises/06-granular/0.3.2/) | 粒子采样器：位置 × 质感 XY、自由流动、音频导入、30 秒麦克风采样与录制波形、种子随机和声音事件可视化；摄像头预览与前后切换。**桌面与 iOS 真机均已验收**（2026-09-28）。0.3.2 = 去掉实时输入、移动端隐藏菜单、顶栏「流动 / 录制 / 播放」；0.3.1 = 带实时输入的上一版（保留）；0.3 = 桌面版（合成器基地） | 打开 `exercises/06-granular/0.3.2/index.html`，无需联网 |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
 
@@ -42,10 +42,11 @@ generative-music-lab/
 │  │  ├─ 0.2/                 # 当前：五种音色、每轨选择、合唱 / 延迟 / 混响
 │  │  └─ tools/check.cjs      # 离线调度与音色生命周期测试
 │  └─ 06-granular/
-│     ├─ README.md            # 粒子采样器的参数、音频时钟、生命周期与验证范围
-│     ├─ 0.1/                 # 基础粒子采样（内置合成素材 + 音频导入）
-│     ├─ 0.2/                 # 当前：四角 XY 音色联动、参数联动显示
-│     └─ tools/check.cjs      # 离线种子复现、边界、调度与清理测试
+│     ├─ README.md            # 现行状态与设计决策
+│     ├─ 历史记录.md          # 逐轮演进、实测数字、被否掉的方案（只追加）
+│     ├─ INTEGRATION.md       # 跨项目接入契约（带哪些文件 / 接口 / 所有权 / 卸载）
+│     ├─ 0.1/ 0.2/ 0.3/ 0.3.1/ 0.3.2/   # 0.3.2 = 当前版本；版本目录内不放说明文档
+│     └─ tools/               # 离线桩与真机探针（check / record-check / live-check / layout-check / camera-layout-check / engine-sync-check）
 ├─ notes/                     # 跨练习的源码阅读与学习笔记
 ├─ shared/                    # 两个以上练习共用的轻量组件或工具
 │  └─ exercise-controls.js    # 公共播放/暂停、种子、reset 控件
@@ -66,14 +67,14 @@ python -m http.server 8000
 
 然后打开 <http://localhost:8000>。
 
-06/0.3.1 的摄像头与麦克风必须跑在 HTTPS 或 localhost 上。要在手机真机验收，用仓库自带的两个工具发布到公网（走 Cloudflare quick tunnel，无需账号）：
+06 的摄像头与麦克风必须跑在 HTTPS 或 localhost 上。要在手机真机验收，用仓库自带的两个工具发布到公网（走 Cloudflare quick tunnel，无需账号）：
 
 ```powershell
 pwsh tools/serve-public.ps1          # 起静态服务器 + quick tunnel，打印 https://<随机>.trycloudflare.com
 pwsh tools/serve-public.ps1 -Port 8800
 ```
 
-它会用 `tools/serve.mjs` **从仓库根**提供服务——0.3.1 的页面引用 `../../../shared/exercise-controls.js`，只发布 `0.3.1/` 子目录会让共享控件 404。拿到地址后打开 `<公网地址>/exercises/06-granular/0.3.1/index.html`，可用 `node tools/verify-tunnel.mjs <公网地址>` 核对页面与其引用的相对路径都能取到。
+它会用 `tools/serve.mjs` **从仓库根**提供服务——页面引用 `../../../shared/exercise-controls.js`，只发布版本子目录会让共享控件 404。拿到地址后打开 `<公网地址>/exercises/06-granular/0.3.2/index.html`，可用 `node tools/verify-tunnel.mjs <公网地址>` 核对页面与其引用的相对路径都能取到（该脚本目前按 0.3.1 的清单硬编码，验别的版本要自行确认路径）。
 
 ★ 本机可能同时有别的项目在用 cloudflared（例如 moonlight_grains 的参考页占 8765）。**收尾不要杀所有 `cloudflared.exe`**，只停自己这条：`Ctrl+C` 或 `netstat -ano | Select-String ':<端口>\s'` 找到 PID 再停。
 
