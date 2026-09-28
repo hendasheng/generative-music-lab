@@ -55,6 +55,11 @@ function makeAudioContextClass(contexts) {
     createDynamicsCompressor() { return new Node(this); }
     createBufferSource() { return new Node(this); }
     createStereoPanner() { return new Node(this); }
+    // 桩要跟着被测代码走：0.3.1 的引擎在 compressor 与 destination 之间插了 AnalyserNode
+    // 并用它做 levels() 电平读数。没有这一条，整个同步检查会在 create() 里崩掉
+    // （TypeError: ctx.createAnalyser is not a function）——这条崩掉的时候默认调用
+    // 正因缺快照提前退出，所以一直没人看见。与 check.cjs 里的同款桩保持一致。
+    createAnalyser() { const a = new Node(this); a.fftSize = 2048; a.getFloatTimeDomainData = buf => buf.fill(0); return a; }
     createBuffer(ch, len, sr) {
       const data = Array.from({ length: ch }, () => new Float32Array(len));
       return { numberOfChannels: ch, length: len, sampleRate: sr, duration: len / sr, getChannelData: c => data[c] };
@@ -148,7 +153,11 @@ console.log('PASS: XY 映射一致。');
 
 // 5) 真正排给 Web Audio 的调度序列（引擎 schedule 后的 start(when, offset)）
 (async () => {
-  const API_KEYS = ['defaults', 'random', 'plan', 'demo', 'create', 'dryOctaveEvent', 'octaveEvent', 'inputGain', 'defaultSpray', 'fromXY', 'toXY', 'reverseFromSpray', 'levels'];
+  // ★ 这份清单是「当前引擎导出面」的快照，改引擎导出面时**必须同步改这里**，否则整条
+  //   同步检查会在这一步假失败。踩过一次：0.3.1 从 0.3 同步时新增了 setAudioSession、
+  //   并把 levels 收进 create() 的返回值，清单却没改——之后默认调用一直因为「找不到
+  //   engine-0.3.1-before.js 快照」提前退出，没人发现这条断言早就过不去了。
+  const API_KEYS = ['defaults', 'random', 'plan', 'demo', 'create', 'dryOctaveEvent', 'octaveEvent', 'inputGain', 'defaultSpray', 'fromXY', 'toXY', 'reverseFromSpray', 'setAudioSession'];
   assertSame(Object.keys(B.G).sort(), Object.keys(A.G).sort(), '导出面');
   assertSame(Object.keys(B.G).sort(), [...API_KEYS].sort(), '导出面与预期');
   console.log('PASS: 导出面一致（' + API_KEYS.length + ' 项）。');
