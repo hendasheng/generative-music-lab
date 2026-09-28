@@ -203,5 +203,10 @@ node tools/engine-sync-check.cjs 0.3.1\engine.js 0.3.2\engine.js   # 两版引�
 ├─ 历史记录.md        # 逐轮演进、实测数字、被否掉的方案
 ├─ INTEGRATION.md     # 跨项目接入契约
 ├─ 0.3.2/ 0.3.1/ 0.3/ 0.2/ 0.1/   # 各版本（版本目录内不放说明文档）
+├─ minitool/          # 小红书小工具适配版（基于 0.3.2）：文档 / 打包源 / 门禁 / 产物全在里面 —— 见 minitool/README.md
 └─ tools/             # 离线桩与浏览器探针（check / record-check / live-check / layout-check / camera-layout-check / engine-sync-check）
 ```
+
+## 小工具（minitool）变体
+
+基于 0.3.2 另有一份**小红书小工具**适配（ES2017 / Chrome 61 基线、自包含离线包）。**它的文档、打包源、门禁脚本与产物全部在 [`minitool/`](minitool/README.md)，本文件不重复**——要改先读那份 README。只提醒一件跨版本的事：小工具版是**拷贝而不是引用** 0.3.2，改本版的观感不会自动跟过去。
