@@ -15,15 +15,92 @@
     return { offset, length, rate, reverse, pan: (rng() * 2 - 1) * params.pan,
       peak: .38 / Math.sqrt(Math.max(1, params.density * length)) };
   }
-  function demo(ctx) {
-    const buffer = ctx.createBuffer(2, ctx.sampleRate * 8, ctx.sampleRate);
-    for (let i = 0; i < buffer.length; i++) {
-      const t = i / ctx.sampleRate;
-      const f = [110, 130.8128, 164.8138, 195.9977][Math.min(3, Math.floor(t / 2))];
-      const envelope = Math.sin(Math.PI * (t % 2) / 2) ** 2;
+  // 内置音源库：demo(ctx, index) 一号一段素材，demoNames 与之一一对应。
+  // ★ 0 号是首版就有的「谐波片段」，它的循环体**一个字都不能动** —— 版本之间不允许因为
+  //   「加了音源」而改变原有声音（0.1 / 0.2 不升级，仍只会生成 0 号）。新音源全走 else 分支。
+  // 每段只用种子随机流 random('demo-N')：同一号在任何机器、任何时刻都是同一段素材。
+  const demoNames = ['谐波片段', '钟形泛音', '拨弦余韵', '人声共振'];
+  const demoSeconds = [8, 6, 6, 8];
+  function demo(ctx, index = 0) {
+    const count = demoNames.length;
+    const which = ((Math.trunc(index) || 0) % count + count) % count;
+    const rate = ctx.sampleRate;
+    const buffer = ctx.createBuffer(2, rate * demoSeconds[which], rate);
+    const left = buffer.getChannelData(0), right = buffer.getChannelData(1);
+    const rng = random('demo-' + which);
+    if (which === 0) {
+      for (let i = 0; i < buffer.length; i++) {
+        const t = i / ctx.sampleRate;
+        const f = [110, 130.8128, 164.8138, 195.9977][Math.min(3, Math.floor(t / 2))];
+        const envelope = Math.sin(Math.PI * (t % 2) / 2) ** 2;
+        for (let ch = 0; ch < 2; ch++) {
+          const tone = Math.sin(2 * Math.PI * f * t) + .28 * Math.sin(2 * Math.PI * f * 2 * t + ch * .3) + .12 * Math.sin(2 * Math.PI * f * 3 * t);
+          buffer.getChannelData(ch)[i] = tone * .35 * envelope;
+        }
+      }
+    } else if (which === 1) {
+      // 钟形泛音：非谐分音 + 指数衰减，四次敲击互相叠尾（颗粒化后是金属质感的碎点）。
+      const f0 = 523.2511, partial = [[1, 1], [2.76, .5], [5.4, .26], [8.93, .12]], strike = [0, 1.7, 3.3, 4.7];
+      for (let i = 0; i < buffer.length; i++) {
+        const t = i / rate;
+        for (let ch = 0; ch < 2; ch++) {
+          let sum = 0;
+          for (const when of strike) {
+            const dt = t - when;
+            if (dt < 0) continue;
+            const env = Math.exp(-dt * 1.35) * (1 - Math.exp(-dt * 400));
+            for (const [ratio, gain] of partial) sum += gain * env * Math.sin(2 * Math.PI * f0 * ratio * (1 + ch * .0006) * dt);
+          }
+          (ch ? right : left)[i] = sum * .22;
+        }
+      }
+    } else if (which === 2) {
+      // 拨弦余韵：Karplus-Strong（延迟线长度 = 周期，衰减随音高自然变化），五音依次拨响。
+      const note = [110, 146.8324, 164.8138, 220, 293.6648], at = [0, 1.2, 2.4, 3.6, 4.8];
       for (let ch = 0; ch < 2; ch++) {
-        const tone = Math.sin(2 * Math.PI * f * t) + .28 * Math.sin(2 * Math.PI * f * 2 * t + ch * .3) + .12 * Math.sin(2 * Math.PI * f * 3 * t);
-        buffer.getChannelData(ch)[i] = tone * .35 * envelope;
+        const data = ch ? right : left;
+        for (let k = 0; k < note.length; k++) {
+          const period = Math.max(2, Math.round(rate / note[k]));
+          const line = new Float32Array(period);
+          for (let j = 0; j < period; j++) line[j] = rng() * 2 - 1;
+          const start = Math.round(at[k] * rate);
+          for (let i = start; i < buffer.length; i++) {
+            const j = (i - start) % period;
+            const value = (line[j] + line[(j + 1) % period]) * .5 * .9965;
+            line[j] = value;
+            data[i] += value * .34 * Math.exp(-(i - start) / rate * .3);
+          }
+        }
+      }
+    } else {
+      // 人声共振：脉冲列过三个共振峰（加性合成），带颤音、逐句换音高、句间淡入淡出。
+      const f0 = 138.5913, formant = [[700, 1], [1220, .55], [2600, .3]], H = 14;
+      const weight = new Float32Array(H + 1);
+      let total = 0;
+      for (let h = 1; h <= H; h++) {
+        const f = f0 * h; let w = 0;
+        for (const [center, gain] of formant) w += gain / (1 + ((f - center) / 380) ** 2);
+        weight[h] = w; total += w;
+      }
+      const melody = [0, 2, 4, 7, 4, 0], phrase = demoSeconds[3] / melody.length;
+      for (let i = 0; i < buffer.length; i++) {
+        const t = i / rate;
+        const step = Math.min(melody.length - 1, Math.floor(t / phrase));
+        const f = f0 * 2 ** (melody[step] / 12) * (1 + .006 * Math.sin(2 * Math.PI * 4.6 * t));
+        let sum = 0;
+        for (let h = 1; h <= H; h++) sum += weight[h] * Math.sin(2 * Math.PI * f * h * t);
+        const env = Math.sin(Math.PI * ((t % phrase) / phrase)) ** 2;
+        left[i] = sum / total * .42 * env;
+        right[i] = sum / total * .42 * env * (1 + .08 * Math.sin(2 * Math.PI * .7 * t));
+      }
+    }
+    if (which !== 0) {
+      // 段尾淡出：新音源的自然衰减到素材末尾还没归零，硬切会在最后一个粒子里变成「啪」。
+      // 0 号不加（它的 sin² 包络本来就在整秒处归零，且它必须与首版逐字节相同）。
+      const fade = Math.min(Math.round(rate * .3), buffer.length);
+      for (let i = 0; i < fade; i++) {
+        const gain = (i + 1) / fade;
+        left[buffer.length - 1 - i] *= gain; right[buffer.length - 1 - i] *= gain;
       }
     }
     return buffer;
@@ -148,5 +225,5 @@
   function reverseFromSpray(spray) { return Math.pow(clamp(spray*2,0,1),2.5); }
   function fromXY(x,y) { const spray=clamp(y,0,1)*.5; return {position:clamp(x,0,1),spray,reverse:reverseFromSpray(spray)}; }
   function toXY(params) { return {x:clamp(params.position,0,1),y:clamp(params.spray,0,.5)*2}; }
-  window.Granular = { defaults, random, plan, demo, create, dryOctaveEvent, octaveEvent, inputGain, defaultSpray, fromXY, toXY, reverseFromSpray };
+  window.Granular = { defaults, random, plan, demo, demoNames, create, dryOctaveEvent, octaveEvent, inputGain, defaultSpray, fromXY, toXY, reverseFromSpray };
 })();

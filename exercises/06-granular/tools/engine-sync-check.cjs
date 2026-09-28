@@ -157,7 +157,8 @@ console.log('PASS: XY 映射一致。');
   //   同步检查会在这一步假失败。踩过一次：0.3.1 从 0.3 同步时新增了 setAudioSession、
   //   并把 levels 收进 create() 的返回值，清单却没改——之后默认调用一直因为「找不到
   //   engine-0.3.1-before.js 快照」提前退出，没人发现这条断言早就过不去了。
-  const API_KEYS = ['defaults', 'random', 'plan', 'demo', 'create', 'dryOctaveEvent', 'octaveEvent', 'inputGain', 'defaultSpray', 'fromXY', 'toXY', 'reverseFromSpray', 'setAudioSession'];
+  //   又踩过一次（2026-09-28）：加内置音源库时新增导出 demoNames，同样要加进来。
+  const API_KEYS = ['defaults', 'random', 'plan', 'demo', 'demoNames', 'create', 'dryOctaveEvent', 'octaveEvent', 'inputGain', 'defaultSpray', 'fromXY', 'toXY', 'reverseFromSpray', 'setAudioSession'];
   assertSame(Object.keys(B.G).sort(), Object.keys(A.G).sort(), '导出面');
   assertSame(Object.keys(B.G).sort(), [...API_KEYS].sort(), '导出面与预期');
   console.log('PASS: 导出面一致（' + API_KEYS.length + ' 项）。');

@@ -97,6 +97,54 @@ if(G.inputGain){
   for(const seconds of [1,8,30])assert(Math.abs(G.defaultSpray(seconds)*seconds-.25)<1e-12);
   console.log('PASS: silence floor, +12dB gain cap, peak headroom, unchanged source, duration-independent default spread.');
 }
+// 内置音源库：demo(ctx, index) 一号一段素材。三份引擎（0.3 / 0.3.1 / 0.3.2）的这段代码逐字节相同。
+if(G.demoNames){
+  const ctx=new AudioContext();
+  // 首版公式逐字复刻：0 号音源是音源库的第 0 号，任何时候都不允许因为「加了音源」而变声。
+  const original=(()=>{
+    const buffer=ctx.createBuffer(2,ctx.sampleRate*8,ctx.sampleRate);
+    for(let i=0;i<buffer.length;i++){
+      const t=i/ctx.sampleRate;
+      const f=[110,130.8128,164.8138,195.9977][Math.min(3,Math.floor(t/2))];
+      const envelope=Math.sin(Math.PI*(t%2)/2)**2;
+      for(let ch=0;ch<2;ch++){
+        const tone=Math.sin(2*Math.PI*f*t)+.28*Math.sin(2*Math.PI*f*2*t+ch*.3)+.12*Math.sin(2*Math.PI*f*3*t);
+        buffer.getChannelData(ch)[i]=tone*.35*envelope;
+      }
+    }
+    return buffer;
+  })();
+  const stats=buffer=>{const d=buffer.getChannelData(0);let peak=0,energy=0;
+    for(const v of d){assert(Number.isFinite(v),'音源里有非有限值');peak=Math.max(peak,Math.abs(v));energy+=v*v;}
+    return {peak,rms:Math.sqrt(energy/d.length)};};
+  const tail=buffer=>{const d=buffer.getChannelData(0);return Math.abs(d[d.length-1]);};
+  assert(G.demoNames.length>=3,'内置音源至少要有 3 段');
+  assert.equal(new Set(G.demoNames).size,G.demoNames.length,'内置音源名字重复');
+  const first=G.demo(ctx,0);
+  assert.deepEqual(first.getChannelData(0),original.getChannelData(0),'0 号内置音源与首版不一致（不允许改原有声音）');
+  assert.deepEqual(first.getChannelData(1),original.getChannelData(1),'0 号内置音源右声道与首版不一致');
+  assert.equal(G.demo(ctx).duration,first.duration,'不传索引时必须等于 0 号');
+  assert.deepEqual(G.demo(ctx).getChannelData(0),first.getChannelData(0),'不传索引时必须等于 0 号');
+  const prints=new Set();
+  for(let i=0;i<G.demoNames.length;i++){
+    const buffer=G.demo(ctx,i), s=stats(buffer), name=G.demoNames[i];
+    assert(buffer.numberOfChannels===2,'音源 '+i+' 不是双声道');
+    assert(buffer.duration>=4 && buffer.duration<=10,'音源 '+name+' 时长异常：'+buffer.duration);
+    assert(s.peak>.02 && s.peak<=1,'音源 '+name+' 峰值越界：'+s.peak.toFixed(4));
+    assert(s.rms>.005,'音源 '+name+' 几乎是静音：RMS '+s.rms.toFixed(5));
+    if(i!==0) assert(tail(buffer)<.05,'音源 '+name+' 末尾是硬切（末样本 '+tail(buffer).toFixed(4)+'）');
+    prints.add(i+':'+buffer.duration.toFixed(3)+':'+s.peak.toFixed(5)+':'+s.rms.toFixed(5));
+    // 只用种子随机流：同一号任何时候都得到同一段素材（不受调用顺序影响）
+    assert.deepEqual(G.demo(ctx,i).getChannelData(0),buffer.getChannelData(0),'音源 '+name+' 不可复现');
+    if(i!==0) assert.notDeepEqual(buffer.getChannelData(0),first.getChannelData(0),'音源 '+name+' 与 0 号相同');
+  }
+  assert.equal(prints.size,G.demoNames.length,'有音源的统计量完全相同');
+  const n=G.demoNames.length;
+  assert.deepEqual(G.demo(ctx,n).getChannelData(0),first.getChannelData(0),'索引应取模回绕到 0 号');
+  assert.deepEqual(G.demo(ctx,-1).getChannelData(0),G.demo(ctx,n-1).getChannelData(0),'负数索引应取模回绕');
+  assert.deepEqual(G.demo(ctx,1.9).getChannelData(0),G.demo(ctx,1).getChannelData(0),'小数索引应取整');
+  console.log('PASS: 内置音源库 '+n+' 段（'+G.demoNames.join(' / ')+'）都非静音、互不相同、可复现、末尾不硬切；0 号与首版逐字节相同，索引取模回绕。');
+}
 (async()=>{
   const buffer=new AudioContext().createBuffer(2,44100,44100);
   const engine=await G.create(buffer,{...G.defaults},'test');
