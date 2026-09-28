@@ -6,7 +6,8 @@
 notes/
 ├─ README.md              # 本文件：约定与索引
 ├─ agents-历史存档.md      # 仓库自身的元文档（不是学习内容，见下）
-└─ generative-fm/          # 来源：Generative.fm 一族源码
+├─ generative-fm/          # 来源：Generative.fm 一族源码（怎么生成）
+└─ melody-for-composers/   # 来源：Melody for Composers 教程（写什么音乐）
 ```
 
 ## 什么放这里、什么不放
@@ -30,9 +31,10 @@ notes/
 
 ## 现有来源
 
-| 文件夹 | 来源 | 对应练习 |
-| --- | --- | --- |
-| [`generative-fm/`](generative-fm/) | [pieces-alex-bainter](https://github.com/generative-music/pieces-alex-bainter)（乐曲源码）+ [generative-fm/play](https://github.com/generative-fm/play)（播放器） | 01 Ambient Pulse、02 Aisatsana Markov |
+| 文件夹 | 来源 | 教什么 | 对应练习 |
+| --- | --- | --- | --- |
+| [`generative-fm/`](generative-fm/) | [pieces-alex-bainter](https://github.com/generative-music/pieces-alex-bainter)（乐曲源码）+ [generative-fm/play](https://github.com/generative-fm/play)（播放器） | 程序**怎么生成**：种子随机、生命周期契约、素材与生成分离 | 01 Ambient Pulse、02 Aisatsana Markov |
+| [`melody-for-composers/`](melody-for-composers/) | [Melody for Composers](https://www.youtube.com/playlist?list=PLIATVf_KRULE)（YouTube 播放列表） | 音乐**写什么**：动机的建立、发展、收束 | 01（动机系统）、02（乐句）、04（音乐结构） |
 
 ## 关于 `agents-历史存档.md`
 

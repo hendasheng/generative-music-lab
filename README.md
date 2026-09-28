@@ -50,7 +50,8 @@ generative-music-lab/
 ├─ notes/                     # 跨练习的源码阅读与学习笔记，按「学习来源」分组
 │  ├─ README.md               # notes 约定与来源索引
 │  ├─ agents-历史存档.md       # 仓库自身的元文档（AGENTS.md 精简时移出的原文）
-│  └─ generative-fm/          # 来源：Generative.fm 一族源码；别的来源另开同级文件夹
+│  ├─ generative-fm/          # 来源：Generative.fm 一族源码（程序怎么生成）
+│  └─ melody-for-composers/   # 来源：Melody for Composers 教程（音乐写什么）
 ├─ shared/                    # 两个以上练习共用的轻量组件或工具
 │  └─ exercise-controls.js    # 公共播放/暂停、种子、reset 控件
 ├─ index.html                 # 仓库作品索引
@@ -135,6 +136,8 @@ pwsh tools/serve-public.ps1 -Port 8800
   - [piece-aisatsana 素材数据说明](notes/generative-fm/piece-aisatsana-数据说明.md) —— instructions.json 的结构、真实示例与量化演示
   - [aisatsana 创作过程实录](notes/generative-fm/aisatsana-创作过程实录.md) —— 用原曲 355 个音符的真实数据把「素材 → 网格 → 乐句 → 衔接」完整走一遍（所有数字由脚本算出）
   - [aisatsana 式创作思维](notes/generative-fm/aisatsana-创作思维.md) —— **创作方法论**：怎么想、怎么动手（素材 → 网格 → 乐句块 → 衔接 → 重组），不讲代码
+- **Melody for Composers 教程**（文件夹索引：[`notes/melody-for-composers/`](notes/melody-for-composers/README.md)）：
+  - [动机的建立与发展](notes/melody-for-composers/motif-development.md) —— Present → Repeat → Variation → Deconstruct；节奏 / 旋律两类变化手法。**学习中**
 
 ## 许可
 
