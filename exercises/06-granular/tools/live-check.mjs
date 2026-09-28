@@ -69,23 +69,26 @@ const HEADER = `(() => {
   const record = box('record');
   const live = box('liveInput');
   const menu = box('menuToggle'), flow = box('freeFlow');
+  const random = box('randomSource');
   // 只统计**实际可见**的按钮：隐藏的菜单（display:none → cy=0）会把最大偏差算成 24px（踩过）。
   const visible = b => b.present && b.w > 0 && b.h > 0;
   const centers = { menu: visible(menu) ? menu.cy : null, flow: visible(flow) ? flow.cy : null,
+    random: visible(random) ? random.cy : null,
     play: visible(play) ? play.cy : null, record: visible(record) ? record.cy : null,
     live: visible(live) ? live.cy : null };
   return {
     viewportWidth: vw,
     playCenter: play.cx, playOffset: +(play.cx - vw / 2).toFixed(1),
-    live, record, menu, flow, play,
+    live, record, menu, flow, play, random,
     verticalCenters: centers,
     // 只统计实际存在的按钮（0.3.2 没有 LIVE、移动端隐藏菜单），否则 null 会污染最大偏差。
     maxCenterDrift: (() => {
       const present = Object.values(centers).filter(v => typeof v === 'number');
       return present.length ? +(Math.max(...present) - Math.min(...present)).toFixed(1) : 0; })(),
     visibleCenters: centers,
-    // 0.3.2 的顺序要求：自由流动最左、录制中间、播放最右（0.3.1 是录制/LIVE 在右）。
+    // 0.3.2 的顺序要求：自由流动最左、随机音源紧随其后、录制中间、播放最右。
     orderFlowRecordPlay: flow.cx < record.cx && record.cx < play.cx && flow.cx < play.cx,
+    randomRightOfFlow: random.present ? random.cx > flow.cx : null,
     recordIsMiddle: Math.abs(record.cx - vw / 2) <= 1,
     recordLeftOfLive: live.present ? record.cx < live.cx : null,
     // LIVE 与录制之间留的间距（仅 0.3.1 有意义）
@@ -327,12 +330,19 @@ const main = async () => {
     };
     const rec = document.getElementById('record');
     rec.click();
+    // ★ 必须先等录制**真的开始**再采样：点下去之后 app 要先 stop() 再 await getUserMedia，
+    //   启动慢的时候（实测有过 >1.2s）第一次采样量到的是「还没进录制」的采样波形（满宽 714 列），
+    //   第二次才量到刚起步的 9 列 —— 两个数字一颠倒，断言就假红。
+    //   aria-pressed 只在 state==='recording' 时为 true，用它当「已开始」的判据。
+    const started = performance.now();
+    while (rec.getAttribute('aria-pressed') !== 'true' && performance.now() - started < 6000) await new Promise(r => setTimeout(r, 50));
+    const startedIn = Math.round(performance.now() - started);
     await new Promise(r => setTimeout(r, 1200));
     const early = inkCols();
     await new Promise(r => setTimeout(r, 1500));
     const later = inkCols();
     rec.click();
-    return { early, later, drawW: c.clientWidth, attrW: c.width };
+    return { early, later, drawW: c.clientWidth, attrW: c.width, startedIn };
   })()`);
   // 用「上部区域有笔画的列数」度量墨水量：已录时长翻倍，它应同步明显增加。
   // 不用最右像素判断宽度——取样区域有限（上部 255 行对应的设备像素），早期/后期的最右值
@@ -341,7 +351,7 @@ const main = async () => {
   const startsLeft = axes.early.n > 0 && axes.early.n < axes.drawW * 0.2;
   const axesOk = grew && startsLeft;
   console.log(`\n=== 录制波形与 pad 同轴（按位置分列，自左向右累积）===`);
-  console.log(`  绘制宽度=${axes.drawW}px（画布 ${axes.attrW} 设备像素）`);
+  console.log(`  绘制宽度=${axes.drawW}px（画布 ${axes.attrW} 设备像素）  录制在 ${axes.startedIn}ms 后真正开始`);
   console.log(`  1.2s 有笔画列=${axes.early.n}   2.7s 有笔画列=${axes.later.n}（应随录制增加）`);
   console.log(`  ${axesOk ? 'OK：自左向右累积、起点只占左侧一小段，与 pad 的位置轴一致' : '★ 异常：没有累积，或起点就铺满整宽'}`);
 
@@ -365,6 +375,130 @@ const main = async () => {
   console.log(`  录制中: pressed=${autoPlay.during.pressed} label="${autoPlay.during.label}"`);
   console.log(`  录制后: 已起播=${autoPlay.played} 播放键=${autoPlay.playing} 采样名=${autoPlay.sampleName}`);
   console.log(`  ${autoPlayOk ? 'OK：录完自动解码载入并起播' : '★ 异常：录完没有自动播放'}`);
+
+  // 随机内置音源（0.3.2 顶栏左侧）：点一次必须换成**另一段**内置素材（不立刻重复），
+  // 而且原来在响就得换完接着响。同时量「生成一段素材要多久」——它跑在主线程上，
+  // 数字太大（比如 vm 里量到的 1.5s）就等于点一下界面卡一下。
+  const sourceSwitch = await evaluate(`(async () => {
+    const btn = document.getElementById('randomSource');
+    const out = { exists: !!btn };
+    if (!out.exists) return out;
+    const name = () => document.getElementById('sampleName').textContent;
+    const label = () => document.getElementById('mainPlay').getAttribute('aria-label');
+    out.names = window.Granular.demoNames.slice();
+    out.first = name();
+    out.playingBefore = label() === '停止';
+    // 探针跑到这里时素材是**刚录的那段麦克风采样**（上一段测试的产物）：不是内置音源，
+    // 所以随机键此刻不该亮 —— 这同时验证了「素材被别的路径换掉 → 触发态熄灭」。
+    out.beforeMark = { pressed: btn.getAttribute('aria-pressed'), color: getComputedStyle(btn).color, material: name() };
+    const settle = async before => {
+      for (let i = 0; i < 120; i++) {
+        await new Promise(r => setTimeout(r, 50));
+        if (name() !== before) return i * 50;
+      }
+      return -1;
+    };
+    out.steps = []; out.t = []; out.busy = []; out.idle = []; out.busyAt300 = [];
+    // 「触发状态」：一次性的随机键没有开/关，靠 aria-busy + 图标变主色表示「正在换」。
+    // 主色取 XY 圆点的背景色（它就是 --accent），两侧都读计算值比字符串，不猜颜色名。
+    // ★ 不给「亮多久」计时（探针里的 setTimeout 会被浏览器降频到 4ms，按次数累加会算歪），
+    //   改成在固定的两个时刻直接读属性：点下那一帧、以及 300ms 之后（最小时长是 400ms）。
+    const accent = getComputedStyle(document.getElementById('xyDot')).backgroundColor;
+    let seen = name();
+    for (let k = 0; k < 4; k++) {
+      const t0 = performance.now();
+      btn.click();
+      // click 是同步派发，处理器的同步段会立刻挂上 aria-busy —— 这里就该已经亮着
+      out.busy.push({ flag: btn.getAttribute('aria-busy'), color: getComputedStyle(btn).color });
+      await new Promise(r => setTimeout(r, 300));
+      out.busyAt300.push(btn.getAttribute('aria-busy'));
+      const wait = await settle(seen);
+      await new Promise(r => setTimeout(r, 500));   // 等换素材后的 play() 落定
+      out.t.push(Math.round(performance.now() - t0));
+      out.idle.push({ flag: btn.getAttribute('aria-busy'), pressed: btn.getAttribute('aria-pressed'), color: getComputedStyle(btn).color });
+      out.steps.push({ from: seen, to: name(), wait, stillDisabled: btn.disabled });
+      seen = name();
+    }
+    out.accent = accent;
+    out.playingAfter = label() === '停止';
+    out.duration = document.getElementById('duration').textContent;
+    out.status = document.getElementById('status').textContent;
+    return out;
+  })()`);
+  const library = new Set(sourceSwitch.names || []);
+  const accentRgb = sourceSwitch.accent;
+  const busyOk = sourceSwitch.exists && sourceSwitch.busy.length === 4 && sourceSwitch.idle.length === 4
+    && sourceSwitch.busy.every(b => b.flag === 'true' && b.color === accentRgb);   // 点下去同一帧就亮
+  // 触发态是**状态**：换完要一直亮着（aria-pressed=true 且仍是主色），
+  // 而跑到这里之前素材是录音采样，那时不该亮。
+  const markOk = sourceSwitch.exists
+    && sourceSwitch.beforeMark.pressed !== 'true' && sourceSwitch.beforeMark.color !== accentRgb
+    && sourceSwitch.idle.every(b => b.pressed === 'true' && b.color === accentRgb);
+  const litOk = sourceSwitch.exists && sourceSwitch.busyAt300.every(f => f === 'true');
+  const switchOk = sourceSwitch.exists
+    && sourceSwitch.steps.length === 4
+    && sourceSwitch.steps.every(s => s.to !== s.from && library.has(s.to.replace('内置音源 · ', '')) && !s.stillDisabled)
+    && (!sourceSwitch.playingBefore || sourceSwitch.playingAfter)
+    && busyOk && markOk
+    && litOk                                            // 400ms 最小时长：300ms 时还必须亮着
+    && Math.max(...sourceSwitch.t) < 1500;
+  if (sourceSwitch.exists) {
+    console.log(`\n=== 随机内置音源 ===`);
+    console.log(`  库（${sourceSwitch.names.length} 段）：${sourceSwitch.names.join(' / ')}`);
+    console.log(`  起点：${sourceSwitch.first}（播放中=${sourceSwitch.playingBefore}）`);
+    for (const s of sourceSwitch.steps) console.log(`    ${s.from} → ${s.to}   名字出现用了 ${s.wait}ms`);
+    console.log(`  四次点击整体耗时 ${sourceSwitch.t.join(' / ')}ms   换完仍在播=${sourceSwitch.playingAfter}   当前时长=${sourceSwitch.duration}`);
+    console.log(`  换素材前（素材=${sourceSwitch.beforeMark.material}）：pressed=${sourceSwitch.beforeMark.pressed} 色=${sourceSwitch.beforeMark.color}（录音素材，不该亮）`);
+    console.log(`  点击瞬间（过渡态）：${sourceSwitch.busy.map(b => b.flag + '/' + b.color).join('  ')}`);
+    console.log(`  换完之后（常亮态）：${sourceSwitch.idle.map(b => b.pressed + '/' + b.color).join('  ')}`);
+    console.log(`  点亮时长 300ms 后仍亮着：${sourceSwitch.busyAt300.join(' / ')}（最小时长 400ms，所以必须全是 true）`);
+    console.log(`  ${busyOk && litOk ? 'OK：按下去立刻点亮（过渡态，≥400ms）' : '★ 异常：按下没有立刻点亮或亮得太短'}`);
+    console.log(`  ${markOk ? 'OK：换完保持触发态（常亮），素材被别的路径换掉时不亮' : '★ 异常：触发态会自己熄灭，或非内置素材也亮着'}`);
+    console.log(`  ${switchOk ? 'OK：每次都换到另一段内置素材，换完接着响' : '★ 异常：没换、换到库外的名字、或换完不响了'}`);
+  } else {
+    console.log('\n=== 随机内置音源 ===\n  跳过：本版没有随机音源按钮（0.3.1）');
+  }
+
+  // 「点自由流动 / 随机就出声」（用户要求）：两个都要从**停着**的状态点一下就起播。
+  // 顺序很关键：先停干净 → 点自由流动 → 关掉流动（声音应继续）→ 再停 → 点随机。
+  const oneTap = await evaluate(`(async () => {
+    const playBtn = document.getElementById('mainPlay');
+    const flow = document.getElementById('freeFlow'), rand = document.getElementById('randomSource');
+    const playing = () => playBtn.getAttribute('aria-label') === '停止';
+    const waitFor = async (want, ms) => { const t0 = performance.now();
+      while (performance.now() - t0 < ms) { if (playing() === want) return Math.round(performance.now() - t0); await new Promise(r => setTimeout(r, 50)); }
+      return -1; };
+    const stopIfPlaying = async () => { if (playing()) { playBtn.click(); await waitFor(false, 4000); } };
+    const out = {};
+    await stopIfPlaying();
+    out.playingBeforeFlow = playing();
+    flow.click(); out.flowStartMs = await waitFor(true, 5000);
+    out.flowPressed = flow.getAttribute('aria-pressed');
+    flow.click();                                     // 关掉流动：只是停止游走，声音不该断
+    await new Promise(r => setTimeout(r, 400));
+    out.playingAfterFlowOff = playing();
+    await stopIfPlaying();
+    out.playingBeforeRandom = playing();
+    rand.click(); out.randomStartMs = await waitFor(true, 8000);
+    out.source = document.getElementById('sampleName').textContent;
+    out.markWhilePlaying = rand.getAttribute('aria-pressed');   // 随机选的素材 + 正在响 → 灯亮
+    await stopIfPlaying();
+    out.playingAtEnd = playing();
+    out.markAfterStop = rand.getAttribute('aria-pressed');      // 播放→暂停 → 灯必须灭（用户要求）
+    playBtn.click(); await waitFor(true, 8000);                 // 再播一次：素材仍是随机选的 → 灯回到亮
+    out.markAfterReplay = rand.getAttribute('aria-pressed');
+    await stopIfPlaying();
+    return out;
+  })()`);
+  const oneTapOk = oneTap.playingBeforeFlow === false && oneTap.flowStartMs >= 0 && oneTap.flowPressed === 'true'
+    && oneTap.playingAfterFlowOff === true
+    && oneTap.playingBeforeRandom === false && oneTap.randomStartMs >= 0 && oneTap.playingAtEnd === false
+    && oneTap.markWhilePlaying === 'true' && oneTap.markAfterStop !== 'true' && oneTap.markAfterReplay === 'true';
+  console.log(`\n=== 点一下直接出声（自由流动 / 随机）===`);
+  console.log(`  自由流动：点前在播=${oneTap.playingBeforeFlow} → ${oneTap.flowStartMs}ms 后起播；关掉流动后仍在播=${oneTap.playingAfterFlowOff}`);
+  console.log(`  随机音源：点前在播=${oneTap.playingBeforeRandom} → ${oneTap.randomStartMs}ms 后起播（${oneTap.source}）`);
+  console.log(`  随机键的灯：播放中=${oneTap.markWhilePlaying} → 暂停后=${oneTap.markAfterStop}（应灭） → 再播放=${oneTap.markAfterReplay}（素材仍是随机选的，应回亮）`);
+  console.log(`  ${oneTapOk ? 'OK：两个键都能一下出声，关流动不断声' : '★ 异常：有一个键点了不出声，或关流动把声音也断了'}`);
 
   // 页面里 peaks 与 drawScale 在 IIFE 内不可见，所以按同一公式独立复算一遍。
   const wave = await evaluate(`(() => {
@@ -427,7 +561,7 @@ const main = async () => {
   const aligned = header.maxCenterDrift <= 1;   // 可见按钮的垂直中心必须齐平
   // iOS HIG（Apple《UI Design Dos and Don'ts》）：命中区 ≥44×44pt，文字 ≥11pt。
   // 只统计**实际可见**的按钮：0.3.2 没有 LIVE，移动端隐藏菜单，它们的 0×0 不该算失败。
-  const hitTargets = { 菜单: header.menu, 流动: header.flow, 播放: header.play, 录制: header.record, LIVE: header.live };
+  const hitTargets = { 菜单: header.menu, 流动: header.flow, 随机: header.random, 播放: header.play, 录制: header.record, LIVE: header.live };
   const tooSmall = Object.entries(hitTargets)
     .filter(([, b]) => b.present && b.w > 0 && (b.w < 44 || b.h < 44))
     .map(([k, b]) => `${k} ${b.w}x${b.h}`);
@@ -445,7 +579,7 @@ const main = async () => {
   // 因此每条断言都要作为变量汇总进 commonOk / ok，不要再单独置退出码。
   const commonOk = header.brandGone && aligned && tooSmall.length === 0
     && rm.w >= 40 && coreBorderOk && header.record.h >= 44
-    && sessionOk && abOk && axesOk && autoPlayOk && waveOk && levelOk;
+    && sessionOk && abOk && axesOk && autoPlayOk && waveOk && levelOk && switchOk && oneTapOk;
   let ok;
   if (hasLive) {
     const markFont = header.idleMark.font, markBg = header.idleMark.bg;
@@ -474,10 +608,10 @@ const main = async () => {
     console.log(`  顺序：流动 ${header.flow.cx} ＜ 录制 ${header.record.cx} ＜ 播放 ${header.play.cx}`);
     console.log(`  录制是否居中：${header.recordIsMiddle ? 'OK' : '★ 偏离正中超过 1px'}（录制 ${header.record.cx} vs 中心 ${header.viewportWidth / 2}）   移动端菜单已隐藏：${!header.menu.present || header.menu.w === 0 ? 'OK' : '★ 仍可见'}`);
     void orderOk;
-    ok = commonOk && header.orderFlowRecordPlay && header.recordIsMiddle
+    ok = commonOk && header.orderFlowRecordPlay && header.recordIsMiddle && header.randomRightOfFlow
       && (!header.menu.present || header.menu.w === 0 || header.menu.cx !== null)
       && autoPlayOk;
-    console.log(ok ? '\n通过：无 LIVE；顶部顺序「自由流动最左 / 录制中间 / 播放最右」、移动端菜单隐藏、命中区与录制标记达标。'
+    console.log(ok ? '\n通过：无 LIVE；顶部顺序「自由流动最左 / 随机音源 / 录制中间 / 播放最右」、移动端菜单隐藏、命中区与录制标记达标。'
                    : '\n★ 有断言未通过。');
   }
   await send('Browser.close').catch(() => {});

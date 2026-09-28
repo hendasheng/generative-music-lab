@@ -41,9 +41,9 @@ try {
   }
   if (-not $ready) { throw "静态服务器没起来（端口 $Port）" }
 
-  Write-Host "`n本地: http://127.0.0.1:$Port/exercises/06-granular/0.3.1/index.html"
+  Write-Host "`n本地: http://127.0.0.1:$Port/exercises/06-granular/0.3.2/index.html"
   Write-Host "正在开 quick tunnel，下面会打印公网地址（形如 https://xxx.trycloudflare.com）...`n"
-  Write-Host "手机打开： <公网地址>/exercises/06-granular/0.3.1/index.html`n"
+  Write-Host "手机打开： <公网地址>/exercises/06-granular/0.3.2/index.html`n"
 
   & $cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$Port"
 }
