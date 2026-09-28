@@ -19,7 +19,7 @@
 
 | 文件 | 是什么 |
 | --- | --- |
-| [`motif-development.md`](motif-development.md) | 动机（Motif）的建立与发展：Present → Repeat → Variation → Deconstruct，以及节奏 / 旋律两类变化手法 |
+| [`motif-development.md`](motif-development.md) | Part 1–4：动机是什么 → 动机的建立与发展（Present → Repeat → Variation → Deconstruct，节奏 / 旋律两类变化手法）→ 乐句结构（单动机 / 多动机 / 问答 / 音乐标点）→ 从旋律到曲目（Paragraph、Full Piece 与全局 Climax） |
 
 ## 与本仓库既有规则的衔接
 
@@ -28,5 +28,14 @@
 - **「重复要有变化，否则无聊；变化要保住身份，否则不成形」** ←→ `AGENTS.md` 的「设计长期运行但不过度重复的段落与动机」（项目定位第 1、5 条）。
 - **「变化来自音乐本身，不是随机」** ←→ `AGENTS.md` 硬规矩「随机必须有依据、且只用在需要的地方」（[根 README 的学习方向](../../README.md#学习方向)里也写了这条，02 0.3 的视觉布局就是因此改的）。
 - **「Deconstruct 用来结束一个 Present」** ←→ 04 的段落结构（音乐结构只数拍、不数格子）。
+- **「小层级的 Peak 服务于更大层级的 Peak」（Part 4）** ←→ 同一个思路：先在最大层级定目标，再反推每一层怎么朝它发展。这条对 04 的 drift 类连续量最有参考价值 —— 但它现在**只是笔记里的一句话**，06 之外的练习都还没按这个层级做，别当成既有实现去引用。
+
+## 笔记里还空着的部分
+
+`motif-development.md` 是这样标记的（2026-09-28）：
+
+- **Part 1「Motifs 动机」只有标题**：动机的定义尚未记录，而 Part 2 之后全都在使用这个概念 —— 读的时候以 Part 2 的用法为准，别假设这里定义过。
+- **Part 2 的 `add Variation` 开头那个无标题条目是空的**（下一行直接是 `Rhythmic Variation`）。
+- 已完整记录的：Part 2 的两类变化手法、Part 3 乐句结构、Part 4 层级结构。
 
 ★ 这份笔记目前是**阅读记录**，还不是指令。等它在某个练习里真的落地了（例如 01 的动机系统改成 Present → Repeat → Variation → Deconstruct 四段），再把「会改变下一次怎么做」的结论提炼进 `AGENTS.md`，并在这里回填「对应练习」的实际实现位置。
