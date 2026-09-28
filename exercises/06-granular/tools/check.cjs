@@ -28,6 +28,9 @@ class AudioContext {
   createDynamicsCompressor() { return new Node(this); }
   createBufferSource() { return new Node(this); }
   createStereoPanner() { return new Node(this); }
+  // 引擎在 compressor 与 destination 之间插了 AnalyserNode（输出电平表，直通不改声音）。
+  // 桩要跟着被测代码走：给它 fftSize 与 getFloatTimeDomainData，levels() 才能读数。
+  createAnalyser() { const a = new Node(this); a.fftSize = 2048; a.getFloatTimeDomainData = buf => buf.fill(0); return a; }
   createBuffer(ch,len,sr) { const data=Array.from({length:ch},()=>new Float32Array(len));return {numberOfChannels:ch,length:len,sampleRate:sr,duration:len/sr,getChannelData:c=>data[c]}; }
 }
 const sandbox={ window:{}, AudioContext, Float32Array, setInterval: fn=>{intervals.set(++intervalID,fn);return intervalID;}, clearInterval:id=>intervals.delete(id), setTimeout };
@@ -121,4 +124,27 @@ if(G.inputGain){
   await engine.deactivate();assert.equal(intervals.size,0);assert.equal(engine.active,0);assert.equal(engine.events.length,0);assert(context.closed);assert(context.nodes.every(n=>!n.connected));
   await engine.deactivate();
   console.log('PASS: deterministic grains, 144 boundary combinations, finite envelopes/gain, audio scheduling, idempotency, stall recovery and cleanup.');
+
+  // 实时输入的输入补偿：素材路径按整段统计，实时路径按环形缓冲当前电平反复标定
+  // （曾经写死为 1，等于不补偿；iOS 采集电平远低于桌面时就是「声音特别小」）。
+  // 只对本版引擎生效：0.3 的引擎没有实时输入（用 setAudioSession 是否存在来判断）。
+  if (typeof G.setAudioSession === 'function') {
+    const live = new AudioContext();
+    const demo = live.createBuffer(2, 44100, 44100);
+    // 造一个「小声的麦克风」：峰值 0.02（约 −34 dBFS）。目标 RMS .16 → 应放大到上限 4 倍。
+    const quiet = { count: 9600, sampleRate: 48000, duration: .2, origin: 0, frozen: false,
+      sample: i => 0.02 * Math.sin(i / 7), grain: (c) => c.createBuffer(1, 256, 48000),
+      peaks: () => Array.from({ length: 16 }, () => [-0.02, 0.02]) };
+    const eng = await G.create(demo, { ...G.defaults }, 'live-gain', quiet);
+    const liveCtx = context;                       // create 自建的上下文
+    const inputGainNode = liveCtx.nodes.find(n => n.gain && Math.abs(n.gain.value - 1) < 1e-9 && n.connected);
+    assert(inputGainNode, '找不到输入增益节点');
+    eng.schedule();
+    // 推进虚拟时钟跨越 LIVE_GAIN_INTERVAL，触发重新标定
+    for (let i = 0; i < 20; i++) { liveCtx.currentTime += .25; [...intervals.values()][0](); }
+    const g = liveCtx.nodes.filter(n => n.gain).map(n => n.gain.value);
+    assert(g.some(v => v > 3.9 && v <= 4 + 1e-9), '小声麦克风没有被补偿到 4 倍上限，实测增益=' + JSON.stringify(g.slice(0, 6)));
+    await eng.deactivate();
+    console.log('PASS: 实时输入的输入补偿按环形缓冲电平标定（安静麦克风被抬到 4 倍上限）。');
+  }
 })().catch(error=>{console.error(error);process.exitCode=1;});
