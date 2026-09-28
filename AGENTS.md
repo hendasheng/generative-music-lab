@@ -28,6 +28,8 @@
 - 量时间 / 归属要**待在一条时间轴上**（音频比音频、传输比传输）；跨轴换算会造出看起来像真 bug 的系统性偏差。
 - 离线桩要**忠实模拟** Tone 的约定：回调收到的 `time` 是**音频上下文时间**，比传输位置早 lookAhead。桩漏了这条，bug 会在离线全绿、只在真机暴露。
 - 无头里 `rAF` 被节流到约 1 tick/500ms：要逐帧推进就自己循环调用，别等 rAF。
+- **探针的成败只能由唯一的退出码决定**：末尾写了 `process.exit(ok ? 0 : 1)` 时，它会**覆盖** `process.exitCode`，散在各段的 `if (!x) process.exitCode = 1` 全是死代码 —— 表现是「打印一堆 `★` 却以 0 退出」（06 的 `live-check` 就这样假绿过：无 `__iosAB` 的版本里 A/B 段恒失败，同时输出「通过」并退出 0）。所有断言汇总进一个变量，判定只从末尾一处出去；★ 看输出别用 `| Select-String`（它把退出码一起藏掉），要 `> file 2>&1` 之后读 `$LASTEXITCODE`。
+- **中间元素居中靠 grid 的 `1fr auto 1fr`，不要用 flex 两端对齐**：flex 版要求「左右两组宽度相等」才居中，任何单边 padding/多一个按钮都会把它顶偏（06 的录制键被 `.main-actions` 上遗留的 `padding-right:10px` 顶偏 5px）。断言要量**可见元素**到容器中心的偏移（≤1px），不要拿视图口宽度估。
 
 ## 当前协作约定（2026-09-19）
 
@@ -107,7 +109,7 @@
 | 03 Phase Loops | `exercises/03-phase-process/0.3/index.html`（3D 实现在同目录 `stage.js`） | 同目录 `README.md` 的「0.3 当前基线与衔接」 | 十条同轴环带独立旋转，音名用带面 UV 贴图 |
 | 04 Note Tile Collapse | `exercises/04-wfc-loom/0.5/index.html`（**0.5 = 当前**：0.4 的最小 WFC + rolling window + register drift + density drift；0.4 是有已验证基线的有限 16 格版，规格见 [`0.4/实验说明.md`](exercises/04-wfc-loom/0.4/实验说明.md)；动 0.4 / 0.5 之前先读 [`0.4/README.md`](exercises/04-wfc-loom/0.4/README.md) 的「一条规则一验」与 [`0.5/README.md`](exercises/04-wfc-loom/0.5/README.md)，并知道它们**不适用** `算法规则.md`） | 0.3：[`算法规则.md`](exercises/04-wfc-loom/算法规则.md)（现行完整规格 + 0.2 / 0.3 差异表）→ 再看 `README.md` 的演进与实测数字；0.4 / 0.5：各自的 `README.md` | 0.3 二维单音 tile WFC；0.4 一维 16 格 pitch-only；0.5 滚动窗口 + 音区/疏密漂移，可一直跑 |
 | 05 Probability Grid | `exercises/05-probability-grid/0.2/index.html` | 同目录上一级 `README.md`：版本差异、五种 Sound、调度及验证范围 | 原生 Web Audio 双轨概率网格；0.2 五种可选音色，0.1 保留基础版；测试入口 `tools/check.cjs` |
-| 06 Granular | `exercises/06-granular/0.3/index.html` | 同目录上一级 `README.md`：参数、音频时钟、生命周期与验证范围 | 原生 Web Audio 粒子采样器；0.3 位置 × 质感 XY 与自由流动；0.2 保留；离线验证 `tools/check.cjs 0.3` |
+| 06 Granular | `exercises/06-granular/0.3.2/index.html`（0.3.2 = **当前**：去掉实时输入、移动端隐藏菜单、顶栏「流动最左 / 录制中间 / 播放最右」；0.3.1 = 带实时输入与移动端菜单的上一版，保留） | 同目录上一级 `README.md`：参数、音频时钟、生命周期与验证范围；0.3.2 另见同目录 `0.3.2/README.md` | 原生 Web Audio 粒子采样器；离线验证 `tools/check.cjs 0.3.2`；探针都支持 `--version`：`tools/live-check.mjs`、`tools/layout-check.mjs`、`tools/camera-layout-check.mjs`（默认 0.3.1）。★ **iOS Safari 上实时输入响度偏小尚未解决**（仅 0.3.1 有实时输入；桌面正常）：已排除的原因与下一步在 0.3.1/README.md 的「未解决」一节，需真机 `window.__iosAB` 的 A/B 数值才能继续，别凭猜提增益。★ 0.3.1/0.3.2 的 `engine.js`、`recorder.js` **已反向偏离基地 0.3**，差异清单见 06 的 `README.md` |
 
 **06 跨项目接入**：先读 [`exercises/06-granular/INTEGRATION.md`](exercises/06-granular/INTEGRATION.md)，核对上下文所有权与组件卸载，麦克风录音移植须调用 recorder.cancel 释放轨道及分析上下文；原页面不是现成的可卸载组件。
 

@@ -11,7 +11,7 @@
 | 03 | [Phase Loops 0.3](exercises/03-phase-process/0.3/) | 独立音符循环、3D 分层环带、固定播放头与音画同步 | 打开 `exercises/03-phase-process/0.3/index.html` |
 | 04 | [Note Tile Collapse 0.5](exercises/04-wfc-loom/0.5/) | 最小 WFC（一维 16 格时间序列、A minor 7 个候选、两条硬规则 max interval / max repeat）+ **rolling window**（播完最左格就滚动、右端补新格 ⇒ 可以一直跑的时间系统）+ **register drift**（缓慢漂移的音区中心）+ **density drift**（缓慢漂移的全局疏密，按窗口剩余目标分配音符/休止总权重，休止也参与坍缩，最多连续四格休止） | 打开 `exercises/04-wfc-loom/0.5/index.html`；`0.4` 是它的基线（有限 16 格、边坍缩边发声），`0.3` / `0.2` / `0.1` 是更早的二维版本（和声进行 + 钢琴采样 / 矩阵织机实验） |
 | 05 | [Probability Grid 0.2](exercises/05-probability-grid/0.2/) | 学习 SQIA 音序器：双轨 16×12 概率网格、五种可选音色（REVERIE / KALIMBA / RHODES / ACID / MACHINE）、每轨 Sound 面板与空间效果；保留 0.1 基础版 | 打开 `exercises/05-probability-grid/0.2/index.html`，无需联网 |
-| 06 | [Granular 0.3](exercises/06-granular/0.3/) | 粒子采样器：位置 × 质感 XY、自由流动、音频导入、30 秒麦克风采样与实时波形、种子随机和声音事件可视化；保留 0.2 对照 | 打开 `exercises/06-granular/0.3/index.html`，无需联网 |
+| 06 | [Granular 0.3.1](exercises/06-granular/0.3.1/) | 粒子采样器：位置 × 质感 XY、自由流动、音频导入、30 秒麦克风采样与实时波形、种子随机和声音事件可视化；新增摄像头双窗口与前后切换；保留 0.3 | 打开 `exercises/06-granular/0.3.1/index.html`，无需联网 |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。
 
@@ -65,6 +65,17 @@ python -m http.server 8000
 ```
 
 然后打开 <http://localhost:8000>。
+
+06/0.3.1 的摄像头与麦克风必须跑在 HTTPS 或 localhost 上。要在手机真机验收，用仓库自带的两个工具发布到公网（走 Cloudflare quick tunnel，无需账号）：
+
+```powershell
+pwsh tools/serve-public.ps1          # 起静态服务器 + quick tunnel，打印 https://<随机>.trycloudflare.com
+pwsh tools/serve-public.ps1 -Port 8800
+```
+
+它会用 `tools/serve.mjs` **从仓库根**提供服务——0.3.1 的页面引用 `../../../shared/exercise-controls.js`，只发布 `0.3.1/` 子目录会让共享控件 404。拿到地址后打开 `<公网地址>/exercises/06-granular/0.3.1/index.html`，可用 `node tools/verify-tunnel.mjs <公网地址>` 核对页面与其引用的相对路径都能取到。
+
+★ 本机可能同时有别的项目在用 cloudflared（例如 moonlight_grains 的参考页占 8765）。**收尾不要杀所有 `cloudflared.exe`**，只停自己这条：`Ctrl+C` 或 `netstat -ano | Select-String ':<端口>\s'` 找到 PID 再停。
 
 01–04 的 Tone.js 当前从 CDN 加载，因此首次运行需要联网；05–06 无 CDN 或外部音频依赖，可离线运行。若以后需要完全离线，可把固定版本放入 `vendor/`，再改为相对路径引用。
 

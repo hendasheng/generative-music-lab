@@ -37,7 +37,7 @@ await engine.deactivate();
 
 这是接口用法片段，不包含生产接入所需的异步取消和组件卸载处理。`create` 应从用户播放手势触发；不保证无手势自动播放成功。
 
-- `create(buffer, params, seed)` 返回 Promise，解析为 `{schedule, end, deactivate, events, time, active}`。
+- `create(buffer, params, seed)` 返回 Promise，解析为 `{schedule, end, deactivate, events, time, active}`。这是 0.3.1 的签名；当前 `0.3/engine.js` 已是 `create(buffer, params, seed, liveSource = null)`，第四个参数只在 0.3 的实时输入路径使用，0.3.1 没有该扩展（见第 13 节）。
 - `schedule()` 启动内部定时器；重复调用不叠加调度。创建成功不会自动 schedule。
 - `end()` 取消调度，35ms 淡出，约 50ms 后清理声部和事件，但不关闭上下文；返回 Promise。
 - `deactivate()` 等待 end，然后断开总线并关闭引擎自己的 AudioContext。停止后需要重新 create 才能再播放；不是暂停/继续接口。
@@ -209,3 +209,29 @@ recorder 实例另提供 `waveform()`：录制中返回重复使用的 2048 点 
 ### 0.3 混响清晰度与八度高频处理
 
 混响返回：Convolver → 180Hz 高通 → 原 4.5kHz 低通 → wet → master。只削减湿声低频堆积，原音干声仍直达 bus，不经过新增滤波。湿声高八度单独在进入卷积前通过 3.5kHz 低通；干声高八度通过更轻的 6kHz 低通后进入 bus。三处新增滤波 Q 均为 0.707，保留原增益、概率、音高和 XY 行为，无新增控件。deactivate 需释放 wetLowCut、shimmerTone、octaveTone。离线节点连接与清理检查通过；具体听感仍需实际试听。
+
+
+## 0.3.1 移动 UI 版本
+
+新版本入口 `0.3.1/index.html`，声音引擎、flow 和 recorder 保持创建时 0.3 基线。新增 camera.js 与 mobile.js；摄像头只请求视频，默认后置可切前置，前置镜像。页面隐藏/pagehide 时停止并使 pending 请求失效。接入时参考 `0.3.1/README.md`；不要把摄像头当作录音流，也不要把 0.4.1 参考 UI 的声音实现混入本版本。
+
+
+0.3.1 布局调整：XY Pad 正下方常驻四个 dial（粒子长度、密度、立体声散布、音高），支持上下/左右拖动、方向键和 Shift 精细拖动。旋钮指针跟随实际参数与自由流动，手动操作关闭流动。波形条移入摄像头分组，紧贴视频下方；菜单仅保留其余参数、音源和种子。
+
+视频与波形属于同一组，XY 与四个旋钮属于同一组；竖屏上下排列，横屏两组并排，旋钮始终在 XY 下方。
+
+0.3.1 纵向布局按**浏览器可视高度**设计：宿主若把本页嵌进自己的外壳（工具栏、标签栏、键盘），可用高度只会更小。布局用 `min-height:100dvh` + `auto … minmax(0,1fr)` 行与 `--min-pad` / `--min-knobs` 下限，不够高就整页滚动；`.camera-window` 的 `min-height` 同样承重（去掉会让 `<video>` 的固有宽高比顶高整页）。移植这一版时不要把行高写回像素，也不要用「屏幕高度」估算；用 `node exercises/06-granular/tools/layout-check.mjs` 量各视口的实际高度。数据见 `0.3.1/README.md` 的「纵向布局修正」。
+
+
+## 13. 0.3.1 与 0.3 的关系：0.3 是合成器基地
+
+上文第 1–12 节以 `0.3/engine.js` 为基线，这也是**合成器的基地**：引擎的调整一律先在 0.3 实现并测试，稳定后再搬到消费它的版本。`0.3.1/index.html` 加载同目录自己的 `engine.js`、`flow.js`、`recorder.js`、`live.js`、`live-worklet.js`，五者于 2026-09-26 与 0.3 同步为**逐字节相同**。
+
+实时输入在两个版本都已接入：`create(buffer, params, seed, liveSource = null)` 的第四个参数配 `live.js`（`LiveInput.ring` / `LiveInput.create`）与 `live-worklet.js`（AudioWorklet `grain-capture`），8 秒环形缓冲。`liveSource` 非空时切换取窗方式（环形缓冲 `grain(ctx, event)`）、跳过倒放副本、把输入补偿固定为 1、给事件加 `origin`、并把可用时长下限设为 0.12 秒。两版的差别只在 UI：0.3 有「实时输入 / 冻结」两个按钮，0.3.1 只有「实时输入」开关（`freeze()` 仍在引擎里，未接按钮）。两版都用 `origin` 差分把事件的窗口坐标换算回当前窗口来绘制波形条。
+
+搬运规则：
+
+- 声音改动在 0.3 做，再覆盖到 0.3.1；不要反向操作，也不要在 0.3.1 里另写一套合成器逻辑。
+- 整体替换后跑 `node exercises/06-granular/tools/engine-sync-check.cjs <同步前的 engine.js> <同步后的 engine.js>`，它逐字节比对计划事件、八度派生、`inputGain`、`defaultSpray`、XY 映射、导出面与 `BufferSource.start` 序列，用来证明同步没有改变声音。若这次本就要改声音，差异属预期，需另做听感验收并更新基线。
+- `flow.js`、`recorder.js` 与 0.3 逐字节相同，可互换。
+- 该脚本按值比较而非 `assert.deepEqual`：两份引擎在不同 vm realm，`deepStrictEqual` 会连 prototype 一起比而误报。
