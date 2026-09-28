@@ -6,6 +6,10 @@ Desktop.ini
 .claude/settings.local.json
 node_modules/
 dist/
+# 小红书小工具的构建 Skill：按上传页口令每次重新下载当前版本，不进仓库
+.skill/
+.codex/
+.claude/
 *.log
 *.wav
 *.aiff
