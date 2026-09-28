@@ -134,7 +134,33 @@
     }
     $('duration').textContent = buffer.duration.toFixed(2)+' s';
   }
+  let liveSource=null,livePending=false,liveEpoch=0,lastLivePaint=0;
+  const liveCapture=LiveInput.create(()=>{void stop();$('status').textContent='麦克风已断开 · 实时输入停止';});
+  function liveUI(){
+    $('liveInput').setAttribute('aria-pressed',String(Boolean(liveSource)));
+    $('liveInput').textContent=livePending?'取消输入等待':liveSource?'关闭实时输入':'实时输入';
+    $('freezeInput').disabled=!liveSource || liveSource.duration<.12;
+    $('freezeInput').setAttribute('aria-pressed',String(Boolean(liveSource?.frozen)));
+    $('freezeInput').textContent=liveSource?.frozen?'继续采集':'冻结';
+    $('record').disabled=Boolean(liveSource)||livePending;
+    document.querySelector('.axis-label.left').textContent=liveSource?'较早':'起点';
+    document.querySelector('.axis-label.right').textContent=liveSource?'刚刚':'终点';
+  }
+  $('freezeInput').addEventListener('click',()=>{if(liveSource){liveSource.freeze(!liveSource.frozen);liveUI();}});
+  $('liveInput').addEventListener('click',async()=>{
+    if(liveSource || livePending){await stop();return;}
+    cancelRecording();++loadGeneration;loading=false;await stop();
+    const ticket=++liveEpoch;livePending=true;liveUI();
+    $('status').textContent='请允许麦克风 · 建议戴耳机 · 可点击取消';
+    try{
+      const captured=await liveCapture.start();
+      if(ticket!==liveEpoch || !captured)return;
+      liveSource=captured;livePending=false;liveUI();
+      await play();
+    }catch(error){if(ticket===liveEpoch){await stop();$('status').textContent='实时输入失败：'+error.message;}}
+  });
   async function stop() {
+    ++liveEpoch;liveCapture.stop();liveSource=null;livePending=false;liveUI();analyse();
     stopFlow();
     ++generation; starting = false;
     const previous = engine; engine = null;
@@ -143,14 +169,14 @@
     if (previous) await previous.deactivate();
   }
   async function play() {
-    if (engine || starting || loading || recorder.active || recordPreparing) return;
+    if (engine || starting || loading || livePending || recorder.active || recordPreparing) return;
     const ticket = ++generation; starting = true; controls.setBusy(true);
     try {
-      const created = await Granular.create(buffer, params, seed);
+      const created = await Granular.create(buffer, params, seed, liveSource);
       if (ticket !== generation) { await created.deactivate(); return; }
       engine = created; engine.schedule(); controls.setPlaying(true);
-      $('status').textContent = '播放中 · 种子 '+seed;
-    } catch (error) { if (ticket === generation) $('status').textContent = '无法启动音频：'+error.message; }
+      $('status').textContent = liveSource?'实时输入中 · 最近 8 秒 · 可冻结 · 请使用耳机':'播放中 · 种子 '+seed;
+    } catch (error) { if (ticket === generation) { await stop(); $('status').textContent = '无法启动音频：'+error.message; } }
     finally { if (ticket === generation) { starting=false; controls.setBusy(false); } }
   }
   controls.addEventListener('exercise-play', () => { seed=controls.seedValue || seed; play(); });
@@ -182,7 +208,7 @@
     onState(state,seconds){
       const busy=state!=='idle';
       controls.setBusy(busy || loading);$('demo').disabled=busy;$('file').disabled=busy;
-      recordButton.disabled=state==='processing';
+      recordButton.disabled=state==='processing' || Boolean(liveSource) || livePending;
       recordButton.setAttribute('aria-pressed',String(state==='recording'));
       recordButton.textContent=state==='requesting'?'取消授权等待':state==='recording'?'停止 · '+seconds.toFixed(1)+' / 30s':state==='processing'?'处理中…':'录制采样 · 30s';
       if(state==='requesting')$('status').textContent='请允许麦克风权限 · 可点击取消';
@@ -195,7 +221,7 @@
     }
   });
   recordButton.addEventListener('click',async()=>{
-    if(recordPreparing)return;
+    if(recordPreparing || liveSource || livePending)return;
     if(recorder.active){
       if(recordButton.getAttribute('aria-pressed')==='true')recorder.finish();
       else{recorder.cancel();$('status').textContent='已取消录音 · 原音源已保留';}
@@ -235,6 +261,11 @@
       paint.fillText('REC / LIVE INPUT',14,22);
       requestAnimationFrame(draw);return;
     }
+    if(liveSource && performance.now()-lastLivePaint>80){
+      peaks=liveSource.peaks();lastLivePaint=performance.now();liveUI();
+      $('duration').textContent=liveSource.duration.toFixed(2)+' / 8 s';
+    }
+    const viewDuration=liveSource ? Math.max(.001,liveSource.duration) : buffer.duration;
     paint.fillStyle='#969a95';
     peaks.forEach(([min,max],i)=>paint.fillRect(i*w/peaks.length,h/2-max*h*.32,Math.max(1,w/peaks.length),Math.max(1,(max-min)*h*.32)));
     paint.fillStyle='#e2e2db12';
@@ -246,10 +277,11 @@
       const age=engine.time-e.when;
       if(age<0 || age>=e.length) continue;
       const envelope=Math.sin(Math.PI*age/e.length)**2;
-      const position=e.reverse?e.offset+(e.length-age)*e.rate:e.offset+age*e.rate;
-      const x=position/buffer.duration*w, y=h/2+e.pan*h*.38;
+      const offset=e.offset+(liveSource ? e.origin-liveSource.origin : 0);
+      const position=e.reverse?offset+(e.length-age)*e.rate:offset+age*e.rate;
+      const x=position/viewDuration*w, y=h/2+e.pan*h*.38;
       paint.globalAlpha=envelope;paint.fillStyle=e.reverse?'#f37944':'#e0e5d9';
-      const a=e.offset/buffer.duration*w, length=e.length*e.rate/buffer.duration*w;
+      const a=offset/viewDuration*w, length=e.length*e.rate/viewDuration*w;
       paint.fillRect(a,y-1,Math.max(1,length),2);paint.beginPath();paint.arc(x,y,3,0,Math.PI*2);paint.fill();
     }
     paint.globalAlpha=1; requestAnimationFrame(draw);

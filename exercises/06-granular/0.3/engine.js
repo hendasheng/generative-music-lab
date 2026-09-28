@@ -59,15 +59,15 @@
     const rate=base.rate*2,length=Math.min(base.length,duration/rate);
     return {...base,rate,length,offset:Math.min(base.offset,Math.max(0,duration-length*rate)),peak:base.peak*.8,octave:12};
   }
-  async function create(buffer, params, seed) {
+  async function create(buffer, params, seed, liveSource = null) {
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     try { await ctx.resume(); } catch (error) { await ctx.close(); throw error; }
-    const reversed = ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
-    for (let c = 0; c < buffer.numberOfChannels; c++) reversed.getChannelData(c).set(buffer.getChannelData(c).slice().reverse());
+    const reversed = liveSource ? null : ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+    for (let c = 0; !liveSource && c < buffer.numberOfChannels; c++) reversed.getChannelData(c).set(buffer.getChannelData(c).slice().reverse());
     const bus = ctx.createGain(), master = ctx.createGain(), compressor = ctx.createDynamicsCompressor();
     const input=ctx.createGain(),wet=ctx.createGain(),space=ctx.createConvolver(),output=ctx.createGain();
     const shimmerInput=ctx.createGain(),damping=ctx.createBiquadFilter();
-    input.gain.value=inputGain(buffer);shimmerInput.gain.value=input.gain.value;
+    input.gain.value=liveSource ? 1 : inputGain(buffer);shimmerInput.gain.value=input.gain.value;
     damping.type='lowpass';damping.frequency.value=4500;damping.Q.value=.707;
     const wetLowCut=ctx.createBiquadFilter(),shimmerTone=ctx.createBiquadFilter(),octaveTone=ctx.createBiquadFilter();
     wetLowCut.type='highpass';wetLowCut.frequency.value=180;wetLowCut.Q.value=.707;
@@ -87,15 +87,17 @@
     let timer = null, next = 0, closed = false, ending = null, rng, timing, shimmer, harmony;
     function spawn(when) {
       if (voices.size >= 192) return;
-      const event = { ...plan(params, buffer.duration, rng), when };
-      spawnVoice(harmony()<.15 ? dryOctaveEvent(event,buffer.duration) : event);
-      if((params.reverb ?? .3)>0 && shimmer()<.45)spawnVoice(octaveEvent(event,buffer.duration));
+      const duration=liveSource ? liveSource.duration : buffer.duration;
+      if(liveSource && duration<.12)return;
+      const event = { ...plan(params, duration, rng), when, origin:liveSource?.origin ?? 0 };
+      spawnVoice(harmony()<.15 ? dryOctaveEvent(event,duration) : event);
+      if((params.reverb ?? .3)>0 && shimmer()<.45)spawnVoice(octaveEvent(event,duration));
     }
     function spawnVoice(event){
       if(voices.size>=192)return;
       const when=event.when;
       const source = ctx.createBufferSource(), gain = ctx.createGain(), pan = ctx.createStereoPanner();
-      source.buffer = event.reverse ? reversed : buffer;
+      source.buffer = liveSource ? liveSource.grain(ctx,event) : event.reverse ? reversed : buffer;
       source.playbackRate.value = event.rate;
       pan.pan.value = event.pan;
       const window = new Float32Array(128);
@@ -106,7 +108,7 @@
       const voice = { source, gain, pan };
       voices.add(voice); events.push(event);
       source.onended = () => { source.disconnect(); gain.disconnect(); pan.disconnect(); voices.delete(voice); };
-      const offset = event.reverse ? buffer.duration - event.offset - event.length * event.rate : event.offset;
+      const offset = liveSource ? 0 : event.reverse ? buffer.duration - event.offset - event.length * event.rate : event.offset;
       source.start(when, Math.max(0, offset));
       source.stop(when + event.length);
     }
