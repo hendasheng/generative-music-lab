@@ -3,7 +3,21 @@
    两者不一致时（曾经 html=#bfc0b8 / main=#deded5 / theme-color=#deded5），
    Safari 收放工具栏时就露出一深一浅两块，看起来像「背景没填满」。
    注意 html 有 background、body 无 background 时，html 的背景会被提升为整个视口的画布背景。 */
-:root{font-family:Arial,"Microsoft YaHei",sans-serif;color:#252624;background:#deded5;--accent:#ed5b2a;--line:#b5b5ad;--mono:Consolas,monospace;color-scheme:light}*{box-sizing:border-box}body{margin:0;min-height:100dvh;background:#deded5}main{max-width:980px;margin:auto;background:#deded5;min-height:100dvh;--min-camera:150px;--wave-h:56px;--min-knobs:84px;--min-pad:185px;padding:env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px,env(safe-area-inset-left));display:grid;grid-template-rows:auto minmax(0,1fr);gap:8px}button,.file-button{font:inherit;font-size:12px;cursor:pointer;color:inherit;background:#ecece4;border:1px solid var(--line);border-radius:4px;padding:9px 12px}button:disabled{opacity:.4;cursor:default}button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}/* 0.3.2 顶部三按钮：自由流动最左、录制中间、播放最右。
+:root{font-family:Arial,"Microsoft YaHei",sans-serif;color:#252624;background:#deded5;--line:#b5b5ad;--mono:Consolas,monospace;-webkit-tap-highlight-color:transparent;color-scheme:light}
+/* ★★ -webkit-tap-highlight-color 关在这里（它是**可继承**属性，写一次就覆盖全页）：
+   iOS/Android 会给被点到的元素盖一层深灰高亮，形状跟着该元素的 border-radius ——
+   顶栏图标（8px 圆角）看起来就是「深灰圆角矩形」，旋钮上那个 52x52 的隐形 range 是一块灰方块，
+   pad 是整块灰。这些控件自己都有反馈（图标变主色 / 指针转 / 圆点移动），不需要系统这层。
+   探针（layout-check）会读几个元素的**计算值**，确认它们真的都是 rgba(0,0,0,0)。 */
+/* ★★ 主色调（橙色族）—— 只改这一行就能改整个页面的橙色，不用动 JS：
+   --accent          主橙：焦点描边 / 按下态图标（流动、播放）/ XY 圆点 / 旋钮指针
+                     / 录音波形柱 / 波形上 'REC / LIVE INPUT' 文字
+   --accent-reverse  倒放粒子的橙（比主橙浅一档：#f37944）
+   --accent-soft     录制中那条播放头的浅橙（原来带 66% 透明度：#ffd9c6）
+   画布是 Canvas 2D，读不了 CSS 变量，所以 app.js 启动时用 getComputedStyle 读这三个值
+   （见 app.js 顶部的 ACCENT / ACCENT_REVERSE / ACCENT_SOFT）；只改这里就够了。
+   改背景/文字色不在这三个变量里：#deded5 是页面与画布的底（见文件开头注释），文字是 #252624。 */
+:root{--accent:#ed5b2a;--accent-reverse:#f37944;--accent-soft:#ffd9c6}*{box-sizing:border-box}body{margin:0;min-height:100dvh;background:#deded5}main{max-width:980px;margin:auto;background:#deded5;min-height:100dvh;--min-camera:150px;--wave-h:56px;--min-knobs:84px;--min-pad:185px;padding:env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px,env(safe-area-inset-left));display:grid;grid-template-rows:auto minmax(0,1fr);gap:8px}button,.file-button{font:inherit;font-size:12px;cursor:pointer;color:inherit;background:#ecece4;border:1px solid var(--line);border-radius:4px;padding:9px 12px}button:disabled{opacity:.4;cursor:default}button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}/* 0.3.2 顶部三按钮：自由流动最左、录制中间、播放最右。
    ★ 必须保持 grid 的 `1fr auto 1fr`：中间列的居中由「两侧轨道等宽」保证，
    与左右两组各有多少按钮、每个多宽都无关。曾经为了「两端对齐」在移动端改成
    flex + space-between，结果居中变成了「左右两组宽度相等」才成立——右侧还留着
@@ -13,7 +27,10 @@
 .mobile-header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center}
 @media(max-width:759px){#menuToggle{display:none}}
 .mobile-header>.flow-actions{justify-self:start}
-.mobile-header>.main-actions{justify-self:end}.flow-actions,.main-actions,.camera-actions{display:flex;align-items:center;gap:4px}.brand{font:11px var(--mono);letter-spacing:1px;text-align:center}.brand small{display:block;font-size:9px;margin-top:4px;color:#6a6b65}.icon-button{display:grid;place-items:center;width:48px;height:48px;padding:0;border:0;border-radius:8px;background:transparent;flex-shrink:0}.icon-button svg{width:24px;height:24px}.icon-button[aria-pressed=true]{color:var(--accent)}.record-mark{position:relative;width:44px;height:26px;background:#ed2b2b;border:0;border-radius:6px;display:grid;place-items:center}.record-mark::after{content:'';width:14px;height:14px;border-radius:50%;background:#fff}.record-button[aria-pressed=true] .record-mark{width:26px;border-radius:4px}.record-button[aria-pressed=true] .record-mark::after{display:none}.record-button:disabled .record-mark{opacity:.4}
+.mobile-header>.main-actions{justify-self:end}.flow-actions,.main-actions,.camera-actions{display:flex;align-items:center;gap:4px}.brand{font:11px var(--mono);letter-spacing:1px;text-align:center}.brand small{display:block;font-size:9px;margin-top:4px;color:#6a6b65}.icon-button{display:grid;place-items:center;width:48px;height:48px;padding:0;border:0;border-radius:8px;background:transparent;flex-shrink:0}.icon-button svg{width:24px;height:24px}.icon-button[aria-pressed=true]{color:var(--accent)}/* 随机音源是一次性动作，没有开/关状态可显示：点下去到换完素材有 100–700ms，
+   这段时间图标点亮成主色，换完恢复 —— 这就是它的「触发状态」。
+   用 aria-busy 而不是 aria-pressed：一次性动作不该对读屏报成开关。 */
+.icon-button[aria-busy=true]{color:var(--accent)}.record-mark{position:relative;width:44px;height:26px;background:#ed2b2b;border:0;border-radius:6px;display:grid;place-items:center}.record-mark::after{content:'';width:14px;height:14px;border-radius:50%;background:#fff}.record-button[aria-pressed=true] .record-mark{width:26px;border-radius:4px}.record-button[aria-pressed=true] .record-mark::after{display:none}.record-button:disabled .record-mark{opacity:.4}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.performance{display:grid;grid-template-rows:auto auto;gap:12px;min-height:0}.camera-window,.xy-window{position:relative;border:1px solid #90958b;border-radius:3px;overflow:hidden}
 /* 两个 min-height 都承重，别删：相机窗没有下限时 <video> 的固有宽高比会把整页顶高；
    XY 窗没有下限时 pad 会被压成一条；相机窗下限过低则先压取景窗（实测 48px 时只剩 116px）。
@@ -25,16 +42,45 @@
 .camera-window.flip-hidden #cameraFlip{display:none}
 /* 窗内图标比顶栏小一档，免得压在画面上显得过大 */
 .camera-actions .icon-button{width:44px;height:44px}
-.camera-actions .icon-button svg{width:20px;height:20px}.camera-window #cameraStatus{position:absolute;bottom:calc(var(--wave-h) + 12px);left:12px;right:12px;text-align:center;font-size:12px;margin:0;padding:6px;background:#242424aa}.camera-window #cameraStatus:empty{display:none}.xy-window{background:#d4d4cc}.xy-pad{position:relative;height:100%;min-height:0;background-image:radial-gradient(#a8ad9f .8px,transparent .8px);background-size:12px 12px;touch-action:none;user-select:none;cursor:crosshair}.xy-pad:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}.axis-label{position:absolute;pointer-events:none;font:10px var(--mono);line-height:1;background:#d4d4cc;padding:1px 4px;z-index:2}.axis-label.top{top:10px;left:50%;transform:translateX(-50%)}.axis-label.bottom{bottom:6px;left:50%;transform:translateX(-50%)}.axis-label.left{left:8px;top:50%;transform:translateY(-50%)}.axis-label.right{right:8px;top:50%;transform:translateY(-50%)}.cross{position:absolute;pointer-events:none;background:#91988a}.horizontal{top:50%;width:100%;height:1px}.vertical{left:50%;height:100%;width:1px}#xyDot{position:absolute;width:13px;height:13px;background:var(--accent);border:2px solid #292927;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}.sample-strip{position:absolute;left:0;right:0;bottom:0;height:var(--wave-h);pointer-events:none;z-index:2}#wave{width:100%;height:100%;display:block}#positionSurface{position:absolute;inset:0;width:100%;height:100%;opacity:0;touch-action:none;pointer-events:auto}#duration{position:absolute;right:6px;top:2px;font:9px var(--mono);color:#deded5;text-shadow:0 0 4px #000c;pointer-events:none}footer{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#6a6b65;align-items:start;overflow:hidden}#recordTime{white-space:nowrap;color:#a53620}dialog{position:fixed;inset:auto;margin:0;left:max(12px,env(safe-area-inset-left));top:calc(70px + env(safe-area-inset-top));width:min(400px,calc(100vw - 24px));max-height:calc(100dvh - 100px - env(safe-area-inset-top));overflow:auto;border:1px solid var(--line);background:#deded5f5;color:#252624;border-radius:8px;padding:16px;box-shadow:0 12px 40px #0005}dialog::backdrop{background:#0004}.settings-heading{display:flex;justify-content:space-between;align-items:center}.settings-heading h1,dialog h2{font-size:13px;letter-spacing:1px}#sampleName{font:11px var(--mono);overflow-wrap:anywhere}.actions{display:flex;gap:8px;margin:14px 0}input[type=file]{position:absolute;width:1px;height:1px;opacity:0}.file-button:has(input:disabled){opacity:.4;pointer-events:none}.parameters,#outputParameters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.parameter{min-width:0}.parameter label{display:flex;justify-content:space-between;gap:4px;font-size:11px}.parameter output{font:11px var(--mono)}.parameter small{display:block;font:9px var(--mono);color:#6a6b65;margin:5px 0}.parameter input{width:100%;height:30px;accent-color:#30302e}dialog a{display:inline-block;font-size:11px;margin-top:18px;color:#6a6b65}exercise-controls{--exercise-control-primary:#ed5b2a;--exercise-control-secondary:#30302e;--exercise-control-input-bg:#ecece4;--exercise-control-input-fg:#252624;--exercise-control-radius:3px}.performance,.sample-strip,.mobile-header{user-select:none;-webkit-user-select:none}@media(min-width:760px),(orientation:landscape) and (min-width:600px){.performance{grid-template-columns:1fr 1fr;grid-template-rows:minmax(0,1fr)}}@media(max-width:350px){.brand{font-size:9px}.flow-actions,.main-actions{gap:0}}
+.camera-actions .icon-button svg{width:20px;height:20px}.camera-window #cameraStatus{position:absolute;bottom:calc(var(--wave-h) + 12px);left:12px;right:12px;text-align:center;font-size:12px;margin:0;padding:6px;background:#242424aa}.camera-window #cameraStatus:empty{display:none}.xy-window{background:#d4d4cc}.xy-pad{position:relative;height:100%;min-height:0;background-image:radial-gradient(#a8ad9f .8px,transparent .8px);background-size:12px 12px;touch-action:none;user-select:none;cursor:crosshair}/* 焦点环只留给键盘（pad 支持方向键 / 空格），点出来的焦点不该有描边 ——
+   Safari 会把触摸点出来的焦点判成 :focus-visible，所以 app.js 在「这次焦点来自指针」时加
+   .pointer-focus，由后一条把它关掉；按任意键会摘掉这个类，环就回来。
+   点击高亮（tap highlight）在 :root 里全局关掉了，见文件开头。 */
+.xy-pad:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}.xy-pad.pointer-focus:focus{outline:none}.axis-label{position:absolute;pointer-events:none;font:10px var(--mono);line-height:1;background:#d4d4cc;padding:1px 4px;z-index:2;color:var(--axis-ink);transition:color .15s ease}.axis-label.top{top:10px;left:50%;transform:translateX(-50%)}.axis-label.bottom{bottom:6px;left:50%;transform:translateX(-50%)}.axis-label.left{left:8px;top:50%;transform:translateY(-50%)}.axis-label.right{right:8px;top:50%;transform:translateY(-50%)}.cross{position:absolute;pointer-events:none;background:var(--cross-ink);transition:background-color .15s ease}/* 轴标签与坐标线：**拖动时更明显、不拖动时更淡**（用户要求）。
+   状态就是 pad 上那个 .pressing 类（拖动中挂着，见 app.js）。
+   文本用**颜色**过渡而不是整体 opacity：标签带不透明底色（用来盖住底下的点阵），
+   把整块调透明会让点阵透上来、字反而更糊。线是一根 1px 细线，改颜色就够了。
+   十字线的内缩值按标签实测盒子 + 2px 间隙：起点/终点 宽 28px 且距边 8px → 左右各 38px；
+   上标签底边距顶 22px → 24px；下标签顶边距底 18px → 20px。
+   改标签文字 / 字号 / top / bottom 偏移都要重新量（pad 量测脚本会直接给新数字）。 */
+.xy-pad.pressing .axis-label{color:var(--axis-ink-active)}
+.xy-pad.pressing .cross{background:var(--cross-ink-active)}
+.xy-pad{--cross-x:38px;--cross-y-top:24px;--cross-y-bottom:20px;--axis-ink:#83867d;--axis-ink-active:#252624;--cross-ink:#c3c6bc;--cross-ink-active:#91988a}.horizontal{top:50%;left:var(--cross-x);right:var(--cross-x);height:1px}.vertical{left:50%;top:var(--cross-y-top);bottom:var(--cross-y-bottom);width:1px}/* 控制点拖尾：一块覆盖 pad 的 canvas，由 app.js 的 paintTrail 画一条连续折线
+   （头粗尾细、头实尾透）。插在 #xyDot 之前，所以控制点画在带子上面。
+   尺寸交给 JS 按 dpr 设（跟波形那块 canvas 同一套做法），这里只管铺满与不吃指针事件。 */
+/* 层序：轴标签是 z-index:2 的静态装饰，**控制点与拖尾必须在它们上面**
+   （用户要求「控制点在最上层」——贴着 pad 边缘拖时，控制点会滑到「起点 / 终点 / 聚焦 / 散开」
+   底下，被标签的不透明底色盖住；实测 elementsFromPoint 在左边缘给出 `axis-label left > xyDot`）。
+   拖尾 3、控制点 4，保持"拖尾贴着控制点"的连贯。 */
+.xy-trail{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
+#xyDot{position:absolute;z-index:4;width:13px;height:13px;background:var(--accent);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;transition:transform .45s cubic-bezier(.22,.61,.36,1)}/* 控制点：无描边；按住放大、松手回原大小。两件事分开对待：
+   · 放大要跟手 —— 只放大到 1.5 倍（鼠标/笔），**手指按下时 2.5 倍**（13px → 32.5px）：
+     手指肚会盖住小圆点，1.5 倍实测还是看不见。
+   · 缩放走 transform，位移仍是 JS 写 left/top，所以这里的过渡不会跟逐帧驱动打架。
+   · 「按下快、松开慢」靠把两条过渡分别写在两个状态上：类加上时用 .pressing 里的 .08s，
+     类摘掉时用基础态这条 .45s —— 松手是个看得见的回落，而不是「啪」地弹回。 */
+.xy-pad.pressing #xyDot{transform:translate(-50%,-50%) scale(1.5);transition:transform .08s ease-out}
+.xy-pad.pressing.pressing-touch #xyDot{transform:translate(-50%,-50%) scale(2.5)}.sample-strip{position:absolute;left:0;right:0;bottom:0;height:var(--wave-h);pointer-events:none;z-index:2}#wave{width:100%;height:100%;display:block}#positionSurface{position:absolute;inset:0;width:100%;height:100%;opacity:0;touch-action:none;pointer-events:auto}#duration{position:absolute;right:6px;top:2px;font:9px var(--mono);color:#deded5;text-shadow:0 0 4px #000c;pointer-events:none}footer{display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#6a6b65;align-items:start;overflow:hidden}#recordTime{white-space:nowrap;color:#a53620}dialog{position:fixed;inset:auto;margin:0;left:max(12px,env(safe-area-inset-left));top:calc(70px + env(safe-area-inset-top));width:min(400px,calc(100vw - 24px));max-height:calc(100dvh - 100px - env(safe-area-inset-top));overflow:auto;border:1px solid var(--line);background:#deded5f5;color:#252624;border-radius:8px;padding:16px;box-shadow:0 12px 40px #0005}dialog::backdrop{background:#0004}.settings-heading{display:flex;justify-content:space-between;align-items:center}.settings-heading h1,dialog h2{font-size:13px;letter-spacing:1px}#sampleName{font:11px var(--mono);overflow-wrap:anywhere}.actions{display:flex;gap:8px;margin:14px 0}input[type=file]{position:absolute;width:1px;height:1px;opacity:0}.file-button:has(input:disabled){opacity:.4;pointer-events:none}.parameters,#outputParameters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.parameter{min-width:0}.parameter label{display:flex;justify-content:space-between;gap:4px;font-size:11px}.parameter output{font:11px var(--mono)}.parameter small{display:block;font:9px var(--mono);color:#6a6b65;margin:5px 0}.parameter input{width:100%;height:30px;accent-color:#30302e}dialog a{display:inline-block;font-size:11px;margin-top:18px;color:#6a6b65}exercise-controls{--exercise-control-primary:var(--accent);--exercise-control-secondary:#30302e;--exercise-control-input-bg:#ecece4;--exercise-control-input-fg:#252624;--exercise-control-radius:3px}.performance,.sample-strip,.mobile-header{user-select:none;-webkit-user-select:none}@media(min-width:760px),(orientation:landscape) and (min-width:600px){.performance{grid-template-columns:1fr 1fr;grid-template-rows:minmax(0,1fr)}}@media(max-width:350px){.brand{font-size:9px}.flow-actions,.main-actions{gap:0}}
 /* Main performance controls: four dials, with source waveform attached to video. */
 /* 视口高度可被手机浏览器地址栏/工具栏吃掉一截；用 auto + min-height 让页面在该滚的时候滚，而不是把 XY pad 压成一条。 */
 main{min-height:100dvh}
 .camera-group{display:grid;grid-template-rows:minmax(0,1fr);min-height:0}
 #coreParameters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;gap:8px;padding-top:6px}
-.core-parameter{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;--dial-angle:0deg}
+.core-parameter{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;--dial-angle:0deg}/* 双击旋钮原本会闪一块灰方块（旋钮上盖着一个 52x52 的隐形 range，iOS 给被点元素盖高亮）——
+   现在在 :root 里全局关掉了 tap highlight，见文件开头。文字选中高亮则由 .performance 的 user-select:none 管。 */
 .dial-face{width:46px;height:46px;border:1px solid #9b9d94;border-radius:50%;background:#d0d1c7;position:relative;pointer-events:none}
 .dial-pointer{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--dial-angle))}
-.dial-pointer::before{content:'';position:absolute;left:calc(50% - 1px);top:3px;width:2px;height:10px;background:#ed5b2a}
+.dial-pointer::before{content:'';position:absolute;left:calc(50% - 1px);top:3px;width:2px;height:10px;background:var(--accent)}
 .core-parameter input{position:absolute;inset:0;margin:auto;width:52px;height:52px;opacity:0;cursor:ns-resize;touch-action:none}
 .core-parameter:focus-within .dial-face{outline:2px solid var(--accent);outline-offset:1px}
 .core-parameter label,.core-parameter output{font-size:9px;line-height:1;white-space:nowrap}.core-parameter output{color:#6a6b65}
