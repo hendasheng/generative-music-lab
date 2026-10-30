@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>05 · Probability Grid 0.3</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="../../../shared/exercise-controls.js" defer></script>
+  <script src="sequencer.js" defer></script>
+  <script src="audio.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body><main>
+  <header><div><a class="back" href="../../../index.html">GENERATIVE MUSIC LAB / 05</a>
+    <h1>Probability Grid <small>0.3</small></h1>
+</div>
+    <exercise-controls id="transportControls" apply-seed></exercise-controls>
+  </header>
+  <section class="toolbar" aria-label="音乐设置">
+    <label>速度 <input id="bpm" type="number" min="40" max="240" step="1" value="120"> BPM</label>
+    <label>根音 <select id="root" aria-label="根音"></select></label>
+    <label>音阶 <select id="scale" aria-label="音阶"></select></label>
+    <div class="tools"><button id="draw" aria-pressed="true">绘制</button><button id="erase" aria-pressed="false">擦除</button></div>
+  </section>
+  <div class="editor-bar"><nav id="voices" aria-label="选择绘制的声音"></nav>
+  <div class="edit-tools"><label>概率 <select id="chance"><option value="1">100% · 每轮必响</option><option value=".75" selected>75%</option><option value=".5">50%</option></select></label><label>力度 <select id="strength"><option value="1">强 · 100%</option><option value=".8" selected>中 · 80%</option><option value=".45">轻 · 45%</option></select></label><button id="mute" aria-pressed="false">静音</button><button id="clear">清空</button></div>
+  </div><div class="legend"><span>↑ 音高 · 12 个音阶位置</span><span>4 段 × 2 小节 →</span></div>
+  <div class="board-scroll"><section id="board" aria-label="共享音序画布"></section></div>  <footer><span id="status" role="status">准备就绪</span><span id="seedLabel"></span></footer>
+  <details class="instructions"><summary>操作与图例</summary><p class="visual-key">形状 = 音色 · 大小 = 力度 · 透明度 = 触发概率 · 亮起 = 实际发声</p><p class="help">选择声音后点击或拖动绘制，可叠加不同形状。形状越大力度越强，越透明出现概率越低；亮起时大小对应本次实际力度；擦除只影响当前声音。空格播放 / 停止。</p>
+</details></main></body></html>

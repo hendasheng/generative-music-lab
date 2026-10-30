@@ -10,7 +10,7 @@
 | 02 | [Aisatsana Markov 0.4](exercises/02-aisatsana-markov/0.4/) | 极简钢琴、段落与句内音高的马尔可夫链重组、Moodist 环境 texture；birds 发声期间还有一层"旋转游走的线"涟漪（0.4 = 0.3 + 涟漪，形式借鉴 okazz 的 sketch，仅借动作、不搬代码；涟漪的疏密跟着素材每一段的响度，不是某一刻） | 打开 `exercises/02-aisatsana-markov/0.4/index.html`；上一版是 `0.3/index.html`（没有涟漪的基线） |
 | 03 | [Phase Loops 0.3](exercises/03-phase-process/0.3/) | 独立音符循环、3D 分层环带、固定播放头与音画同步 | 打开 `exercises/03-phase-process/0.3/index.html` |
 | 04 | [Note Tile Collapse 0.5](exercises/04-wfc-loom/0.5/) | 最小 WFC（一维 16 格时间序列、A minor 7 个候选、两条硬规则 max interval / max repeat）+ **rolling window**（播完最左格就滚动、右端补新格 ⇒ 可以一直跑的时间系统）+ **register drift**（缓慢漂移的音区中心）+ **density drift**（缓慢漂移的全局疏密，按窗口剩余目标分配音符/休止总权重，休止也参与坍缩，最多连续四格休止） | 打开 `exercises/04-wfc-loom/0.5/index.html`；`0.4` 是它的基线（有限 16 格、边坍缩边发声），`0.3` / `0.2` / `0.1` 是更早的二维版本（和声进行 + 钢琴采样 / 矩阵织机实验） |
-| 05 | [Probability Grid 0.2](exercises/05-probability-grid/0.2/) | 学习 SQIA 音序器：双轨 16×12 概率网格、五种可选音色（REVERIE / KALIMBA / RHODES / ACID / MACHINE）、每轨 Sound 面板与空间效果；保留 0.1 基础版 | 打开 `exercises/05-probability-grid/0.2/index.html`，无需联网 |
+| 05 | [Probability Grid 0.3](exercises/05-probability-grid/0.3/) | 原概率音序系统 + 部分 SQNCR 和声机制 · 五声部共享卷帘 · SQNCR 网格参考（48×27 音符占位）· 八小节和声映射 · 独立概率/力度；视觉与性能待验收，保留 0.1/0.2 | 打开 `exercises/05-probability-grid/0.3/index.html`，无需联网 |
 | 06 | [Granular 0.3.2](exercises/06-granular/0.3.2/) | 粒子采样器：位置 × 质感 XY、自由流动、音频导入、30 秒麦克风采样与录制波形、种子随机和声音事件可视化；摄像头预览与前后切换。**桌面与 iOS 真机均已验收**（2026-09-28）。0.3.2 = 去掉实时输入、移动端隐藏菜单、顶栏「流动 / 录制 / 播放」；0.3.1 = 带实时输入的上一版（保留）；0.3 = 桌面版（合成器基地） | 打开 `exercises/06-granular/0.3.2/index.html`，无需联网 |
 
 也可以直接打开根目录的 `index.html`，从作品索引进入各个练习。

@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const version=process.argv[2] || '0.1';
-assert(['0.1','0.2'].includes(version));
+assert(['0.1','0.2','0.3'].includes(version));
 const M = require('../'+version+'/sequencer.js');
 assert.deepEqual(Array.from({length:12},(_,i)=>M.midi(i,9,'minor')), [57,59,60,62,64,65,67,69,71,72,74,76]);
 for(const scale of Object.keys(M.SCALES))for(let root=0;root<12;root++) {
